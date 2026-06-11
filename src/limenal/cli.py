@@ -31,6 +31,31 @@ def main(argv: list[str] | None = None) -> int:
     serve_p.add_argument(
         "--issuer", default="cabal-core", help="Expected `iss` claim."
     )
+    serve_p.add_argument(
+        "--cabal-url",
+        default=None,
+        help=(
+            "Base URL of Cabal Core (e.g. http://cabal-core:7400). When "
+            "combined with --cabal-token-env, wires CabalCoreCredentialResolver "
+            "so credentialed handlers (slack, github, etc.) get their secrets "
+            "fetched from Cabal at dispatch time."
+        ),
+    )
+    serve_p.add_argument(
+        "--cabal-token-env",
+        default="LIMENAL_CABAL_TOKEN",
+        help=(
+            "Name of the env var holding a long-lived JWT with scope=secrets-fetch "
+            "that limenal presents to Cabal Core. Generate one with "
+            "`cbl token mint-service --scope secrets-fetch`. Default: LIMENAL_CABAL_TOKEN."
+        ),
+    )
+    serve_p.add_argument(
+        "--cred-cache-ttl",
+        type=float,
+        default=15 * 60,
+        help="Credential cache TTL in seconds (default 900).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -58,9 +83,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "serve":
+        import os
         import uvicorn
 
-        from limenal.server import URLJWKSVerifier, create_app
+        from limenal.server import (
+            CabalCoreCredentialResolver,
+            URLJWKSVerifier,
+            create_app,
+        )
 
         verifier = None
         if args.jwks_url:
@@ -72,7 +102,41 @@ def main(argv: list[str] | None = None) -> int:
                 "warning: --jwks-url not set; tools/list and tools/call will reject every request",
                 file=sys.stderr,
             )
-        app = create_app(jwt_verifier=verifier)
+
+        credential_resolver = None
+        if args.cabal_url:
+            token = os.environ.get(args.cabal_token_env)
+            if not token:
+                print(
+                    f"warning: --cabal-url set but ${args.cabal_token_env} is empty; "
+                    "credential fetches will fail (handlers needing secrets will see empty creds).",
+                    file=sys.stderr,
+                )
+
+            def _token_provider(
+                _env_name=args.cabal_token_env,
+            ) -> str:
+                # Re-read every call so a rotation (operator restarts an
+                # external secrets manager) propagates without a daemon
+                # restart.
+                return os.environ.get(_env_name, "")
+
+            resolver = CabalCoreCredentialResolver(
+                cabal_url=args.cabal_url,
+                token_provider=_token_provider,
+                cache_ttl_seconds=args.cred_cache_ttl,
+            )
+            credential_resolver = resolver.fetch
+            print(
+                f"credentials: resolver wired against {args.cabal_url} "
+                f"(token env: {args.cabal_token_env}, ttl: {args.cred_cache_ttl}s)",
+                file=sys.stderr,
+            )
+
+        app = create_app(
+            jwt_verifier=verifier,
+            credential_resolver=credential_resolver,
+        )
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 
