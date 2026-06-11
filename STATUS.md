@@ -6,8 +6,8 @@ proposal carried over from the Cabal workspace).
 ## Headline
 
 - **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
-- **Tests**: 118 passing, ~0.7s.
-- **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense).
+- **Tests**: 136 passing, ~0.9s.
+- **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense), `memory` (techne-backed knowledge recall + commit).
 - **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
 - **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.
@@ -50,6 +50,21 @@ proposal carried over from the Cabal workspace).
 - Failures inside the handler don't propagate; they come back as
   ToolResult.failure with a readable message.
 - Per-(identity, agent_name) isolation in scratchpad is enforced + tested.
+
+## What landed in Phase EE — memory handler
+
+| Layer | File(s) | What it ships |
+|---|---|---|
+| handlers/memory | `memory.py` | `memory.recall(query, limit?)` + `memory.commit(content, type?, tags?, confidence?)`. Lazy techne import — handler usable even when techne isn't installed (every dispatch returns a structured "techne not available" error rather than crashing). Query sanitizer mirrors Cabal's TechneMemoryStore (strip FTS5 specials, drop stopwords, OR-join) so personas using this handler and Archivist's direct path see identical recall semantics. `type` enum validated against techne's VALID_TYPES (fact/decision/pattern/evaluation/procedure); `confidence` against low/medium/high; missing DB on first commit gets bootstrapped via `techne.init_db`. Per-persona `ctx.extra["memory.db_path"]` override. |
+| entry-points | pyproject.toml | `memory = "limenal.handlers.memory:get_handler"` |
+| deps | (dev) | sibling-installed `techne` for tests (`pip install -e ../techne`) |
+
+18 new tests across query sanitizer (4 cases), pre-flight refusals
+(no DB, empty query, all-stopwords, empty content, invalid type,
+invalid confidence, non-string tags), roundtrip (commit then recall
+finds it), limit clamp at 50, auto-init DB on first commit, per-
+persona DB override, techne-not-importable error path, entry-point
+discovery + card shape.
 
 ## What landed in Phase DD — files handler
 

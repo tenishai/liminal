@@ -1,0 +1,291 @@
+"""memory — techne-backed knowledge recall + commit.
+
+Per design.md §"Planned handlers":
+
+    memory | Local techne queries (per-agent SQLite). No credentials
+    required.
+
+Architectural note: in Cabal, the Archivist persona already has direct
+techne access via its `memory_store`. This handler is for the *other*
+personas — Architect, Librarian, Rook subordinates — that want to read
+from and contribute to the same knowledge corpus through limenal's
+unified tool interface. The DB path is configurable per-persona via
+`ctx.extra["memory.db_path"]`, so personas can share or isolate as the
+operator wishes.
+
+techne is a lazy import — the handler is usable even when techne isn't
+installed (every dispatch errors with a structured "techne not
+available" message). This keeps limenal's core dep graph small and
+lets operators deploy with or without the memory handler.
+
+Tools:
+  memory.recall(query, limit?)
+    FTS5-stemmed search over the knowledge table. Query string is
+    sanitized: punctuation stripped, stop-words dropped, tokens
+    OR-joined (same pattern as Cabal's TechneMemoryStore.recall).
+  memory.commit(content, type?, tags?, confidence?)
+    Append a knowledge entry. `type` must be one of techne's VALID_TYPES
+    (fact, decision, pattern, evaluation, procedure); other values
+    error with the list of acceptable choices. `confidence` is
+    low/medium/high.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from limenal.protocol import Context, Handler, ToolResult, ToolSpec
+
+log = structlog.get_logger(__name__)
+
+
+# techne's knowledge type vocabulary (matches techne.knowledge.VALID_TYPES)
+VALID_TYPES = ("fact", "decision", "pattern", "evaluation", "procedure")
+VALID_CONFIDENCE = ("low", "medium", "high")
+
+
+# FTS5 special characters we strip + stopwords we drop before OR-joining
+# the query tokens (matches the Cabal TechneMemoryStore._sanitize_query
+# pattern so recall semantics are consistent across the platform).
+_FTS5_SPECIALS = re.compile(r"""[^\w\s\-]""")
+_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "of", "in", "to", "for", "on", "at",
+    "do", "does", "did", "is", "are", "was", "were", "be", "been",
+    "i", "you", "he", "she", "it", "we", "they", "me", "my", "your",
+    "what", "who", "when", "where", "why", "how", "which",
+    "near", "not",  # FTS5 keywords
+})
+
+
+CARD = {
+    "handler": "memory",
+    "description": "techne-backed knowledge recall + commit (per-persona DB)",
+    "tools": [
+        {
+            "name": "recall",
+            "description": "Search the knowledge corpus for entries relevant to a query.",
+        },
+        {
+            "name": "commit",
+            "description": "Persist a new knowledge entry (fact / decision / pattern / evaluation / procedure).",
+        },
+    ],
+    "activation": "always",
+    "relevance_signals": [
+        "recalling a prior decision or pattern the operator established",
+        "checking whether a fact has already been captured before suggesting it",
+        "persisting a useful conclusion so future dispatches can recall it",
+    ],
+    "credential_keys": [],
+    "labels": {"tier": "builtin", "backend": "techne"},
+}
+
+
+@dataclass
+class MemoryConfig:
+    """Operator config. db_path is the fallback when no per-persona
+    override arrives via ctx.extra."""
+
+    db_path: Path | None = None
+    use_vectors: bool = False
+    default_recall_limit: int = 5
+
+
+@dataclass
+class MemoryHandler:
+    default_config: MemoryConfig = field(default_factory=MemoryConfig)
+
+    def tools(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="recall",
+                description="Search the knowledge corpus.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            ToolSpec(
+                name="commit",
+                description="Persist a new knowledge entry.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "type": {
+                            "type": "string",
+                            "enum": list(VALID_TYPES),
+                            "default": "fact",
+                        },
+                        "tags": {
+                            "type": "string",
+                            "description": "Free-form comma-separated tags.",
+                        },
+                        "confidence": {
+                            "type": "string",
+                            "enum": list(VALID_CONFIDENCE),
+                            "default": "medium",
+                        },
+                    },
+                    "required": ["content"],
+                },
+            ),
+        ]
+
+    def capability_card(self) -> dict[str, Any]:
+        return CARD
+
+    async def dispatch(
+        self, name: str, payload: dict[str, Any], ctx: Context
+    ) -> ToolResult:
+        db_path = self._resolve_db_path(ctx)
+        if db_path is None:
+            return ToolResult.failure(
+                "no memory DB configured for this persona (set default_config.db_path "
+                "or pass ctx.extra['memory.db_path'])"
+            )
+
+        try:
+            import techne  # type: ignore[import-not-found]
+        except ImportError as exc:
+            return ToolResult.failure(
+                f"techne not installed; memory handler unavailable ({exc})"
+            )
+
+        if name == "recall":
+            return self._recall(techne, db_path, payload)
+        if name == "commit":
+            return self._commit(techne, db_path, payload)
+        return ToolResult.failure(f"unknown tool {name!r}")
+
+    # ---- per-request config ----------------------------------------------
+
+    def _resolve_db_path(self, ctx: Context) -> Path | None:
+        override = ctx.extra.get("memory.db_path")
+        if override:
+            return Path(override).expanduser()
+        return self.default_config.db_path
+
+    # ---- tools ----------------------------------------------------------
+
+    def _recall(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return ToolResult.failure("'query' must be a non-empty string")
+
+        sanitized = _sanitize_query(query)
+        if not sanitized:
+            return ToolResult.json({"query": query, "hits": []})
+
+        limit = int(
+            payload.get("limit") or self.default_config.default_recall_limit
+        )
+        limit = max(1, min(limit, 50))
+
+        try:
+            results = techne.search.search(
+                db_path,
+                sanitized,
+                table="knowledge",
+                limit=limit,
+                use_vectors=self.default_config.use_vectors,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult.failure(f"recall failed: {exc}")
+
+        hits = [
+            {
+                "content": r.get("content", ""),
+                "type": r.get("knowledge_type") or r.get("type"),
+                "confidence": r.get("confidence"),
+                "tags": r.get("tags") or "",
+                "score": r.get("rank"),
+            }
+            for r in results
+        ]
+        return ToolResult.json({"query": query, "hits": hits})
+
+    def _commit(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
+        content = payload.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return ToolResult.failure("'content' must be a non-empty string")
+
+        ktype = payload.get("type", "fact")
+        if ktype not in VALID_TYPES:
+            return ToolResult.failure(
+                f"'type' must be one of {list(VALID_TYPES)}; got {ktype!r}"
+            )
+        confidence = payload.get("confidence", "medium")
+        if confidence not in VALID_CONFIDENCE:
+            return ToolResult.failure(
+                f"'confidence' must be one of {list(VALID_CONFIDENCE)}; got {confidence!r}"
+            )
+        tags = payload.get("tags", "")
+        if not isinstance(tags, str):
+            return ToolResult.failure("'tags' must be a string")
+
+        # Initialize the DB if it doesn't exist — operators expect the
+        # handler to bootstrap on first use rather than error on a
+        # missing file.
+        if not db_path.exists():
+            try:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                techne.init_db(db_path)
+            except Exception as exc:  # noqa: BLE001
+                return ToolResult.failure(f"could not initialize techne DB: {exc}")
+
+        try:
+            techne.knowledge.store(
+                db_path,
+                content=content,
+                type=ktype,
+                tags=tags,
+                confidence=confidence,
+                source="limenal",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult.failure(f"commit failed: {exc}")
+
+        return ToolResult.json(
+            {"committed": True, "type": ktype, "confidence": confidence}
+        )
+
+
+def _sanitize_query(query: str) -> str:
+    """Strip FTS5 specials, drop stopwords, OR-join the rest.
+
+    Mirrors Cabal's TechneMemoryStore._sanitize_query so personas using
+    the limenal memory handler and Archivist's direct techne path see
+    the same recall semantics on identical corpora.
+    """
+    cleaned = _FTS5_SPECIALS.sub(" ", query).lower()
+    tokens = [
+        t for t in cleaned.split()
+        if len(t) > 1 and t not in _STOPWORDS
+    ]
+    return " OR ".join(tokens)
+
+
+_SINGLETON: MemoryHandler | None = None
+
+
+def get_handler() -> Handler:
+    """Entry-point factory.
+
+    Ships with NO default db_path — the operator wires this at
+    construction time (or per-persona via ctx.extra). A handler with
+    no DB path refuses every dispatch with a structured error.
+    """
+    global _SINGLETON
+    if _SINGLETON is None:
+        _SINGLETON = MemoryHandler()
+    return _SINGLETON

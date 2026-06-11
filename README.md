@@ -32,6 +32,12 @@ spec the code is following.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+
+# Sibling-installed techne so the `memory` handler tests run.
+# (Skip if you don't need the memory backend; the handler is gracefully
+# unusable without it.)
+pip install -e ../techne
+
 pytest -q
 ```
 
