@@ -12,6 +12,7 @@ from limenal.handlers.notify import (
     LEVELS,
     NotifyError,
     NotifyHandler,
+    StdoutTransport,
     Transport,
     WebhookTransport,
 )
@@ -54,10 +55,13 @@ def _webhook(
 
 
 @pytest.mark.asyncio
-async def test_default_transport_is_webhook() -> None:
-    """Out of the box NotifyHandler ships with a webhook transport."""
+async def test_default_transports_are_webhook_and_stdout() -> None:
+    """Out of the box NotifyHandler ships with both default transports
+    so the operator can use webhook for real notifications + stdout
+    for dev/audit without configuring anything."""
     handler = NotifyHandler()
     assert "webhook" in handler.transports
+    assert "stdout" in handler.transports
     assert handler.default_transport == "webhook"
 
 
@@ -69,6 +73,8 @@ async def test_list_transports_returns_credential_keys() -> None:
     assert payload["default"] == "webhook"
     by_name = {t["name"]: t for t in payload["transports"]}
     assert by_name["webhook"]["credential_keys"] == ["NOTIFY_WEBHOOK_URL"]
+    # stdout needs nothing from the operator
+    assert by_name["stdout"]["credential_keys"] == []
 
 
 @pytest.mark.asyncio
@@ -399,3 +405,128 @@ def test_handler_registered_in_entry_points() -> None:
     assert record is not None
     assert record.card.handler == "notify"
     assert {t.name for t in record.card.tools} == {"send", "list_transports"}
+
+
+# ---- stdout transport (Phase MM) ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_writes_to_stream() -> None:
+    """The persona's notification line lands in the provided stream
+    with persona, agent_name, level, and message visible."""
+    import io
+
+    buf = io.StringIO()
+    handler = NotifyHandler(
+        transports={"stdout": StdoutTransport(stream=buf, timestamp=False)},
+        default_transport="stdout",
+    )
+    result = await handler.dispatch(
+        "send",
+        {"message": "build complete", "level": "info", "title": "Build #42"},
+        _ctx(),
+    )
+    assert result.is_error is False
+    out = buf.getvalue()
+    assert "[INFO]" in out
+    assert "[rook:rook-primus]" in out
+    assert "Build #42:" in out
+    assert "build complete" in out
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_omits_title_when_absent() -> None:
+    import io
+
+    buf = io.StringIO()
+    handler = NotifyHandler(
+        transports={"stdout": StdoutTransport(stream=buf, timestamp=False)},
+        default_transport="stdout",
+    )
+    await handler.dispatch("send", {"message": "x"}, _ctx())
+    line = buf.getvalue().rstrip("\n")
+    # No `<title>:` between the agent tag and the message
+    assert line.endswith("[rook:rook-primus] x")
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_level_appears_uppercase() -> None:
+    import io
+
+    buf = io.StringIO()
+    handler = NotifyHandler(
+        transports={"stdout": StdoutTransport(stream=buf, timestamp=False)},
+        default_transport="stdout",
+    )
+    await handler.dispatch(
+        "send", {"message": "x", "level": "warning"}, _ctx()
+    )
+    assert "[WARNING]" in buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_with_timestamp_prefix() -> None:
+    """Default timestamp=True prepends an ISO8601 UTC timestamp."""
+    import io
+    import re
+
+    buf = io.StringIO()
+    handler = NotifyHandler(
+        transports={"stdout": StdoutTransport(stream=buf, timestamp=True)},
+        default_transport="stdout",
+    )
+    await handler.dispatch("send", {"message": "x"}, _ctx())
+    line = buf.getvalue()
+    # ISO 8601 prefix like 2026-06-11T19:42:13+00:00
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", line)
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_no_credentials_required() -> None:
+    """The transport never reads ctx.credentials. A completely empty
+    Context still produces a notification — important for dev where
+    the operator hasn't set up any secrets yet."""
+    import io
+
+    buf = io.StringIO()
+    handler = NotifyHandler(
+        transports={"stdout": StdoutTransport(stream=buf, timestamp=False)},
+        default_transport="stdout",
+    )
+    result = await handler.dispatch(
+        "send",
+        {"message": "no creds needed"},
+        _ctx(credentials={}, extra={}),
+    )
+    assert result.is_error is False
+    assert "no creds needed" in buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_stdout_transport_selected_per_call() -> None:
+    """Same handler instance with both transports; persona picks stdout
+    per call without operator config."""
+    import io
+
+    buf = io.StringIO()
+    webhook_calls = {"n": 0}
+
+    def hook_fn(request: httpx.Request) -> httpx.Response:
+        webhook_calls["n"] += 1
+        return httpx.Response(200)
+
+    handler = NotifyHandler(
+        transports={
+            "webhook": _webhook(hook_fn),
+            "stdout": StdoutTransport(stream=buf, timestamp=False),
+        },
+        default_transport="webhook",
+    )
+    # Default would be webhook; pick stdout per-call instead
+    await handler.dispatch(
+        "send",
+        {"message": "via stdout", "transport": "stdout"},
+        _ctx(),
+    )
+    assert webhook_calls["n"] == 0
+    assert "via stdout" in buf.getvalue()

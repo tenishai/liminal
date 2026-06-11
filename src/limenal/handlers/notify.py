@@ -38,6 +38,7 @@ import json
 import socket
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import UTC
 from typing import Any
 from urllib.parse import urlparse
 
@@ -205,6 +206,61 @@ class WebhookTransport(Transport):
         return [info[4][0] for info in infos]
 
 
+# ---- Stdout transport ----------------------------------------------------
+
+
+@dataclass
+class StdoutTransport(Transport):
+    """Print to a file-like stream — stderr by default.
+
+    Useful for:
+      - dev (operator runs `limenal serve` and watches notifications fly
+        by alongside the daemon log)
+      - audit-style overlay (operator wires it as a secondary transport
+        so every notification is also logged locally)
+      - tests (capture the stream and assert)
+
+    No credentials, no network, no SSRF surface. Cannot fail in any way
+    the agent needs to handle structurally — `notify.send` always
+    succeeds against this transport.
+    """
+
+    name: str = "stdout"
+    # Injectable for tests — defaults to None so we resolve to sys.stderr
+    # at send-time (don't capture the module-import-time sys.stderr).
+    stream: Any = None
+    timestamp: bool = True
+
+    @property
+    def credential_keys(self) -> list[str]:
+        return []
+
+    async def send(
+        self,
+        *,
+        message: str,
+        level: str,
+        title: str | None,
+        ctx: Context,
+    ) -> dict[str, Any]:
+        import sys
+        from datetime import datetime
+
+        target = self.stream if self.stream is not None else sys.stderr
+
+        prefix_parts: list[str] = []
+        if self.timestamp:
+            prefix_parts.append(datetime.now(UTC).isoformat(timespec="seconds"))
+        prefix_parts.append(f"[{level.upper()}]")
+        prefix_parts.append(f"[{ctx.identity}:{ctx.agent_name}]")
+        if title:
+            prefix_parts.append(f"{title}:")
+
+        line = " ".join(prefix_parts) + " " + message
+        print(line, file=target, flush=True)
+        return {"transport": "stdout", "ok": True, "bytes": len(line)}
+
+
 # ---- The handler ---------------------------------------------------------
 
 
@@ -225,10 +281,16 @@ class NotifyHandler:
     default_transport: str = "webhook"
 
     def __post_init__(self) -> None:
-        # Ship a webhook transport by default so the operator can use
-        # notify.send out of the box.
+        # Ship webhook + stdout by default so:
+        #   - The operator can use notify.send out of the box against any
+        #     URL they configure (webhook).
+        #   - Dev / audit / tests can use stdout without configuring
+        #     anything; the operator picks per-call with transport="stdout".
         if not self.transports:
-            self.transports = {"webhook": WebhookTransport()}
+            self.transports = {
+                "webhook": WebhookTransport(),
+                "stdout": StdoutTransport(),
+            }
 
     def tools(self) -> list[ToolSpec]:
         return [
