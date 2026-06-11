@@ -1,0 +1,367 @@
+"""MCP client implementation.
+
+The client speaks the same JSON-RPC surface the server exposes. Errors
+break out into:
+  - MCPTransportError    network failed (DNS, connect, 5xx)
+  - MCPRemoteError       server returned a JSON-RPC error body
+  - MCPError             base type, lets callers catch either flavor
+
+Token provider is a no-arg callable. The client invokes it on every
+request so a caller that mints short-lived JWTs can refresh
+transparently (e.g. by reading a freshly-rotated session_token from a
+shared state). Tests and simple integrations can pass `lambda: "static-token"`.
+"""
+
+from __future__ import annotations
+
+import itertools
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from limenal import __version__ as LIMENAL_VERSION
+
+
+DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+
+
+class MCPError(RuntimeError):
+    """Base for any client-side failure."""
+
+
+class MCPTransportError(MCPError):
+    """Network / HTTP failure before we got a JSON-RPC envelope back."""
+
+
+class MCPRemoteError(MCPError):
+    """The server returned a JSON-RPC error response."""
+
+    def __init__(self, code: int, message: str, data: Any | None = None) -> None:
+        super().__init__(f"[{code}] {message}")
+        self.code = code
+        self.message = message
+        self.data = data
+
+
+@dataclass(slots=True, frozen=True)
+class Tool:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass(slots=True)
+class ToolCallOutcome:
+    """Result of `call_tool`.
+
+    `is_error` mirrors the MCP server's `isError` flag, which signals
+    "the tool ran but indicated an error" — distinct from MCPRemoteError
+    (the JSON-RPC call itself failed). Both fields are populated.
+    """
+
+    content: list[dict[str, Any]] = field(default_factory=list)
+    is_error: bool = False
+
+    @property
+    def text(self) -> str:
+        """Concatenated text from text content blocks (if any)."""
+        out: list[str] = []
+        for block in self.content:
+            if block.get("type") == "text" and "text" in block:
+                out.append(block["text"])
+        return "".join(out)
+
+
+# ---- Async client ---------------------------------------------------------
+
+
+class AsyncMCPClient:
+    """Async MCP client.
+
+    Args:
+        base_url: e.g. ``http://limenal:9100``.
+        token_provider: no-arg callable that returns the current bearer
+            token. Invoked per request.
+        http_client: optional pre-built httpx.AsyncClient (useful for
+            ASGI testing — pass `AsyncClient(transport=ASGITransport(...))`).
+        client_name: advertised in `initialize`. Defaults to ``"limenal-client"``.
+        client_version: advertised in `initialize`.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token_provider: Callable[[], str],
+        http_client: httpx.AsyncClient | None = None,
+        client_name: str = "limenal-client",
+        client_version: str = LIMENAL_VERSION,
+        protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._token = token_provider
+        self._owned_client = http_client is None
+        self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        self._client_name = client_name
+        self._client_version = client_version
+        self._protocol_version = protocol_version
+        self._ids = itertools.count(1)
+        self._initialized = False
+        self._server_capabilities: dict[str, Any] = {}
+
+    async def __aenter__(self) -> "AsyncMCPClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        if self._owned_client:
+            await self._http.aclose()
+
+    async def initialize(self) -> dict[str, Any]:
+        """Explicit handshake. Sets ``server_capabilities`` from the result."""
+        result = await self._rpc(
+            "initialize",
+            {
+                "protocolVersion": self._protocol_version,
+                "clientInfo": {
+                    "name": self._client_name,
+                    "version": self._client_version,
+                },
+                "capabilities": {},
+            },
+            auth=False,
+        )
+        self._server_capabilities = result.get("capabilities", {})
+        self._initialized = True
+        # Per MCP spec, the client sends an initialized notification next.
+        await self._notify("notifications/initialized", {})
+        return result
+
+    @property
+    def server_capabilities(self) -> dict[str, Any]:
+        return self._server_capabilities
+
+    async def list_tools(self) -> list[Tool]:
+        if not self._initialized:
+            await self.initialize()
+        result = await self._rpc("tools/list", {}, auth=True)
+        tools: list[Tool] = []
+        for raw in result.get("tools", []):
+            tools.append(
+                Tool(
+                    name=raw["name"],
+                    description=raw.get("description", ""),
+                    input_schema=raw.get("inputSchema") or {"type": "object", "properties": {}},
+                )
+            )
+        return tools
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> ToolCallOutcome:
+        if not self._initialized:
+            await self.initialize()
+        result = await self._rpc(
+            "tools/call",
+            {"name": name, "arguments": arguments or {}},
+            auth=True,
+        )
+        return ToolCallOutcome(
+            content=result.get("content", []),
+            is_error=bool(result.get("isError", False)),
+        )
+
+    async def ping(self) -> None:
+        await self._rpc("ping", {}, auth=False)
+
+    # ---- internals ---------------------------------------------------------
+
+    async def _rpc(
+        self, method: str, params: dict[str, Any], *, auth: bool
+    ) -> dict[str, Any]:
+        envelope = {
+            "jsonrpc": "2.0",
+            "id": next(self._ids),
+            "method": method,
+            "params": params,
+        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if auth:
+            headers["Authorization"] = f"Bearer {self._token()}"
+        try:
+            resp = await self._http.post(
+                f"{self._base_url}/mcp", json=envelope, headers=headers
+            )
+        except httpx.HTTPError as exc:
+            raise MCPTransportError(f"transport error: {exc}") from exc
+        if resp.status_code >= 500:
+            raise MCPTransportError(
+                f"server {resp.status_code}: {resp.text[:200]}"
+            )
+        try:
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            raise MCPTransportError(f"non-JSON response: {exc}") from exc
+        if body.get("error"):
+            err = body["error"]
+            raise MCPRemoteError(
+                code=err["code"], message=err["message"], data=err.get("data")
+            )
+        return body.get("result") or {}
+
+    async def _notify(self, method: str, params: dict[str, Any]) -> None:
+        """One-way notify; no id field, no response body expected."""
+        envelope = {"jsonrpc": "2.0", "method": method, "params": params}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._token()}",
+        }
+        try:
+            await self._http.post(
+                f"{self._base_url}/mcp", json=envelope, headers=headers
+            )
+        except httpx.HTTPError:
+            # Notifications are fire-and-forget; we don't want to fail
+            # initialize() just because the notify leg flaked.
+            pass
+
+
+# ---- Sync client (thin wrapper) -------------------------------------------
+
+
+class MCPClient:
+    """Synchronous MCP client — wraps httpx.Client."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token_provider: Callable[[], str],
+        http_client: httpx.Client | None = None,
+        client_name: str = "limenal-client",
+        client_version: str = LIMENAL_VERSION,
+        protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._token = token_provider
+        self._owned_client = http_client is None
+        self._http = http_client or httpx.Client(timeout=httpx.Timeout(30.0))
+        self._client_name = client_name
+        self._client_version = client_version
+        self._protocol_version = protocol_version
+        self._ids = itertools.count(1)
+        self._initialized = False
+        self._server_capabilities: dict[str, Any] = {}
+
+    def __enter__(self) -> "MCPClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._owned_client:
+            self._http.close()
+
+    def initialize(self) -> dict[str, Any]:
+        result = self._rpc(
+            "initialize",
+            {
+                "protocolVersion": self._protocol_version,
+                "clientInfo": {
+                    "name": self._client_name,
+                    "version": self._client_version,
+                },
+                "capabilities": {},
+            },
+            auth=False,
+        )
+        self._server_capabilities = result.get("capabilities", {})
+        self._initialized = True
+        self._notify("notifications/initialized", {})
+        return result
+
+    @property
+    def server_capabilities(self) -> dict[str, Any]:
+        return self._server_capabilities
+
+    def list_tools(self) -> list[Tool]:
+        if not self._initialized:
+            self.initialize()
+        result = self._rpc("tools/list", {}, auth=True)
+        return [
+            Tool(
+                name=raw["name"],
+                description=raw.get("description", ""),
+                input_schema=raw.get("inputSchema") or {"type": "object", "properties": {}},
+            )
+            for raw in result.get("tools", [])
+        ]
+
+    def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> ToolCallOutcome:
+        if not self._initialized:
+            self.initialize()
+        result = self._rpc(
+            "tools/call",
+            {"name": name, "arguments": arguments or {}},
+            auth=True,
+        )
+        return ToolCallOutcome(
+            content=result.get("content", []),
+            is_error=bool(result.get("isError", False)),
+        )
+
+    def ping(self) -> None:
+        self._rpc("ping", {}, auth=False)
+
+    def _rpc(
+        self, method: str, params: dict[str, Any], *, auth: bool
+    ) -> dict[str, Any]:
+        envelope = {
+            "jsonrpc": "2.0",
+            "id": next(self._ids),
+            "method": method,
+            "params": params,
+        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if auth:
+            headers["Authorization"] = f"Bearer {self._token()}"
+        try:
+            resp = self._http.post(
+                f"{self._base_url}/mcp", json=envelope, headers=headers
+            )
+        except httpx.HTTPError as exc:
+            raise MCPTransportError(f"transport error: {exc}") from exc
+        if resp.status_code >= 500:
+            raise MCPTransportError(
+                f"server {resp.status_code}: {resp.text[:200]}"
+            )
+        try:
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            raise MCPTransportError(f"non-JSON response: {exc}") from exc
+        if body.get("error"):
+            err = body["error"]
+            raise MCPRemoteError(
+                code=err["code"], message=err["message"], data=err.get("data")
+            )
+        return body.get("result") or {}
+
+    def _notify(self, method: str, params: dict[str, Any]) -> None:
+        envelope = {"jsonrpc": "2.0", "method": method, "params": params}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._token()}",
+        }
+        try:
+            self._http.post(
+                f"{self._base_url}/mcp", json=envelope, headers=headers
+            )
+        except httpx.HTTPError:
+            pass

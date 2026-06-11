@@ -6,9 +6,10 @@ proposal carried over from the Cabal workspace).
 ## Headline
 
 - **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
-- **Tests**: 58 passing, ~0.6s.
+- **Tests**: 71 passing, ~0.5s.
 - **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
+- **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.
 
 ## What landed in this commit (Phase Z)
 
@@ -29,6 +30,13 @@ proposal carried over from the Cabal workspace).
 | server/auth | `auth.py` | JWTVerifier Protocol; StaticKeySetVerifier (tests) and URLJWKSVerifier (prod) with TTL cache + kid-miss refresh. Returns VerifiedClaims{identity, agent_name, raw} extracted from cabal_persona + sub claims |
 | server/routes | `routes.py` | POST /mcp dispatching initialize / notifications/initialized / ping / tools/list / tools/call; auth gate skips public methods; tool_call resolves credentials via injectable callable and builds Context for the dispatcher. GET /healthz |
 | server/app | `app.py` | create_app(jwt_verifier, registry, credential_resolver, server_name) — registry defaults to discover_handlers(), credential_resolver defaults to None (empty credentials) |
+
+## What landed in Phase BB — MCP client lib
+
+| Layer | File(s) | What it ships |
+|---|---|---|
+| client/mcp | `mcp.py` | `MCPClient` (sync) + `AsyncMCPClient` (async), same surface: `initialize`, `list_tools`, `call_tool`, `ping`. Auto-handshake on first authenticated call. `token_provider` is a callable invoked per request — short-lived JWTs refresh transparently. Errors split into `MCPTransportError` (network/HTTP) vs `MCPRemoteError` (JSON-RPC error body); base `MCPError` catches either. `Tool` and `ToolCallOutcome` dataclasses make the typed surface usable. |
+| client/__init__ | `__init__.py` | Public re-exports. |
 
 ## What works end-to-end now
 
