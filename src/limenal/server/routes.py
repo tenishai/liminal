@@ -124,7 +124,7 @@ def build_router() -> APIRouter:
         if rpc_req.method == "ping":
             return make_success(id=rpc_req.id, result={})
         if rpc_req.method == "tools/list":
-            return await _handle_tools_list(request, rpc_req)
+            return await _handle_tools_list(request, rpc_req, claims)
         if rpc_req.method == "tools/call":
             return await _handle_tools_call(request, rpc_req, claims)
 
@@ -162,13 +162,22 @@ async def _handle_initialize(
 
 
 async def _handle_tools_list(
-    request: Request, rpc_req: JSONRPCRequest
+    request: Request,
+    rpc_req: JSONRPCRequest,
+    claims: VerifiedClaims | None,
 ) -> JSONRPCResponse:
     dispatcher: InProcessDispatcher = request.app.state.dispatcher
     tools = dispatcher.list_tools()
-    # MCP camelCase: snake → camel for input_schema
+    allowed = _allowed_handlers_for(claims)
+    # MCP camelCase: snake → camel for input_schema. Also filter by
+    # per-persona allowed_handlers when set so the LLM never sees tools
+    # its persona can't actually call (consistent with the credentials
+    # isolation pattern: don't lie to the agent about what it can do).
     out = []
     for spec in tools:
+        handler_name = spec["name"].split(".", 1)[0]
+        if allowed is not None and handler_name not in allowed:
+            continue
         adapted = {
             "name": spec["name"],
             "description": spec.get("description", ""),
@@ -177,6 +186,20 @@ async def _handle_tools_list(
         out.append(adapted)
     result = ToolsListResult(tools=out)
     return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))
+
+
+def _allowed_handlers_for(claims: VerifiedClaims | None) -> set[str] | None:
+    """Extract the per-persona allowlist from the JWT claim, or None if
+    the persona has no allowlist (= all handlers allowed)."""
+    if claims is None:
+        return None
+    extras = claims.raw.get("cabal_tool_extras") or {}
+    if not isinstance(extras, dict):
+        return None
+    raw = extras.get("limenal.allowed_handlers")
+    if not isinstance(raw, list):
+        return None
+    return {str(h) for h in raw if isinstance(h, str) and h}
 
 
 async def _handle_tools_call(
@@ -196,11 +219,26 @@ async def _handle_tools_call(
             message=f"invalid tools/call params: {exc}",
         )
 
+    # Per-persona handler allowlist check. tools/list already filters by
+    # this list (Phase NN), but enforcing at tools/call too is the
+    # defense-in-depth posture: an LLM that hallucinates a tool name
+    # from training data shouldn't bypass the allowlist.
+    handler_name = params.name.split(".", 1)[0]
+    allowed = _allowed_handlers_for(claims)
+    if allowed is not None and handler_name not in allowed:
+        return make_error(
+            id=rpc_req.id,
+            code=ERROR_UNKNOWN_TOOL,
+            message=(
+                f"handler {handler_name!r} not in persona's allowed_handlers "
+                f"({sorted(allowed)})"
+            ),
+        )
+
     # Credential resolver lookup. If none was wired, the handler gets {}
     # and either errors gracefully (slack, github) or works fine
     # (scratchpad). Phase 1.6 wires the real Cabal Core fetch.
     resolver = request.app.state.credential_resolver
-    handler_name = params.name.split(".", 1)[0]
     credentials: dict[str, str] = {}
     if resolver is not None:
         try:
