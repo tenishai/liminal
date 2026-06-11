@@ -1,10 +1,16 @@
 name: test
 
+# Manual trigger only until GH_PAT_REPOS is added to repo secrets.
+# Once the PAT is in place (Settings → Secrets and variables → Actions →
+# New repository secret, name `GH_PAT_REPOS`, value: a PAT with `repo`
+# scope so the workflow can clone the private techne repo), uncomment
+# the push/pull_request triggers below to re-enable automatic runs.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
