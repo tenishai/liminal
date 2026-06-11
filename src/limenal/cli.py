@@ -20,6 +20,18 @@ def main(argv: list[str] | None = None) -> int:
         "--cards", action="store_true", help="Also print each handler's capability card"
     )
 
+    serve_p = sub.add_parser("serve", help="Run the MCP HTTP server")
+    serve_p.add_argument("--host", default="127.0.0.1")
+    serve_p.add_argument("--port", type=int, default=9100)
+    serve_p.add_argument(
+        "--jwks-url",
+        default=None,
+        help="URL of the JWKS to verify caller tokens against. Required for any authenticated method (tools/list, tools/call).",
+    )
+    serve_p.add_argument(
+        "--issuer", default="cabal-core", help="Expected `iss` claim."
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "version" or args.cmd is None:
@@ -43,6 +55,25 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  creds:  {record.card.credential_keys or '(none)'}")
                 print(f"  labels: {record.card.labels or '{}'}")
                 print()
+        return 0
+
+    if args.cmd == "serve":
+        import uvicorn
+
+        from limenal.server import URLJWKSVerifier, create_app
+
+        verifier = None
+        if args.jwks_url:
+            verifier = URLJWKSVerifier(
+                jwks_url=args.jwks_url, expected_issuer=args.issuer
+            )
+        else:
+            print(
+                "warning: --jwks-url not set; tools/list and tools/call will reject every request",
+                file=sys.stderr,
+            )
+        app = create_app(jwt_verifier=verifier)
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 
     parser.print_help()

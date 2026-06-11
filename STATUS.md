@@ -5,9 +5,10 @@ proposal carried over from the Cabal workspace).
 
 ## Headline
 
-- **GitHub**: https://github.com/dimartin/limenal — private, first commit landing.
-- **Tests**: 32 passing, ~0.5s.
-- **CLI works**: `limenal version` + `limenal list-handlers --cards` round-trip.
+- **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
+- **Tests**: 58 passing, ~0.6s.
+- **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
+- **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
 
 ## What landed in this commit (Phase Z)
 
@@ -17,8 +18,17 @@ proposal carried over from the Cabal workspace).
 | registry | `src/limenal/registry/discover.py` | Entry-point group discovery (`limenal.handlers`), per-handler fail-open error handling, name-keyed Registry, explicit-register escape hatch for tests |
 | dispatch | `src/limenal/dispatch/local.py` | InProcessDispatcher; list_tools prefixes with handler name; handler exceptions become ToolResult.failure not propagating raises |
 | handlers | `src/limenal/handlers/scratchpad.py` | Reference handler — per-(identity, agent) ephemeral notes, no credentials, full set / get / list / clear |
-| cli | `src/limenal/cli.py` | `limenal version` + `limenal list-handlers [--cards]` |
+| cli | `src/limenal/cli.py` | `limenal version` + `limenal list-handlers [--cards]` + `limenal serve` |
 | docs | `docs/design.md` | The original proposal, vendored from cabal workspace |
+
+## What landed in Phase AA — MCP HTTP server
+
+| Layer | File(s) | What it ships |
+|---|---|---|
+| server/mcp_types | `mcp_types.py` | JSON-RPC envelope + InitializeParams/Result, ToolsListResult, ToolCallParams/Result, ServerInfo, error codes (-32700..-32603 standard + -32001..-32003 server-defined) |
+| server/auth | `auth.py` | JWTVerifier Protocol; StaticKeySetVerifier (tests) and URLJWKSVerifier (prod) with TTL cache + kid-miss refresh. Returns VerifiedClaims{identity, agent_name, raw} extracted from cabal_persona + sub claims |
+| server/routes | `routes.py` | POST /mcp dispatching initialize / notifications/initialized / ping / tools/list / tools/call; auth gate skips public methods; tool_call resolves credentials via injectable callable and builds Context for the dispatcher. GET /healthz |
+| server/app | `app.py` | create_app(jwt_verifier, registry, credential_resolver, server_name) — registry defaults to discover_handlers(), credential_resolver defaults to None (empty credentials) |
 
 ## What works end-to-end now
 
@@ -34,18 +44,20 @@ proposal carried over from the Cabal workspace).
 
 ## What's NOT built yet — next session targets
 
-- **MCP HTTP/SSE server** (`server/`): the agent-facing wire transport.
-  Phase 1.5 — call it the moment a real MCP client needs to connect.
-- **Credential resolution** from a Cabal Core URL: today Context.credentials
-  is whatever the caller passes; Phase 1.6 adds the `(persona, handler)` →
-  credentials fetch + 15-minute TTL cache (design.md §"Credential Flow").
+- **Streaming responses** (text/event-stream variant per the MCP "Streamable HTTP"
+  transport): right now every response is a single JSON body. SSE for tool
+  calls that want to stream tokens lands in Phase 1.6.
+- **Real Cabal Core credential fetch**: the `credential_resolver` callable
+  is wired into the server; production needs an httpx-based implementation
+  that calls `GET https://cabal-core/secrets/{persona}/{handler}` with mTLS
+  + the 15-minute TTL cache from design.md §"Credential Flow".
 - **Subprocess JSON-RPC mode** (scale mode): the same Handler contract, but
   with the handler running in a separate process. Adds crash-loop circuit
   breaker (5 in 60s → QUARANTINED). Phase 2.
-- **`toolset.yaml`** loader: per-persona handler allowlists. Small.
+- **`toolset.yaml`** loader: per-persona handler allowlists.
 - **More built-in handlers**: `files` (scoped read/write), `web` (allowlisted
   fetch), `memory` (techne proxy), `patterns` (Architect pattern corpus
-  surface). Each is its own small project.
+  surface).
 - **Integration with Cabal**: the `tool_use` hook in Cabal Core fires
   against limenal once both sides are wired.
 
