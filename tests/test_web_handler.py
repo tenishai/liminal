@@ -6,14 +6,12 @@ Uses httpx.MockTransport for the outbound calls and a stub
 
 from __future__ import annotations
 
-import ipaddress
 from typing import Any
 
 import httpx
 import pytest
 
 from limenal.handlers.web import (
-    PRIVATE_NETWORKS,
     WebConfig,
     WebHandler,
     _host_in_allowlist,

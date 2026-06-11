@@ -49,8 +49,8 @@ def test_static_verifier_falls_back_to_persona_claim(signing_key) -> None:
     """Accept `persona` as an alias for `cabal_persona` — useful for
     callers not running under the Cabal naming."""
     ks = KeySet([signing_key])
-    token = _mint(signing_key, cabal_persona=None, persona="rook")
-    # joserfc's encode drops None values? we'll mint deliberately:
+    # joserfc's encode drops None values, so mint a token explicitly with
+    # `persona` (no `cabal_persona`) to prove the fallback path.
     import time as _time
 
     now = int(_time.time())

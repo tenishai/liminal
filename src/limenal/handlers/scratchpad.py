@@ -15,7 +15,6 @@ from typing import Any
 
 from limenal.protocol import Context, Handler, ToolResult, ToolSpec
 
-
 CARD = {
     "handler": "scratchpad",
     "description": "Per-agent ephemeral key/value notes (process-local; cleared on restart)",

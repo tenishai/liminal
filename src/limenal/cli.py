@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "serve":
         import os
+
         import uvicorn
 
         from limenal.server import (

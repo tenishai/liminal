@@ -21,8 +21,8 @@ resolver hands an async callable to the route; the route awaits it.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 
 import httpx
 import structlog

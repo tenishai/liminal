@@ -8,8 +8,6 @@ the CLI uses.
 
 from __future__ import annotations
 
-import pytest
-
 from limenal.server import (
     CabalCoreCredentialResolver,
     create_app,
@@ -41,19 +39,26 @@ def test_create_app_accepts_async_resolver_callable(keyset, registry) -> None:
 
 
 def test_default_token_env_name() -> None:
-    """The CLI default is LIMENAL_CABAL_TOKEN; lock that in as a constant
-    so the operator's docs + Cabal's docs + tests can't drift."""
-    import argparse
-
+    """The CLI default is LIMENAL_CABAL_TOKEN; lock that in so the
+    operator's docs + Cabal's docs + tests can't drift."""
     from limenal import cli as cli_module
 
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="cmd")
-    serve_p = sub.add_parser("serve")
-    # Replicate the CLI flag definition closely enough to read the default.
-    # Easier: just parse a serve command and look at the namespace.
-    args = cli_module.main  # smoke that the entry exists
-    assert args is not None
+    # Smoke that the entry exists; the actual default string is asserted
+    # by the help-text presence (operator-facing surface).
+    assert cli_module.main is not None
+    help_text = cli_module.main.__doc__ or ""  # noqa: F841 - placeholder
+    # Defaults live in argparse setup inside main(); we check it round-trips
+    # via the --help output rather than re-implementing parser construction.
+    from io import StringIO
+    from contextlib import redirect_stdout
+
+    buf = StringIO()
+    try:
+        with redirect_stdout(buf):
+            cli_module.main(["serve", "--help"])
+    except SystemExit:
+        pass  # argparse exits 0 after --help
+    assert "LIMENAL_CABAL_TOKEN" in buf.getvalue()
 
 
 def test_resolver_token_provider_re_reads_env_each_call(monkeypatch) -> None:

@@ -14,9 +14,9 @@ strictly the visibility surface.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from importlib.metadata import entry_points
-from typing import Iterator
 
 import structlog
 

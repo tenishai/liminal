@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.protocol import Context, Handler, ToolResult, ToolSpec
-from limenal.registry import HandlerRecord, Registry
+from limenal.protocol import ToolResult, ToolSpec
+from limenal.registry import Registry
 from limenal.registry.discover import (
     DiscoveryError,
     discover_handlers,

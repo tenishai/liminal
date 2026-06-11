@@ -46,15 +46,15 @@ class ToolResult(_Open):
     error: str | None = None
 
     @classmethod
-    def text(cls, text: str) -> "ToolResult":
+    def text(cls, text: str) -> ToolResult:
         """Build a successful text result."""
         return cls(content=[{"type": "text", "text": text}])
 
     @classmethod
-    def json(cls, payload: dict[str, Any]) -> "ToolResult":
+    def json(cls, payload: dict[str, Any]) -> ToolResult:
         """Build a successful structured result wrapped in MCP's content shape."""
         return cls(content=[{"type": "json", "data": payload}])
 
     @classmethod
-    def failure(cls, message: str) -> "ToolResult":
+    def failure(cls, message: str) -> ToolResult:
         return cls(is_error=True, error=message, content=[])

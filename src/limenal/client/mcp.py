@@ -23,7 +23,6 @@ import httpx
 
 from limenal import __version__ as LIMENAL_VERSION
 
-
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 
 
@@ -111,7 +110,7 @@ class AsyncMCPClient:
         self._initialized = False
         self._server_capabilities: dict[str, Any] = {}
 
-    async def __aenter__(self) -> "AsyncMCPClient":
+    async def __aenter__(self) -> AsyncMCPClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -257,7 +256,7 @@ class MCPClient:
         self._initialized = False
         self._server_capabilities: dict[str, Any] = {}
 
-    def __enter__(self) -> "MCPClient":
+    def __enter__(self) -> MCPClient:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
