@@ -49,8 +49,8 @@ def test_default_token_env_name() -> None:
     help_text = cli_module.main.__doc__ or ""  # noqa: F841 - placeholder
     # Defaults live in argparse setup inside main(); we check it round-trips
     # via the --help output rather than re-implementing parser construction.
-    from io import StringIO
     from contextlib import redirect_stdout
+    from io import StringIO
 
     buf = StringIO()
     try:

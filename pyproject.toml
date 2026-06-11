@@ -46,6 +46,7 @@ scratchpad = "limenal.handlers.scratchpad:get_handler"
 web        = "limenal.handlers.web:get_handler"
 files      = "limenal.handlers.files:get_handler"
 memory     = "limenal.handlers.memory:get_handler"
+notify     = "limenal.handlers.notify:get_handler"
 
 [project.urls]
 Source = "https://github.com/dimartin/limenal"
