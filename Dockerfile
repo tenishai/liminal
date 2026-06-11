@@ -27,15 +27,17 @@ COPY src ./src
 # pin to pyproject.toml's dependencies.
 COPY --from=techne / /build/techne
 
-RUN pip install --prefix=/install /build/techne \
- && pip install --prefix=/install .
+RUN python3 -m venv /venv \
+ && /venv/bin/pip install --no-cache-dir /build/techne \
+ && /venv/bin/pip install --no-cache-dir .
 
 # ----- Runtime stage --------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/install/bin:$PATH"
+    PATH="/venv/bin:$PATH" \
+    VIRTUAL_ENV="/venv"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
@@ -47,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 10002 limenal && \
     useradd --uid 10002 --gid limenal --home-dir /home/limenal --create-home limenal
 
-COPY --from=build /install /install
+COPY --from=build /venv /venv
 
 WORKDIR /app
 
