@@ -6,8 +6,8 @@ proposal carried over from the Cabal workspace).
 ## Headline
 
 - **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
-- **Tests**: 92 passing, ~0.6s.
-- **Handlers shipped**: `scratchpad` (per-agent k/v notes) and `web` (allowlisted HTTP fetch with SSRF defense).
+- **Tests**: 118 passing, ~0.7s.
+- **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense).
 - **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
 - **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.
@@ -50,6 +50,20 @@ proposal carried over from the Cabal workspace).
 - Failures inside the handler don't propagate; they come back as
   ToolResult.failure with a readable message.
 - Per-(identity, agent_name) isolation in scratchpad is enforced + tested.
+
+## What landed in Phase DD — files handler
+
+| Layer | File(s) | What it ships |
+|---|---|---|
+| handlers/files | `files.py` | `files.read` / `files.write` / `files.list` / `files.exists`. Allowlist of operator-resolved absolute path prefixes; every request: (1) must be an absolute path, (2) rejects `..` segments, (3) `expanduser().resolve()` then check the resolved path is under one of the allowlist prefixes. Symlinks that escape the allowlist are caught at resolve(). Read size cap with truncate, write size cap with refuse-before-touch, list entry cap. Per-persona `ctx.extra["files.allowed_paths"]` swaps the default for that dispatch. Empty default allowlist refuses everything — safe default for a freshly-installed limenal. |
+| entry-points | pyproject.toml | `files = "limenal.handlers.files:get_handler"` |
+
+26 new tests across safety (empty allowlist, relative path, `..`
+segment, outside allowlist, symlink escape, empty path), read (text,
+missing, on-dir, truncate, caller cap reduces), write (creates,
+mkdir parents, no-create flag, oversized refused before touching disk,
+outside allowlist, non-string content), list (entries + sort,
+truncate, missing, on-file), exists, per-persona override, entry-point.
 
 ## What landed in Phase CC — web handler
 

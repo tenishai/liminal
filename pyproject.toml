@@ -44,6 +44,7 @@ limenal = "limenal.cli:main"
 [project.entry-points."limenal.handlers"]
 scratchpad = "limenal.handlers.scratchpad:get_handler"
 web        = "limenal.handlers.web:get_handler"
+files      = "limenal.handlers.files:get_handler"
 
 [project.urls]
 Source = "https://github.com/dimartin/limenal"
