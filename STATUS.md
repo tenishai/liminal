@@ -6,8 +6,9 @@ proposal carried over from the Cabal workspace).
 ## Headline
 
 - **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
-- **Tests**: 136 passing, ~0.9s.
+- **Tests**: 153 passing, ~1s.
 - **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense), `memory` (techne-backed knowledge recall + commit).
+- **Credential plumbing complete**: `cabal_tool_extras` JWT claim → Context.extra; `CabalCoreCredentialResolver` fetches per-(persona, handler) secrets from Cabal Core with TTL caching.
 - **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
 - **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.

@@ -15,6 +15,10 @@ from limenal.server.auth import (
     StaticKeySetVerifier,
     URLJWKSVerifier,
 )
+from limenal.server.credentials import (
+    CabalCoreCredentialResolver,
+    CredentialResolver,
+)
 from limenal.server.mcp_types import (
     InitializeParams,
     InitializeResult,
@@ -28,6 +32,8 @@ from limenal.server.mcp_types import (
 
 __all__ = [
     "AuthError",
+    "CabalCoreCredentialResolver",
+    "CredentialResolver",
     "InitializeParams",
     "InitializeResult",
     "JSONRPCError",
