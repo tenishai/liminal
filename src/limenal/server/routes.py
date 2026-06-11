@@ -213,10 +213,20 @@ async def _handle_tools_call(
                 message=f"credential resolution failed: {exc}",
             )
 
+    # cabal_tool_extras is a Cabal-Cabal channel: per-persona scoping
+    # config (web.allowed_hosts, files.allowed_paths, memory.db_path,
+    # etc.) embedded in the JWT by Cabal at mint time and forwarded into
+    # Context.extra so handlers can read it the same way they do for tests.
+    extra: dict = {}
+    raw_extras = claims.raw.get("cabal_tool_extras")
+    if isinstance(raw_extras, dict):
+        extra = dict(raw_extras)
+
     ctx = Context(
         identity=claims.identity,
         agent_name=claims.agent_name,
         credentials=credentials,
+        extra=extra,
     )
 
     dispatcher: InProcessDispatcher = request.app.state.dispatcher
