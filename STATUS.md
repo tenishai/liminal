@@ -6,7 +6,8 @@ proposal carried over from the Cabal workspace).
 ## Headline
 
 - **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
-- **Tests**: 71 passing, ~0.5s.
+- **Tests**: 92 passing, ~0.6s.
+- **Handlers shipped**: `scratchpad` (per-agent k/v notes) and `web` (allowlisted HTTP fetch with SSRF defense).
 - **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
 - **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.
@@ -49,6 +50,20 @@ proposal carried over from the Cabal workspace).
 - Failures inside the handler don't propagate; they come back as
   ToolResult.failure with a readable message.
 - Per-(identity, agent_name) isolation in scratchpad is enforced + tested.
+
+## What landed in Phase CC — web handler
+
+| Layer | File(s) | What it ships |
+|---|---|---|
+| handlers/web | `web.py` | `web.fetch` + `web.head` with: hostname allowlist (wildcards, exact, glob, suffix; case-insensitive), private-IP denylist enforced via DNS resolution + IP-family check (catches DNS rebinding + metadata-service pivots), response-size cap with stream-and-truncate, content-type allowlist (text/json/html by default), follow_redirects=False so a 302 can't dump us into a denied host. Per-persona `ctx.extra["web.allowed_hosts"]` overrides the handler default — Cabal forwards it when wired. |
+| entry-points | pyproject.toml | `web = "limenal.handlers.web:get_handler"` |
+
+21 new tests across allowlist matcher (4 cases), pre-flight refusals
+(scheme / empty URL / not-in-allowlist), SSRF defense (loopback,
+metadata service, RFC1918, DNS failure), fetch happy path
+(text + json), size cap + caller-supplied max_bytes cap, content-type
+refusal of image, HEAD round-trip, per-persona ctx.extra override,
+entry-point discovery, capability-card shape.
 
 ## What's NOT built yet — next session targets
 

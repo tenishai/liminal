@@ -1,0 +1,374 @@
+"""web handler — allowlist, SSRF defense, fetch, head.
+
+Uses httpx.MockTransport for the outbound calls and a stub
+`dns_resolver` to control IP resolution deterministically.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+from typing import Any
+
+import httpx
+import pytest
+
+from limenal.handlers.web import (
+    PRIVATE_NETWORKS,
+    WebConfig,
+    WebHandler,
+    _host_in_allowlist,
+)
+from limenal.protocol import Context
+
+
+def _ctx(extra: dict[str, Any] | None = None) -> Context:
+    return Context(
+        identity="rook",
+        agent_name="rook-primus",
+        credentials={},
+        extra=extra or {},
+    )
+
+
+def _build_handler(
+    *,
+    mock: httpx.MockTransport,
+    allowed_hosts: list[str] | None = None,
+    dns_map: dict[str, list[str]] | None = None,
+    max_response_bytes: int = 1_000_000,
+    allowed_content_types: set[str] | None = None,
+) -> WebHandler:
+    cfg = WebConfig(
+        allowed_hosts=allowed_hosts or ["*"],
+        max_response_bytes=max_response_bytes,
+    )
+    if allowed_content_types is not None:
+        cfg.allowed_content_types = allowed_content_types
+
+    def resolver(host: str) -> list[str]:
+        return (dns_map or {"default-public.invalid": ["93.184.216.34"]}).get(
+            host, ["93.184.216.34"]
+        )
+
+    def factory() -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=mock, timeout=httpx.Timeout(5.0))
+
+    return WebHandler(
+        default_config=cfg,
+        http_client_factory=factory,
+        dns_resolver=resolver,
+    )
+
+
+# ---- allowlist matcher ----------------------------------------------------
+
+
+def test_allowlist_wildcard_matches_everything() -> None:
+    assert _host_in_allowlist("example.com", ["*"])
+    assert _host_in_allowlist("anything.tld", ["*"])
+
+
+def test_allowlist_exact_match() -> None:
+    assert _host_in_allowlist("api.example.com", ["api.example.com"])
+    assert not _host_in_allowlist("api.example.com", ["api.example.org"])
+
+
+def test_allowlist_glob_prefix() -> None:
+    assert _host_in_allowlist("api.example.com", ["*.example.com"])
+    assert _host_in_allowlist("docs.api.example.com", ["*.example.com"])
+
+
+def test_allowlist_suffix_match() -> None:
+    """Bare domain matches its subdomains as a convenience."""
+    assert _host_in_allowlist("api.example.com", ["example.com"])
+    assert _host_in_allowlist("example.com", ["example.com"])
+    assert not _host_in_allowlist("malicious-example.com", ["example.com"])
+
+
+def test_allowlist_case_insensitive() -> None:
+    assert _host_in_allowlist("Example.com", ["example.com"])
+    assert _host_in_allowlist("example.com", ["EXAMPLE.com"])
+
+
+# ---- URL pre-flight refusals ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejects_non_http_scheme() -> None:
+    handler = _build_handler(mock=httpx.MockTransport(lambda _: httpx.Response(200)))
+    result = await handler.dispatch(
+        "fetch", {"url": "ftp://example.com/x"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "scheme" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_empty_url() -> None:
+    handler = _build_handler(mock=httpx.MockTransport(lambda _: httpx.Response(200)))
+    result = await handler.dispatch("fetch", {}, _ctx())
+    assert result.is_error is True
+    assert "url" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_host_not_in_allowlist() -> None:
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        allowed_hosts=["example.com"],
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://malicious.org/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "allowlist" in result.error
+
+
+# ---- SSRF defense ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejects_loopback_resolution() -> None:
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"sneaky.test": ["127.0.0.1"]},
+        allowed_hosts=["*"],
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://sneaky.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "127.0.0.1" in result.error or "denied network" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_metadata_service() -> None:
+    """169.254.169.254 is the AWS/Azure/GCP metadata service — classic SSRF pivot."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"metadata.test": ["169.254.169.254"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://metadata.test/latest/meta-data/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "169.254" in result.error or "denied network" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_rfc1918_resolution() -> None:
+    """Even a public-looking host can't resolve to a private 10.x address."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"internal-host.test": ["10.0.0.1"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://internal-host.test/"}, _ctx()
+    )
+    assert result.is_error is True
+
+
+@pytest.mark.asyncio
+async def test_rejects_dns_resolution_failure() -> None:
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"resolves.fine": ["93.184.216.34"]},
+    )
+    # Host not in dns_map; resolver returns its default — let's make it
+    # explicitly empty by overriding
+    handler.dns_resolver = lambda h: []  # type: ignore[assignment]
+    result = await handler.dispatch(
+        "fetch", {"url": "https://no-such-host.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "resolve" in result.error
+
+
+# ---- fetch happy path -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_text_content() -> None:
+    captured = {"req": None}
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        captured["req"] = request
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain; charset=utf-8"},
+            content=b"Hello, world!",
+        )
+
+    handler = _build_handler(mock=httpx.MockTransport(handler_fn))
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/"}, _ctx()
+    )
+    assert result.is_error is False
+    payload = result.content[0]["data"]
+    assert payload["status"] == 200
+    assert payload["content_type"] == "text/plain"
+    assert payload["text"] == "Hello, world!"
+    assert payload["truncated"] is False
+    assert payload["bytes"] == 13
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_json_content() -> None:
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=b'{"answer": 42}',
+        )
+
+    handler = _build_handler(mock=httpx.MockTransport(handler_fn))
+    result = await handler.dispatch(
+        "fetch", {"url": "https://api.example.com/"}, _ctx()
+    )
+    assert result.is_error is False
+    payload = result.content[0]["data"]
+    assert payload["text"] == '{"answer": 42}'
+
+
+# ---- size cap ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_truncates_at_size_cap() -> None:
+    big = b"x" * 5000
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain"},
+            content=big,
+        )
+
+    handler = _build_handler(
+        mock=httpx.MockTransport(handler_fn),
+        max_response_bytes=1024,
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/"}, _ctx()
+    )
+    payload = result.content[0]["data"]
+    assert payload["bytes"] <= 1024
+    assert payload["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_payload_cap_capped_by_handler_config() -> None:
+    """The caller can REDUCE the cap but not raise it above handler config."""
+    big = b"x" * 5000
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain"},
+            content=big,
+        )
+
+    handler = _build_handler(
+        mock=httpx.MockTransport(handler_fn),
+        max_response_bytes=2000,
+    )
+    # Caller asks for 99999 — handler still caps at its 2000
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/", "max_bytes": 99999}, _ctx()
+    )
+    payload = result.content[0]["data"]
+    assert payload["bytes"] <= 2000
+
+
+# ---- content-type filter -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_refuses_image_by_default() -> None:
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=b"PNG-bytes-not-real",
+        )
+
+    handler = _build_handler(mock=httpx.MockTransport(handler_fn))
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/cat.png"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "content-type" in result.error
+
+
+# ---- HEAD --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_head_returns_headers() -> None:
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        assert request.method == "HEAD"
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": "text/html",
+                "etag": "abc123",
+            },
+        )
+
+    handler = _build_handler(mock=httpx.MockTransport(handler_fn))
+    result = await handler.dispatch(
+        "head", {"url": "https://example.com/"}, _ctx()
+    )
+    payload = result.content[0]["data"]
+    assert payload["status"] == 200
+    assert payload["headers"]["etag"] == "abc123"
+
+
+# ---- per-persona allowlist override -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_per_persona_allowlist_via_ctx_extra() -> None:
+    """When ctx.extra carries a tighter per-persona allowlist, it wins
+    over the handler default. Cabal forwards this via task metadata."""
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/plain"}, content=b"ok"
+        )
+
+    handler = _build_handler(
+        mock=httpx.MockTransport(handler_fn),
+        allowed_hosts=["*"],
+    )
+    ctx = _ctx(extra={"web.allowed_hosts": ["docs.example.com"]})
+    # Allowed
+    r1 = await handler.dispatch(
+        "fetch", {"url": "https://docs.example.com/page"}, ctx
+    )
+    assert r1.is_error is False
+    # Denied by per-persona allowlist
+    r2 = await handler.dispatch("fetch", {"url": "https://other.test/"}, ctx)
+    assert r2.is_error is True
+    assert "allowlist" in r2.error
+
+
+# ---- protocol conformance + entry-point discovery -------------------
+
+
+def test_handler_is_registered_in_entry_points() -> None:
+    from limenal.registry import discover_handlers
+
+    registry = discover_handlers()
+    record = registry.get("web")
+    assert record is not None
+    assert record.card.handler == "web"
+    assert any(t.name == "fetch" for t in record.card.tools)
+
+
+def test_capability_card_advertises_no_credentials() -> None:
+    """Web doesn't need a token to fetch public URLs."""
+    from limenal.handlers.web import get_handler
+
+    card = get_handler().capability_card()
+    assert card["credential_keys"] == []

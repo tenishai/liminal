@@ -43,6 +43,7 @@ limenal = "limenal.cli:main"
 # add to this group to be auto-discovered at startup.
 [project.entry-points."limenal.handlers"]
 scratchpad = "limenal.handlers.scratchpad:get_handler"
+web        = "limenal.handlers.web:get_handler"
 
 [project.urls]
 Source = "https://github.com/dimartin/limenal"
