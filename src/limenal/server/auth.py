@@ -31,6 +31,7 @@ log = structlog.get_logger(__name__)
 
 
 DEFAULT_ISS = "cabal-core"
+DEFAULT_AUD = "limenal"
 DEFAULT_LEEWAY_SECONDS = 30
 
 
@@ -65,6 +66,7 @@ class JWTVerifier(Protocol):
 class StaticKeySetVerifier:
     key_set: KeySet
     expected_issuer: str = DEFAULT_ISS
+    expected_audience: str | None = DEFAULT_AUD
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
 
     def verify(self, token: str) -> VerifiedClaims:
@@ -72,6 +74,7 @@ class StaticKeySetVerifier:
             token,
             key_set=self.key_set,
             expected_issuer=self.expected_issuer,
+            expected_audience=self.expected_audience,
             leeway_seconds=self.leeway_seconds,
         )
 
@@ -93,6 +96,8 @@ class URLJWKSVerifier:
     expected_issuer: str = DEFAULT_ISS
     cache_ttl_seconds: float = 300.0
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
+
+    expected_audience: str | None = DEFAULT_AUD
 
     _client: httpx.Client | None = None
     _cached: KeySet | None = field(default=None, init=False)
@@ -128,6 +133,7 @@ class URLJWKSVerifier:
                 token,
                 key_set=self._current(),
                 expected_issuer=self.expected_issuer,
+                expected_audience=self.expected_audience,
                 leeway_seconds=self.leeway_seconds,
             )
         except AuthError as exc:
@@ -138,6 +144,7 @@ class URLJWKSVerifier:
                     token,
                     key_set=self._current(),
                     expected_issuer=self.expected_issuer,
+                    expected_audience=self.expected_audience,
                     leeway_seconds=self.leeway_seconds,
                 )
             raise
@@ -151,6 +158,7 @@ def _verify_against_keyset(
     *,
     key_set: KeySet,
     expected_issuer: str,
+    expected_audience: str | None,
     leeway_seconds: int,
 ) -> VerifiedClaims:
     try:
@@ -158,10 +166,19 @@ def _verify_against_keyset(
     except Exception as exc:  # noqa: BLE001
         raise AuthError(f"signature verification failed: {exc}") from exc
 
+    # Algorithm pin — defense in depth against algorithm-confusion attacks.
+    alg = (decoded.header or {}).get("alg")
+    if alg != "RS256":
+        raise AuthError(f"algorithm {alg!r} not accepted (expected RS256)")
+
     claims = dict(decoded.claims)
     now = int(time.time())
     if claims.get("iss") != expected_issuer:
         raise AuthError(f"unexpected iss: {claims.get('iss')!r}")
+
+    if expected_audience is not None and claims.get("aud") != expected_audience:
+        raise AuthError("invalid_audience")
+
     exp = claims.get("exp")
     if exp is None or now > int(exp) + leeway_seconds:
         raise AuthError("token expired")

@@ -89,9 +89,16 @@ CARD = {
 @dataclass
 class MemoryConfig:
     """Operator config. db_path is the fallback when no per-persona
-    override arrives via ctx.extra."""
+    override arrives via ctx.extra.
+
+    allowed_db_dirs constrains which directories a JWT-supplied
+    memory.db_path override may point to. If empty and db_path is set,
+    the allowed dir is derived from db_path.parent. If both are unset,
+    JWT overrides are rejected (fail closed).
+    """
 
     db_path: Path | None = None
+    allowed_db_dirs: list[Path] = field(default_factory=list)
     use_vectors: bool = False
     default_recall_limit: int = 5
 
@@ -171,9 +178,45 @@ class MemoryHandler:
 
     def _resolve_db_path(self, ctx: Context) -> Path | None:
         override = ctx.extra.get("memory.db_path")
-        if override:
-            return Path(override).expanduser()
-        return self.default_config.db_path
+        if not override:
+            return self.default_config.db_path
+
+        # Apply the files-handler treatment: reject .., resolve, check ceiling.
+        candidate = Path(override)
+        if any(part == ".." for part in candidate.parts):
+            log.warning("memory.db_path_rejected", reason="contains ..", path=override)
+            return None
+
+        try:
+            resolved = candidate.expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
+            log.warning("memory.db_path_rejected", reason="resolve failed", error=str(exc))
+            return None
+
+        # Build the set of allowed base directories.
+        allowed_dirs: list[Path] = list(self.default_config.allowed_db_dirs)
+        if not allowed_dirs and self.default_config.db_path is not None:
+            allowed_dirs = [self.default_config.db_path.parent.resolve()]
+
+        if not allowed_dirs:
+            # No operator-configured ceiling at all — fail closed.
+            log.warning("memory.db_path_rejected", reason="no allowed_db_dirs configured")
+            return None
+
+        for base in allowed_dirs:
+            try:
+                resolved.relative_to(base)
+                return resolved
+            except ValueError:
+                pass
+
+        log.warning(
+            "memory.db_path_rejected",
+            reason="outside allowed dirs",
+            path=str(resolved),
+            allowed=[str(d) for d in allowed_dirs],
+        )
+        return None
 
     # ---- tools ----------------------------------------------------------
 

@@ -209,7 +209,10 @@ async def test_per_persona_db_path_via_ctx_extra(tmp_path) -> None:
 
     persona_db = tmp_path / "rook-only.db"
     techne.init_db(persona_db)
-    handler = _handler(db=None)  # no default — relies on per-persona override
+    # Configure allowed_db_dirs so the JWT override is accepted.
+    handler = MemoryHandler(
+        default_config=MemoryConfig(db_path=None, allowed_db_dirs=[tmp_path])
+    )
 
     ctx = _ctx(extra={"memory.db_path": str(persona_db)})
     result = await handler.dispatch(

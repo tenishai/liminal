@@ -135,9 +135,11 @@ async def test_missing_persona_claim_rejected(client, signing_key) -> None:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
+        "aud": "limenal",
         "iat": now,
         "exp": now + 60,
-        # no cabal_persona
+        "cabal_scope": ["dispatch"],
+        # no cabal_persona — that's the missing claim this test verifies
     }
     token = jwt.encode(header, payload, signing_key)
     r = await client.post(

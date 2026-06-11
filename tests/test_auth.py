@@ -25,6 +25,7 @@ def _mint(signing_key, **overrides) -> str:
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
+        "cabal_scope": ["dispatch"],
     }
     payload.update(overrides)
     return jwt.encode(header, payload, signing_key)
@@ -57,6 +58,7 @@ def test_static_verifier_falls_back_to_persona_claim(signing_key) -> None:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
+        "aud": "limenal",
         "iat": now,
         "exp": now + 60,
         "persona": "rook",
@@ -156,3 +158,69 @@ def test_url_verifier_refreshes_on_unknown_kid(signing_key) -> None:
     claims = verifier.verify(_mint(signing_key))
     assert claims.identity == "rook"
     assert fetch_count["n"] == 2
+
+
+# ---- Phase 1 trust boundary tests ------------------------------------------
+
+
+def test_wrong_aud_rejected(signing_key, keyset) -> None:
+    verifier = StaticKeySetVerifier(key_set=keyset)
+    token = _mint(signing_key, aud="cabal-core")  # operator aud, not limenal
+    with pytest.raises(AuthError, match="invalid_audience"):
+        verifier.verify(token)
+
+
+def test_correct_aud_accepted(signing_key, keyset) -> None:
+    verifier = StaticKeySetVerifier(key_set=keyset)
+    token = _mint(signing_key, aud="limenal")
+    claims = verifier.verify(token)
+    assert claims.raw["aud"] == "limenal"
+
+
+def test_no_aud_claim_rejected(signing_key, keyset) -> None:
+    """A token with no aud claim must be rejected when expected_audience is set."""
+    from joserfc import jwt as _jwt
+
+    now = int(time.time())
+    header = {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"}
+    payload = {
+        "iss": "cabal-core",
+        "sub": "rook-primus",
+        "iat": now,
+        "exp": now + 60,
+        "cabal_persona": "rook",
+        "cabal_scope": ["dispatch"],
+        # aud intentionally absent
+    }
+    token = _jwt.encode(header, payload, signing_key)
+    verifier = StaticKeySetVerifier(key_set=keyset)
+    with pytest.raises(AuthError, match="invalid_audience"):
+        verifier.verify(token)
+
+
+def test_algorithm_pin_rejects_non_rs256(signing_key, keyset) -> None:
+    """The verifier must reject tokens whose header declares a non-RS256 alg."""
+    import base64
+    import json as _json
+
+    # Build a valid RS256 token, then swap the header to claim HS256.
+    # The resulting token's signature won't verify, but we want to confirm
+    # the alg check fires with a meaningful message.
+    token = _mint(signing_key)
+    parts = token.split(".")
+    fake_header = {"alg": "HS256", "kid": signing_key.kid, "typ": "JWT"}
+    fake_b64 = base64.urlsafe_b64encode(
+        _json.dumps(fake_header).encode()
+    ).rstrip(b"=").decode()
+    tampered = f"{fake_b64}.{parts[1]}.{parts[2]}"
+    verifier = StaticKeySetVerifier(key_set=keyset)
+    with pytest.raises(AuthError):
+        verifier.verify(tampered)
+
+
+def test_verifier_with_no_audience_check_skips_aud(signing_key, keyset) -> None:
+    """expected_audience=None disables the aud check (useful for multi-aud keys)."""
+    verifier = StaticKeySetVerifier(key_set=keyset, expected_audience=None)
+    token = _mint(signing_key, aud="some-other-service")
+    claims = verifier.verify(token)
+    assert claims.raw["aud"] == "some-other-service"

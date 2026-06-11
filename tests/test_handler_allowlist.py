@@ -57,6 +57,7 @@ def _mint_with_allowlist(signing_key, allowlist: list[str] | None) -> str:
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
+        "cabal_scope": ["dispatch"],
     }
     if allowlist is not None:
         payload["cabal_tool_extras"] = {
@@ -136,9 +137,9 @@ async def test_empty_allowlist_filters_everything(client, signing_key) -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_allowlist_ignored(client, signing_key) -> None:
-    """A string instead of a list (operator typo) shouldn't crash —
-    behave as if no allowlist was set."""
+async def test_malformed_allowlist_fails_closed(client, signing_key) -> None:
+    """A string instead of a list is a malformed claim — fail closed (no tools)
+    rather than silently fail open (all tools)."""
     now = int(time.time())
     header = {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"}
     payload = {
@@ -148,7 +149,8 @@ async def test_malformed_allowlist_ignored(client, signing_key) -> None:
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
-        "cabal_tool_extras": {"limenal.allowed_handlers": "scratchpad"},  # str!
+        "cabal_scope": ["dispatch"],
+        "cabal_tool_extras": {"limenal.allowed_handlers": "scratchpad"},  # str, not list!
     }
     token = jwt.encode(header, payload, signing_key)
     async with client as c:
@@ -158,9 +160,8 @@ async def test_malformed_allowlist_ignored(client, signing_key) -> None:
             headers={"Authorization": f"Bearer {token}"},
         )
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    # Both visible — bad shape silently ignored, never block-the-everyone
-    assert any(n.startswith("scratchpad.") for n in names)
-    assert any(n.startswith("echo-handler.") for n in names)
+    # Malformed claim → deny all; empty tool list, not full list
+    assert len(names) == 0
 
 
 # ---- tools/call enforcement ---------------------------------------------

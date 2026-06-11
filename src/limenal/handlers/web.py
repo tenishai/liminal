@@ -201,6 +201,13 @@ class WebHandler:
         if not _host_in_allowlist(host, cfg.allowed_hosts):
             return f"host {host!r} not in allowlist {cfg.allowed_hosts}"
 
+        # JWT can narrow, never widen: also enforce the server-side ceiling.
+        # (cfg may come from a JWT override; default_config is always server.)
+        if cfg is not self.default_config and not _host_in_allowlist(
+            host, self.default_config.allowed_hosts
+        ):
+            return f"host {host!r} not permitted by server configuration"
+
         resolved_ips = self._resolve(host)
         if not resolved_ips:
             return f"could not resolve host {host!r}"

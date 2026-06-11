@@ -61,7 +61,12 @@ def _authenticate(
         raise AuthError(
             "this server has no JWT verifier configured — every request denied"
         )
-    return verifier.verify(token)
+    claims = verifier.verify(token)
+    # All authenticated limenal methods require dispatch scope.
+    scope = claims.raw.get("cabal_scope")
+    if not isinstance(scope, list) or "dispatch" not in scope:
+        raise AuthError("dispatch scope required")
+    return claims
 
 
 def build_router() -> APIRouter:
@@ -189,16 +194,25 @@ async def _handle_tools_list(
 
 
 def _allowed_handlers_for(claims: VerifiedClaims | None) -> set[str] | None:
-    """Extract the per-persona allowlist from the JWT claim, or None if
-    the persona has no allowlist (= all handlers allowed)."""
+    """Extract the per-persona allowlist from the JWT claim.
+
+    Returns None when there is no restriction (all handlers accessible).
+    Returns an empty set when the claim is present but malformed or empty
+    — fail closed so a broken claim denies all tools rather than opening
+    up to everything.
+    """
     if claims is None:
         return None
-    extras = claims.raw.get("cabal_tool_extras") or {}
+    extras = claims.raw.get("cabal_tool_extras")
+    if extras is None:
+        return None  # no tool_extras claim = unrestricted
     if not isinstance(extras, dict):
-        return None
+        return set()  # malformed: expected dict — deny all
     raw = extras.get("limenal.allowed_handlers")
+    if raw is None:
+        return None  # key absent = unrestricted
     if not isinstance(raw, list):
-        return None
+        return set()  # malformed: expected list — deny all
     return {str(h) for h in raw if isinstance(h, str) and h}
 
 

@@ -56,6 +56,7 @@ def _mint_with_extras(signing_key, extras: dict | None) -> str:
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
+        "cabal_scope": ["dispatch"],
     }
     if extras is not None:
         payload["cabal_tool_extras"] = extras
@@ -133,9 +134,9 @@ async def test_missing_tool_extras_yields_empty_extra(
 
 
 @pytest.mark.asyncio
-async def test_non_dict_tool_extras_ignored(signing_key, client_with_echo) -> None:
-    """A malformed cabal_tool_extras claim (string, array) should be
-    ignored — Context.extra becomes {}, not propagated as junk."""
+async def test_non_dict_tool_extras_fails_closed(signing_key, client_with_echo) -> None:
+    """A malformed cabal_tool_extras claim (string, array) fails closed —
+    all handler calls are denied rather than silently falling open."""
     token = _mint_with_extras(
         signing_key, extras="i-am-not-a-dict"  # type: ignore[arg-type]
     )
@@ -151,5 +152,6 @@ async def test_non_dict_tool_extras_ignored(signing_key, client_with_echo) -> No
             headers={"Authorization": f"Bearer {token}"},
         )
     body = r.json()
-    extra = body["result"]["content"][0]["data"]["extra"]
-    assert extra == {}
+    # Malformed extras → deny all; error, not a successful tool result
+    assert body.get("error") is not None
+    assert body.get("result") is None

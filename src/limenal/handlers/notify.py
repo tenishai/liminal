@@ -119,6 +119,10 @@ class WebhookTransport(Transport):
 
     Operator constrains targets via `ctx.extra["notify.allowed_hosts"]`
     — same wildcard / glob / suffix matcher as the web handler.
+
+    `server_allowed_hosts` is the operator-configured ceiling. JWT-supplied
+    `notify.allowed_hosts` in ctx.extra can only narrow within this set.
+    Default `["*"]` means no server-side restriction.
     """
 
     name: str = "webhook"
@@ -126,6 +130,7 @@ class WebhookTransport(Transport):
     dns_resolver: Any = None
     denied_networks: list[Any] = field(default_factory=lambda: list(PRIVATE_NETWORKS))
     timeout_seconds: float = 10.0
+    server_allowed_hosts: list[str] = field(default_factory=lambda: ["*"])
 
     @property
     def credential_keys(self) -> list[str]:
@@ -148,7 +153,13 @@ class WebhookTransport(Transport):
                 "(set NOTIFY_WEBHOOK_URL via `cbl secret set` or pass "
                 "notify.webhook_url in tool_extras)"
             )
-        err = _check_url(url, ctx, denied_networks=self.denied_networks, resolver=self._resolve)
+        err = _check_url(
+            url,
+            ctx,
+            denied_networks=self.denied_networks,
+            resolver=self._resolve,
+            server_allowed_hosts=self.server_allowed_hosts,
+        )
         if err is not None:
             raise NotifyError(err)
 
@@ -394,6 +405,7 @@ def _check_url(
     *,
     denied_networks: list[Any],
     resolver: Any,
+    server_allowed_hosts: list[str] | None = None,
 ) -> str | None:
     try:
         parsed = urlparse(url)
@@ -408,6 +420,10 @@ def _check_url(
     allowed = ctx.extra.get("notify.allowed_hosts") or ["*"]
     if not _host_in_allowlist(host, list(allowed)):
         return f"host {host!r} not in allowlist {list(allowed)}"
+
+    # JWT can narrow, never widen: enforce server-side ceiling.
+    if server_allowed_hosts and not _host_in_allowlist(host, server_allowed_hosts):
+        return f"host {host!r} not permitted by server configuration"
 
     resolved_ips = resolver(host)
     if not resolved_ips:

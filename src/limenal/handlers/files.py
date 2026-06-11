@@ -179,10 +179,44 @@ class FilesHandler:
 
     def _resolve_config(self, ctx: Context) -> FilesConfig:
         per_persona = ctx.extra.get("files.allowed_paths")
-        if not per_persona:
+        if not per_persona or not isinstance(per_persona, list):
             return self.default_config
+
+        # Resolve JWT-supplied paths, skipping malformed entries.
+        jwt_paths: list[Path] = []
+        for raw in per_persona:
+            if isinstance(raw, str) and raw:
+                try:
+                    jwt_paths.append(Path(raw).expanduser().resolve())
+                except Exception:  # noqa: BLE001
+                    pass
+
+        if not jwt_paths:
+            return self.default_config
+
+        server_ceiling = self.default_config.allowed_paths  # already resolved
+
+        if not server_ceiling:
+            # No server-side ceiling: JWT paths are the allowlist.
+            effective = jwt_paths
+        else:
+            # JWT can narrow, never widen.
+            # A JWT path narrower than a server path is kept as-is.
+            # A JWT path broader than a server path is clamped to the server path.
+            # A JWT path with no overlap with any server path is dropped.
+            effective_set: set[Path] = set()
+            for sp in server_ceiling:
+                for jp in jwt_paths:
+                    if _is_under(sp, jp):
+                        # JWT is broader: clamp to the server path.
+                        effective_set.add(sp)
+                    elif _is_under(jp, sp):
+                        # JWT is narrower: keep the JWT path.
+                        effective_set.add(jp)
+            effective = list(effective_set)
+
         return FilesConfig(
-            allowed_paths=list(per_persona),
+            allowed_paths=effective,
             max_read_bytes=self.default_config.max_read_bytes,
             max_write_bytes=self.default_config.max_write_bytes,
             max_list_entries=self.default_config.max_list_entries,
