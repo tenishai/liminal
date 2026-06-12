@@ -64,7 +64,10 @@ async def _authenticate(
         )
     claims = await verifier.verify(token)
     # All authenticated limenal methods require dispatch scope.
-    scope = claims.raw.get("cabal_scope")
+    # Accept `scope` as a fallback for `cabal_scope` so non-Cabal MCP
+    # clients (Claude Desktop, Cursor, etc.) can mint tokens without
+    # carrying Cabal-specific claim names.
+    scope = claims.raw.get("cabal_scope") or claims.raw.get("scope")
     if not isinstance(scope, list) or "dispatch" not in scope:
         raise AuthError("dispatch scope required")
     return claims
@@ -108,17 +111,32 @@ def build_router() -> APIRouter:
             response.status_code = 202
             return Response(status_code=202)
 
-        # Public methods skip auth (handshake + ping)
+        # Public methods skip auth (handshake + ping). Authenticated methods
+        # also skip when LIMENAL_AUTH_DISABLED=1 — trusted-network mode for
+        # solo/desktop deployments. The startup banner ensures the operator
+        # knows this is on.
         claims: VerifiedClaims | None = None
+        auth_disabled = getattr(request.app.state, "auth_disabled", False)
         if rpc_req.method not in PUBLIC_METHODS:
-            try:
-                claims = await _authenticate(request.app.state.jwt_verifier, authorization)
-            except AuthError as exc:
-                return make_error(
-                    id=rpc_req.id,
-                    code=ERROR_UNAUTHORIZED,
-                    message=str(exc),
+            if auth_disabled:
+                # Synthesize claims so downstream Context construction works.
+                # The identity is "anonymous" — handlers that genuinely care
+                # about persona scoping should not be deployed in auth-
+                # disabled mode in the first place.
+                claims = VerifiedClaims(
+                    identity="anonymous",
+                    agent_name="anonymous",
+                    raw={"scope": ["dispatch"]},
                 )
+            else:
+                try:
+                    claims = await _authenticate(request.app.state.jwt_verifier, authorization)
+                except AuthError as exc:
+                    return make_error(
+                        id=rpc_req.id,
+                        code=ERROR_UNAUTHORIZED,
+                        message=str(exc),
+                    )
 
         if rpc_req.method == "initialize":
             return await _handle_initialize(request, rpc_req)
@@ -199,7 +217,8 @@ def _allowed_handlers_for(claims: VerifiedClaims | None) -> set[str] | None:
     """
     if claims is None:
         return None
-    extras = claims.raw.get("cabal_tool_extras")
+    # `tool_extras` is the standalone-friendly alias for `cabal_tool_extras`.
+    extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
     if extras is None:
         return None  # no tool_extras claim = unrestricted
     if not isinstance(extras, dict):
@@ -261,12 +280,13 @@ async def _handle_tools_call(
                 message=f"credential resolution failed: {exc}",
             )
 
-    # cabal_tool_extras is a Cabal-Cabal channel: per-persona scoping
-    # config (web.allowed_hosts, files.allowed_paths, memory.db_path,
-    # etc.) embedded in the JWT by Cabal at mint time and forwarded into
-    # Context.extra so handlers can read it the same way they do for tests.
+    # tool_extras (legacy alias: cabal_tool_extras) carries per-persona
+    # scoping config (web.allowed_hosts, files.allowed_paths,
+    # memory.db_path, etc.) embedded in the JWT at mint time. Forwarded
+    # into Context.extra so handlers can read it the same way they do
+    # for tests.
     extra: dict = {}
-    raw_extras = claims.raw.get("cabal_tool_extras")
+    raw_extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
     if isinstance(raw_extras, dict):
         extra = dict(raw_extras)
 

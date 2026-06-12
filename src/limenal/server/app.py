@@ -3,10 +3,18 @@
 Wires the registry → dispatcher → MCP route. Auth is injectable so tests
 can pass a StaticKeySetVerifier and production wires URLJWKSVerifier
 against Cabal Core.
+
+Trusted-network deployments (Claude Desktop talking to localhost, a
+script wrapping limenal in a single-operator environment) can disable
+JWT enforcement entirely by setting `LIMENAL_AUTH_DISABLED=1`. A loud
+WARN banner fires at startup so the mode can't ship to prod by
+accident; a JWT verifier supplied alongside the env var is a
+configuration error and raises at create_app time.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -20,6 +28,15 @@ from limenal.server.auth import JWTVerifier
 from limenal.server.routes import build_router
 
 log = structlog.get_logger(__name__)
+
+
+_AUTH_DISABLED_ENV = "LIMENAL_AUTH_DISABLED"
+_AUTH_DISABLED_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _auth_disabled_from_env() -> bool:
+    """Returns True iff LIMENAL_AUTH_DISABLED is set to a truthy value."""
+    return os.environ.get(_AUTH_DISABLED_ENV, "").lower() in _AUTH_DISABLED_TRUTHY
 
 
 def create_app(
@@ -48,9 +65,29 @@ def create_app(
     reg = registry if registry is not None else discover_handlers()
     dispatcher = InProcessDispatcher(registry=reg)
 
+    auth_disabled = _auth_disabled_from_env()
+    if auth_disabled and jwt_verifier is not None:
+        raise RuntimeError(
+            f"limenal misconfiguration: {_AUTH_DISABLED_ENV}=1 is set but a "
+            "JWT verifier was passed to create_app(). These are mutually "
+            "exclusive — pick one. Set the env var only for trusted-network "
+            "deployments (single operator, localhost client)."
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         log.info("limenal.startup", version=__version__, handlers=reg.names())
+        if auth_disabled:
+            # Loud banner so this can't ship to prod without someone seeing it.
+            log.warning(
+                "limenal.AUTH_DISABLED",
+                msg=(
+                    "JWT enforcement disabled via LIMENAL_AUTH_DISABLED. Every "
+                    "request will be accepted. Only use this for trusted-network "
+                    "deployments (single operator, localhost client). UNSET in "
+                    "production."
+                ),
+            )
         # Call startup() on handlers that define it (e.g. to open pooled clients).
         handlers = [record.handler for record in reg]
         for handler in handlers:
@@ -74,6 +111,7 @@ def create_app(
     app.state.jwt_verifier = jwt_verifier
     app.state.credential_resolver = credential_resolver
     app.state.server_name = server_name
+    app.state.auth_disabled = auth_disabled
 
     app.include_router(build_router())
     return app
