@@ -95,24 +95,13 @@ metadata service, RFC1918, DNS failure), fetch happy path
 refusal of image, HEAD round-trip, per-persona ctx.extra override,
 entry-point discovery, capability-card shape.
 
-## What's NOT built yet — next session targets
+## What's NOT built yet — next targets
 
-- **Streaming responses** (text/event-stream variant per the MCP "Streamable HTTP"
-  transport): right now every response is a single JSON body. SSE for tool
-  calls that want to stream tokens lands in Phase 1.6.
-- **Real Cabal Core credential fetch**: the `credential_resolver` callable
-  is wired into the server; production needs an httpx-based implementation
-  that calls `GET https://cabal-core/secrets/{persona}/{handler}` with mTLS
-  + the 15-minute TTL cache from design.md §"Credential Flow".
 - **Subprocess JSON-RPC mode** (scale mode): the same Handler contract, but
   with the handler running in a separate process. Adds crash-loop circuit
   breaker (5 in 60s → QUARANTINED). Phase 2.
 - **`toolset.yaml`** loader: per-persona handler allowlists.
-- **More built-in handlers**: `files` (scoped read/write), `web` (allowlisted
-  fetch), `memory` (techne proxy), `patterns` (Architect pattern corpus
-  surface).
-- **Integration with Cabal**: the `tool_use` hook in Cabal Core fires
-  against limenal once both sides are wired.
+- **`patterns` handler**: Architect pattern corpus surface.
 
 ## Sibling-checkout convention
 

@@ -45,8 +45,10 @@ from limenal.protocol import Context, Handler, ToolResult, ToolSpec
 log = structlog.get_logger(__name__)
 
 
-# techne's knowledge type vocabulary (matches techne.knowledge.VALID_TYPES)
-VALID_TYPES = ("fact", "decision", "pattern", "evaluation", "procedure")
+try:
+    from techne import VALID_TYPES
+except ImportError:
+    VALID_TYPES = ("fact", "decision", "pattern", "evaluation", "procedure")
 VALID_CONFIDENCE = ("low", "medium", "high")
 
 
