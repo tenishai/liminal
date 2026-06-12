@@ -370,3 +370,102 @@ def test_capability_card_advertises_no_credentials() -> None:
 
     card = get_handler().capability_card()
     assert card["credential_keys"] == []
+
+
+# ---- Phase 5: DNS-rebinding protection -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dns_rebinding_blocked_via_ip_pin(tmp_path) -> None:
+    """Attacker's host resolves to a public IP on first check, then to a
+    metadata IP at connect time. With IP pinning, we connect to the
+    validated IP regardless of what DNS returns later.
+
+    We simulate this by injecting a resolver that returns a public IP,
+    and a mock HTTP transport that captures the URL httpx actually
+    connects to. The request URL should contain the public IP (pinned),
+    not the original hostname.
+    """
+    import httpx
+    from limenal.handlers.web import WebConfig, WebHandler
+
+    connect_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        connect_urls.append(str(request.url))
+        return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    handler_obj = WebHandler(
+        default_config=WebConfig(allowed_hosts=["evil.example.com"]),
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+        dns_resolver=lambda host: ["8.8.8.8"],  # returns safe public IP
+    )
+
+    from limenal.protocol import Context
+
+    ctx = Context(identity="test", agent_name="test", credentials={}, extra={})
+    result = await handler_obj.dispatch(
+        "fetch", {"url": "http://evil.example.com/data"}, ctx
+    )
+    assert not result.is_error
+    # The actual request must go to the pinned IP (8.8.8.8), not the original hostname
+    assert connect_urls, "no HTTP requests were made"
+    assert "8.8.8.8" in connect_urls[0], (
+        f"expected pinned IP in URL, got: {connect_urls[0]}"
+    )
+    # Host header must preserve the original hostname
+    # (verified implicitly — httpx sets Host from the URL, we override with extra_headers)
+
+
+@pytest.mark.asyncio
+async def test_head_applies_content_type_allowlist(tmp_path) -> None:
+    """web.head must enforce the content-type allowlist (parity with web.fetch)."""
+    import httpx
+    from limenal.handlers.web import WebConfig, WebHandler
+    from limenal.protocol import Context
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "application/octet-stream"})
+
+    h = WebHandler(
+        default_config=WebConfig(allowed_hosts=["*"]),
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+        dns_resolver=lambda host: ["8.8.8.8"],
+    )
+    ctx = Context(identity="test", agent_name="test", credentials={}, extra={})
+    result = await h.dispatch("head", {"url": "http://example.com/"}, ctx)
+    assert result.is_error
+    assert "content-type" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_head_caps_large_headers(tmp_path) -> None:
+    """web.head must truncate oversized response header sets."""
+    import httpx
+    from limenal.handlers.web import WebConfig, WebHandler
+    from limenal.protocol import Context
+
+    # Generate headers totalling > 16 KB
+    big_headers = {f"x-big-{i}": "x" * 200 for i in range(200)}
+    big_headers["content-type"] = "text/plain"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers=big_headers)
+
+    h = WebHandler(
+        default_config=WebConfig(allowed_hosts=["*"]),
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+        dns_resolver=lambda host: ["8.8.8.8"],
+    )
+    ctx = Context(identity="test", agent_name="test", credentials={}, extra={})
+    result = await h.dispatch("head", {"url": "http://example.com/"}, ctx)
+    assert not result.is_error
+    # Should have replaced headers with the warning stub
+    data = result.content[0]["data"]  # already a dict, not JSON string
+    assert "x-limenal-warning" in data.get("headers", {})

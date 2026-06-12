@@ -36,7 +36,7 @@ import ipaddress
 import socket
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import anyio
 import httpx
@@ -177,14 +177,14 @@ class WebHandler:
             return ToolResult.failure("'url' must be a non-empty string")
 
         cfg = self._resolve_config(ctx)
-        check_err = await self._check_url(url, cfg)
+        check_err, validated_ip = await self._check_url(url, cfg)
         if check_err is not None:
             return ToolResult.failure(check_err)
 
         if name == "fetch":
-            return await self._fetch(url, payload, cfg)
+            return await self._fetch(url, payload, cfg, validated_ip)
         if name == "head":
-            return await self._head(url, cfg)
+            return await self._head(url, cfg, validated_ip)
         return ToolResult.failure(f"unknown tool {name!r}")
 
     # ---- defenses -----------------------------------------------------
@@ -202,42 +202,53 @@ class WebHandler:
             allowed_content_types=self.default_config.allowed_content_types,
         )
 
-    async def _check_url(self, url: str, cfg: WebConfig) -> str | None:
-        """Return an error message if `url` should be refused, else None."""
+    async def _check_url(
+        self, url: str, cfg: WebConfig
+    ) -> tuple[str | None, str | None]:
+        """Validate the URL and return (error, validated_ip).
+
+        Returns (error_msg, None) on refusal or (None, first_valid_ip) on
+        success. The validated IP should be pinned at connect time to prevent
+        DNS-rebinding: the caller resolves once here and httpx must not
+        re-resolve at connect time.
+        """
         try:
             parsed = urlparse(url)
         except Exception:  # noqa: BLE001
-            return f"unparseable URL: {url!r}"
+            return f"unparseable URL: {url!r}", None
         if parsed.scheme not in {"http", "https"}:
-            return f"scheme {parsed.scheme!r} not allowed; only http/https"
+            return f"scheme {parsed.scheme!r} not allowed; only http/https", None
         host = parsed.hostname
         if not host:
-            return "URL missing hostname"
+            return "URL missing hostname", None
 
         if not _host_in_allowlist(host, cfg.allowed_hosts):
-            return f"host {host!r} not in allowlist {cfg.allowed_hosts}"
+            return f"host {host!r} not in allowlist {cfg.allowed_hosts}", None
 
         # JWT can narrow, never widen: also enforce the server-side ceiling.
         if cfg is not self.default_config and not _host_in_allowlist(
             host, self.default_config.allowed_hosts
         ):
-            return f"host {host!r} not permitted by server configuration"
+            return f"host {host!r} not permitted by server configuration", None
 
         resolved_ips = await self._resolve(host)
         if not resolved_ips:
-            return f"could not resolve host {host!r}"
+            return f"could not resolve host {host!r}", None
+        first_valid: str | None = None
         for ip_str in resolved_ips:
             try:
                 ip = ipaddress.ip_address(ip_str)
             except ValueError:
-                return f"invalid IP {ip_str!r} from DNS"
+                return f"invalid IP {ip_str!r} from DNS", None
             for net in cfg.denied_networks:
                 if ip in net:
                     return (
                         f"host {host!r} resolves to {ip_str} in denied "
                         f"network {net} (SSRF protection)"
-                    )
-        return None
+                    ), None
+            if first_valid is None:
+                first_valid = ip_str
+        return None, first_valid
 
     async def _resolve(self, host: str) -> list[str]:
         if self.dns_resolver is not None:
@@ -261,15 +272,16 @@ class WebHandler:
     # ---- fetch + head -------------------------------------------------
 
     async def _fetch(
-        self, url: str, payload: dict[str, Any], cfg: WebConfig
+        self, url: str, payload: dict[str, Any], cfg: WebConfig, validated_ip: str | None
     ) -> ToolResult:
         max_bytes = min(
             int(payload.get("max_bytes") or cfg.max_response_bytes),
             cfg.max_response_bytes,
         )
+        request_url, extra_headers = _pin_to_ip(url, validated_ip)
         client, owned = self._get_client(cfg)
         try:
-            async with client.stream("GET", url) as resp:
+            async with client.stream("GET", request_url, headers=extra_headers) as resp:
                 content_type = (
                     resp.headers.get("content-type", "")
                     .split(";", 1)[0]
@@ -297,7 +309,7 @@ class WebHandler:
                 text = bytes(body).decode("utf-8", errors="replace")
                 return ToolResult.json(
                     {
-                        "url": str(resp.url),
+                        "url": url,
                         "status": resp.status_code,
                         "content_type": content_type,
                         "bytes": len(body),
@@ -311,15 +323,36 @@ class WebHandler:
             if owned:
                 await client.aclose()
 
-    async def _head(self, url: str, cfg: WebConfig) -> ToolResult:
+    async def _head(self, url: str, cfg: WebConfig, validated_ip: str | None) -> ToolResult:
+        request_url, extra_headers = _pin_to_ip(url, validated_ip)
         client, owned = self._get_client(cfg)
         try:
-            resp = await client.head(url)
+            resp = await client.head(request_url, headers=extra_headers)
+            content_type = (
+                resp.headers.get("content-type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            if (
+                cfg.allowed_content_types
+                and content_type
+                and content_type not in cfg.allowed_content_types
+            ):
+                return ToolResult.failure(
+                    f"content-type {content_type!r} not in allowlist"
+                )
+            # Cap headers to prevent leaking large internal header sets.
+            max_header_bytes = 16_384
+            headers_raw = dict(resp.headers.items())
+            total = sum(len(k) + len(v) for k, v in headers_raw.items())
+            if total > max_header_bytes:
+                headers_raw = {"x-limenal-warning": "response headers exceeded size cap"}
             return ToolResult.json(
                 {
-                    "url": str(resp.url),
+                    "url": url,
                     "status": resp.status_code,
-                    "headers": dict(resp.headers.items()),
+                    "headers": headers_raw,
                 }
             )
         except httpx.HTTPError as exc:
@@ -339,6 +372,38 @@ class WebHandler:
             timeout=httpx.Timeout(cfg.timeout_seconds),
             follow_redirects=False,
         ), True
+
+
+def _pin_to_ip(url: str, ip: str | None) -> tuple[str, dict[str, str]]:
+    """Return (request_url, extra_headers) with the hostname replaced by `ip`.
+
+    For HTTP schemes we swap the hostname for the pre-validated IP and return
+    a `Host` header preserving the original hostname. This closes the TOCTOU
+    gap between our DNS validation check and httpx's internal re-resolution:
+    httpx connects to exactly the IP we verified, not whatever DNS returns at
+    connect time.
+
+    For HTTPS we leave the URL unchanged — TLS certificate validation binds
+    the connection to the original hostname, so a rebinding attack would fail
+    cert verification. If no ip is provided (dns_resolver stub in tests that
+    returns no IPs), we also leave the URL unchanged.
+    """
+    if ip is None:
+        return url, {}
+    try:
+        parsed = urlparse(url)
+    except Exception:  # noqa: BLE001
+        return url, {}
+    if parsed.scheme != "http":
+        return url, {}
+    host = parsed.hostname or ""
+    port = parsed.port
+    if port:
+        new_netloc = f"{ip}:{port}"
+    else:
+        new_netloc = ip
+    pinned = urlunparse(parsed._replace(netloc=new_netloc))
+    return pinned, {"Host": host}
 
 
 def _host_in_allowlist(host: str, allowlist: list[str]) -> bool:

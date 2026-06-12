@@ -46,7 +46,7 @@ import anyio
 import httpx
 import structlog
 
-from limenal.handlers.web import PRIVATE_NETWORKS, _host_in_allowlist
+from limenal.handlers.web import PRIVATE_NETWORKS, _host_in_allowlist, _pin_to_ip
 from limenal.protocol import Context, Handler, ToolResult, ToolSpec
 
 log = structlog.get_logger(__name__)
@@ -155,7 +155,7 @@ class WebhookTransport(Transport):
                 "(set NOTIFY_WEBHOOK_URL via `cbl secret set` or pass "
                 "notify.webhook_url in tool_extras)"
             )
-        err = await _check_url(
+        err, validated_ip = await _check_url(
             url,
             ctx,
             denied_networks=self.denied_networks,
@@ -179,12 +179,13 @@ class WebhookTransport(Transport):
                 f"exceeds {WEBHOOK_MAX_BODY_BYTES}"
             )
 
+        request_url, extra_headers = _pin_to_ip(url, validated_ip)
         client, owned = self._get_client()
         try:
             resp = await client.post(
-                url,
+                request_url,
                 content=body,
-                headers={"content-type": "application/json"},
+                headers={"content-type": "application/json", **extra_headers},
             )
         except httpx.HTTPError as exc:
             raise NotifyError(f"webhook POST failed: {exc}") from exc
@@ -429,40 +430,44 @@ async def _check_url(
     denied_networks: list[Any],
     resolver: Any,
     server_allowed_hosts: list[str] | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
+    """Validate and return (error, validated_ip). See web._check_url for rationale."""
     try:
         parsed = urlparse(url)
     except Exception:  # noqa: BLE001
-        return f"unparseable URL: {url!r}"
+        return f"unparseable URL: {url!r}", None
     if parsed.scheme not in {"http", "https"}:
-        return f"scheme {parsed.scheme!r} not allowed; only http/https"
+        return f"scheme {parsed.scheme!r} not allowed; only http/https", None
     host = parsed.hostname
     if not host:
-        return "URL missing hostname"
+        return "URL missing hostname", None
 
     allowed = ctx.extra.get("notify.allowed_hosts") or ["*"]
     if not _host_in_allowlist(host, list(allowed)):
-        return f"host {host!r} not in allowlist {list(allowed)}"
+        return f"host {host!r} not in allowlist {list(allowed)}", None
 
     # JWT can narrow, never widen: enforce server-side ceiling.
     if server_allowed_hosts and not _host_in_allowlist(host, server_allowed_hosts):
-        return f"host {host!r} not permitted by server configuration"
+        return f"host {host!r} not permitted by server configuration", None
 
     resolved_ips = await resolver(host)
     if not resolved_ips:
-        return f"could not resolve host {host!r}"
+        return f"could not resolve host {host!r}", None
+    first_valid: str | None = None
     for ip_str in resolved_ips:
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            return f"invalid IP {ip_str!r} from DNS"
+            return f"invalid IP {ip_str!r} from DNS", None
         for net in denied_networks:
             if ip in net:
                 return (
                     f"host {host!r} resolves to {ip_str} in denied "
                     f"network {net} (SSRF protection)"
-                )
-    return None
+                ), None
+        if first_valid is None:
+            first_valid = ip_str
+    return None, first_valid
 
 
 _SINGLETON: NotifyHandler | None = None
