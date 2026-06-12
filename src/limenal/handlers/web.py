@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 import structlog
 
@@ -116,11 +117,15 @@ class WebHandler:
     `default_config` is used for any persona that doesn't supply its own
     via `ctx.extra["web.allowed_hosts"]`. Tests pass an
     `http_client_factory` to swap the real httpx for a MockTransport.
+
+    Call `await startup()` / `await shutdown()` from the app lifespan to
+    enable a shared pooled AsyncClient across requests.
     """
 
     default_config: WebConfig = field(default_factory=WebConfig)
     http_client_factory: Any = None  # () -> httpx.AsyncClient
     dns_resolver: Any = None  # (host) -> list[str] (returns IPs)
+    _shared_client: httpx.AsyncClient | None = field(default=None, init=False)
 
     def tools(self) -> list[ToolSpec]:
         return [
@@ -150,6 +155,17 @@ class WebHandler:
             ),
         ]
 
+    async def startup(self) -> None:
+        self._shared_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.default_config.timeout_seconds),
+            follow_redirects=False,
+        )
+
+    async def shutdown(self) -> None:
+        if self._shared_client is not None:
+            await self._shared_client.aclose()
+            self._shared_client = None
+
     def capability_card(self) -> dict[str, Any]:
         return CARD
 
@@ -161,7 +177,7 @@ class WebHandler:
             return ToolResult.failure("'url' must be a non-empty string")
 
         cfg = self._resolve_config(ctx)
-        check_err = self._check_url(url, cfg)
+        check_err = await self._check_url(url, cfg)
         if check_err is not None:
             return ToolResult.failure(check_err)
 
@@ -186,7 +202,7 @@ class WebHandler:
             allowed_content_types=self.default_config.allowed_content_types,
         )
 
-    def _check_url(self, url: str, cfg: WebConfig) -> str | None:
+    async def _check_url(self, url: str, cfg: WebConfig) -> str | None:
         """Return an error message if `url` should be refused, else None."""
         try:
             parsed = urlparse(url)
@@ -202,13 +218,12 @@ class WebHandler:
             return f"host {host!r} not in allowlist {cfg.allowed_hosts}"
 
         # JWT can narrow, never widen: also enforce the server-side ceiling.
-        # (cfg may come from a JWT override; default_config is always server.)
         if cfg is not self.default_config and not _host_in_allowlist(
             host, self.default_config.allowed_hosts
         ):
             return f"host {host!r} not permitted by server configuration"
 
-        resolved_ips = self._resolve(host)
+        resolved_ips = await self._resolve(host)
         if not resolved_ips:
             return f"could not resolve host {host!r}"
         for ip_str in resolved_ips:
@@ -224,15 +239,21 @@ class WebHandler:
                     )
         return None
 
-    def _resolve(self, host: str) -> list[str]:
+    async def _resolve(self, host: str) -> list[str]:
         if self.dns_resolver is not None:
             try:
-                return self.dns_resolver(host)
+                result = self.dns_resolver(host)
+                # Allow both sync and async resolvers (tests often inject sync stubs)
+                if hasattr(result, "__await__"):
+                    result = await result
+                return result
             except Exception as exc:  # noqa: BLE001
                 log.warning("web.dns_resolver_failed", host=host, error=str(exc))
                 return []
         try:
-            infos = socket.getaddrinfo(host, None)
+            infos = await anyio.to_thread.run_sync(
+                lambda: socket.getaddrinfo(host, None)
+            )
         except socket.gaierror:
             return []
         return [info[4][0] for info in infos]
@@ -246,70 +267,78 @@ class WebHandler:
             int(payload.get("max_bytes") or cfg.max_response_bytes),
             cfg.max_response_bytes,
         )
-        client = self._build_client(cfg)
+        client, owned = self._get_client(cfg)
         try:
-            async with client:
-                async with client.stream("GET", url) as resp:
-                    content_type = (
-                        resp.headers.get("content-type", "")
-                        .split(";", 1)[0]
-                        .strip()
-                        .lower()
+            async with client.stream("GET", url) as resp:
+                content_type = (
+                    resp.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                )
+                if (
+                    cfg.allowed_content_types
+                    and content_type
+                    and content_type not in cfg.allowed_content_types
+                ):
+                    return ToolResult.failure(
+                        f"content-type {content_type!r} not in allowlist"
                     )
-                    if (
-                        cfg.allowed_content_types
-                        and content_type
-                        and content_type not in cfg.allowed_content_types
-                    ):
-                        return ToolResult.failure(
-                            f"content-type {content_type!r} not in allowlist"
-                        )
 
-                    body = bytearray()
-                    truncated = False
-                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            truncated = True
-                            body = body[:max_bytes]
-                            break
+                body = bytearray()
+                truncated = False
+                async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        truncated = True
+                        body = body[:max_bytes]
+                        break
 
-                    text = bytes(body).decode("utf-8", errors="replace")
-                    return ToolResult.json(
-                        {
-                            "url": str(resp.url),
-                            "status": resp.status_code,
-                            "content_type": content_type,
-                            "bytes": len(body),
-                            "truncated": truncated,
-                            "text": text,
-                        }
-                    )
-        except httpx.HTTPError as exc:
-            return ToolResult.failure(f"transport error: {exc}")
-
-    async def _head(self, url: str, cfg: WebConfig) -> ToolResult:
-        client = self._build_client(cfg)
-        try:
-            async with client:
-                resp = await client.head(url)
+                text = bytes(body).decode("utf-8", errors="replace")
                 return ToolResult.json(
                     {
                         "url": str(resp.url),
                         "status": resp.status_code,
-                        "headers": dict(resp.headers.items()),
+                        "content_type": content_type,
+                        "bytes": len(body),
+                        "truncated": truncated,
+                        "text": text,
                     }
                 )
         except httpx.HTTPError as exc:
             return ToolResult.failure(f"transport error: {exc}")
+        finally:
+            if owned:
+                await client.aclose()
 
-    def _build_client(self, cfg: WebConfig) -> httpx.AsyncClient:
+    async def _head(self, url: str, cfg: WebConfig) -> ToolResult:
+        client, owned = self._get_client(cfg)
+        try:
+            resp = await client.head(url)
+            return ToolResult.json(
+                {
+                    "url": str(resp.url),
+                    "status": resp.status_code,
+                    "headers": dict(resp.headers.items()),
+                }
+            )
+        except httpx.HTTPError as exc:
+            return ToolResult.failure(f"transport error: {exc}")
+        finally:
+            if owned:
+                await client.aclose()
+
+    def _get_client(self, cfg: WebConfig) -> tuple[httpx.AsyncClient, bool]:
+        """Return (client, owned). owned=True means the caller must close it."""
         if self.http_client_factory is not None:
-            return self.http_client_factory()
+            return self.http_client_factory(), True
+        if self._shared_client is not None:
+            return self._shared_client, False
+        # No pooled client yet (lifespan not called) — create a per-request one.
         return httpx.AsyncClient(
             timeout=httpx.Timeout(cfg.timeout_seconds),
-            follow_redirects=False,  # don't follow into denied hosts
-        )
+            follow_redirects=False,
+        ), True
 
 
 def _host_in_allowlist(host: str, allowlist: list[str]) -> bool:

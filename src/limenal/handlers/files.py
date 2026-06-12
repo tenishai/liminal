@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import structlog
 
 from limenal.protocol import Context, Handler, ToolResult, ToolSpec
@@ -164,15 +165,14 @@ class FilesHandler:
             return ToolResult.failure(err)
 
         if name == "read":
-            return self._read(resolved, payload, cfg)
+            return await self._read(resolved, payload, cfg)
         if name == "write":
-            return self._write(resolved, payload, cfg)
+            return await self._write(resolved, payload, cfg)
         if name == "list":
-            return self._list(resolved, cfg)
+            return await self._list(resolved, cfg)
         if name == "exists":
-            return ToolResult.json(
-                {"path": str(resolved), "exists": resolved.exists()}
-            )
+            exists = await anyio.to_thread.run_sync(resolved.exists)
+            return ToolResult.json({"path": str(resolved), "exists": exists})
         return ToolResult.failure(f"unknown tool {name!r}")
 
     # ---- defenses + resolution ---------------------------------------------
@@ -260,19 +260,19 @@ class FilesHandler:
 
     # ---- tools ------------------------------------------------------------
 
-    def _read(
+    async def _read(
         self, path: Path, payload: dict[str, Any], cfg: FilesConfig
     ) -> ToolResult:
-        if not path.exists():
-            return ToolResult.failure(f"no such file: {path}")
-        if not path.is_file():
-            return ToolResult.failure(f"not a file: {path}")
-        cap = min(
-            int(payload.get("max_bytes") or cfg.max_read_bytes),
-            cfg.max_read_bytes,
-        )
         try:
-            data = path.read_bytes()
+            if not await anyio.to_thread.run_sync(path.exists):
+                return ToolResult.failure(f"no such file: {path}")
+            if not await anyio.to_thread.run_sync(path.is_file):
+                return ToolResult.failure(f"not a file: {path}")
+            cap = min(
+                int(payload.get("max_bytes") or cfg.max_read_bytes),
+                cfg.max_read_bytes,
+            )
+            data = await anyio.to_thread.run_sync(path.read_bytes)
         except OSError as exc:
             return ToolResult.failure(f"read failed: {exc}")
         truncated = False
@@ -289,7 +289,7 @@ class FilesHandler:
             }
         )
 
-    def _write(
+    async def _write(
         self, path: Path, payload: dict[str, Any], cfg: FilesConfig
     ) -> ToolResult:
         content = payload.get("content")
@@ -301,49 +301,54 @@ class FilesHandler:
                 f"content is {len(encoded)} bytes; exceeds "
                 f"max_write_bytes={cfg.max_write_bytes}"
             )
-
         create_parents = bool(payload.get("create_parents", True))
         try:
             if create_parents:
-                path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(encoded)
+                await anyio.to_thread.run_sync(
+                    lambda: path.parent.mkdir(parents=True, exist_ok=True)
+                )
+            await anyio.to_thread.run_sync(lambda: path.write_bytes(encoded))
         except OSError as exc:
             return ToolResult.failure(f"write failed: {exc}")
-        return ToolResult.json(
-            {"path": str(path), "bytes_written": len(encoded)}
-        )
+        return ToolResult.json({"path": str(path), "bytes_written": len(encoded)})
 
-    def _list(self, path: Path, cfg: FilesConfig) -> ToolResult:
-        if not path.exists():
-            return ToolResult.failure(f"no such directory: {path}")
-        if not path.is_dir():
-            return ToolResult.failure(f"not a directory: {path}")
+    async def _list(self, path: Path, cfg: FilesConfig) -> ToolResult:
         try:
-            entries: list[dict[str, Any]] = []
-            for child in sorted(path.iterdir()):
-                if len(entries) >= cfg.max_list_entries:
-                    break
-                try:
-                    stat = child.stat()
-                    entries.append(
-                        {
-                            "name": child.name,
-                            "type": "dir" if child.is_dir() else "file",
-                            "size": stat.st_size if child.is_file() else None,
-                        }
-                    )
-                except OSError:
-                    # Skip entries we can't stat (broken symlinks etc.)
-                    continue
-            return ToolResult.json(
-                {
-                    "path": str(path),
-                    "entries": entries,
-                    "truncated": len(entries) >= cfg.max_list_entries,
-                }
-            )
+            if not await anyio.to_thread.run_sync(path.exists):
+                return ToolResult.failure(f"no such directory: {path}")
+            if not await anyio.to_thread.run_sync(path.is_dir):
+                return ToolResult.failure(f"not a directory: {path}")
+
+            max_entries = cfg.max_list_entries
+
+            def _scan() -> list[dict[str, Any]]:
+                entries: list[dict[str, Any]] = []
+                for child in sorted(path.iterdir()):
+                    if len(entries) >= max_entries:
+                        break
+                    try:
+                        stat = child.stat()
+                        entries.append(
+                            {
+                                "name": child.name,
+                                "type": "dir" if child.is_dir() else "file",
+                                "size": stat.st_size if child.is_file() else None,
+                            }
+                        )
+                    except OSError:
+                        continue
+                return entries
+
+            entries = await anyio.to_thread.run_sync(_scan)
         except OSError as exc:
             return ToolResult.failure(f"list failed: {exc}")
+        return ToolResult.json(
+            {
+                "path": str(path),
+                "entries": entries,
+                "truncated": len(entries) >= cfg.max_list_entries,
+            }
+        )
 
 
 def _is_under(candidate: Path, prefix: Path) -> bool:

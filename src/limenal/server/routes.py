@@ -51,7 +51,7 @@ def _bearer(authorization: str | None) -> str | None:
     return None
 
 
-def _authenticate(
+async def _authenticate(
     verifier: JWTVerifier | None, authorization: str | None
 ) -> VerifiedClaims:
     token = _bearer(authorization)
@@ -61,7 +61,7 @@ def _authenticate(
         raise AuthError(
             "this server has no JWT verifier configured — every request denied"
         )
-    claims = verifier.verify(token)
+    claims = await verifier.verify(token)
     # All authenticated limenal methods require dispatch scope.
     scope = claims.raw.get("cabal_scope")
     if not isinstance(scope, list) or "dispatch" not in scope:
@@ -116,7 +116,7 @@ def build_router() -> APIRouter:
         claims: VerifiedClaims | None = None
         if rpc_req.method not in PUBLIC_METHODS:
             try:
-                claims = _authenticate(request.app.state.jwt_verifier, authorization)
+                claims = await _authenticate(request.app.state.jwt_verifier, authorization)
             except AuthError as exc:
                 return make_error(
                     id=rpc_req.id,

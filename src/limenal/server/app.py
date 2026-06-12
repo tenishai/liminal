@@ -44,14 +44,23 @@ def create_app(
         server_name: the name reported by the `initialize` handshake.
     """
 
+    # Resolve the registry once; lifespan closes over it.
+    reg = registry if registry is not None else discover_handlers()
+    dispatcher = InProcessDispatcher(registry=reg)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        log.info(
-            "limenal.startup",
-            version=__version__,
-            handlers=registry.names() if registry else "(discovering)",
-        )
+        log.info("limenal.startup", version=__version__, handlers=reg.names())
+        # Call startup() on handlers that define it (e.g. to open pooled clients).
+        handlers = [record.handler for record in reg]
+        for handler in handlers:
+            if hasattr(handler, "startup"):
+                await handler.startup()
         yield
+        # Call shutdown() in reverse order.
+        for handler in reversed(handlers):
+            if hasattr(handler, "shutdown"):
+                await handler.shutdown()
         log.info("limenal.shutdown")
 
     app = FastAPI(
@@ -59,9 +68,6 @@ def create_app(
         version=__version__,
         lifespan=lifespan,
     )
-
-    reg = registry if registry is not None else discover_handlers()
-    dispatcher = InProcessDispatcher(registry=reg)
 
     app.state.registry = reg
     app.state.dispatcher = dispatcher

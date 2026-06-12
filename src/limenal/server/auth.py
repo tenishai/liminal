@@ -18,6 +18,7 @@ grained authorization (per-tool ACLs) is a Phase 2 concern.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -55,7 +56,7 @@ class VerifiedClaims:
 class JWTVerifier(Protocol):
     """Verifies a bearer token, returning the claims we route on."""
 
-    def verify(self, token: str) -> VerifiedClaims:
+    async def verify(self, token: str) -> VerifiedClaims:
         ...
 
 
@@ -69,7 +70,7 @@ class StaticKeySetVerifier:
     expected_audience: str | None = DEFAULT_AUD
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
 
-    def verify(self, token: str) -> VerifiedClaims:
+    async def verify(self, token: str) -> VerifiedClaims:
         return _verify_against_keyset(
             token,
             key_set=self.key_set,
@@ -87,30 +88,34 @@ class URLJWKSVerifier:
     """Fetches a JWKS URL, caches with TTL, re-fetches on cache miss.
 
     The cache invalidates on a `kid` not found in the current set —
-    triggers a re-fetch in case the upstream rotated keys recently. This
-    is the same pattern Cabal's RefreshingJWKSProvider uses, adapted for
-    the HTTP boundary instead of the in-process broadcast bus.
+    triggers a re-fetch in case the upstream rotated keys recently. Uses
+    AsyncClient so JWKS fetches never block the event loop.
     """
 
     jwks_url: str
     expected_issuer: str = DEFAULT_ISS
     cache_ttl_seconds: float = 300.0
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
-
     expected_audience: str | None = DEFAULT_AUD
 
-    _client: httpx.Client | None = None
     _cached: KeySet | None = field(default=None, init=False)
     _cached_at: float = field(default=0.0, init=False)
+    _lock: asyncio.Lock | None = field(default=None, init=False)
+    # Injectable AsyncClient for tests; production creates per-fetch clients.
+    _client: httpx.AsyncClient | None = field(default=None, init=False)
 
-    def _http(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=httpx.Timeout(10.0))
-        return self._client
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
-    def _fetch(self) -> KeySet:
+    async def _fetch(self) -> KeySet:
         log.info("auth.jwks.fetch", url=self.jwks_url)
-        resp = self._http().get(self.jwks_url)
+        if self._client is not None:
+            resp = await self._client.get(self.jwks_url)
+        else:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.get(self.jwks_url)
         resp.raise_for_status()
         body = resp.json()
         keys = body.get("keys", [])
@@ -119,30 +124,36 @@ class URLJWKSVerifier:
         self._cached_at = time.monotonic()
         return ks
 
-    def _current(self) -> KeySet:
+    async def _current(self) -> KeySet:
         now = time.monotonic()
-        if self._cached is None or (now - self._cached_at) > self.cache_ttl_seconds:
-            return self._fetch()
-        return self._cached
+        if self._cached is not None and (now - self._cached_at) <= self.cache_ttl_seconds:
+            return self._cached
+        async with self._get_lock():
+            # Double-check after acquiring lock — another coroutine may have fetched.
+            now = time.monotonic()
+            if self._cached is None or (now - self._cached_at) > self.cache_ttl_seconds:
+                return await self._fetch()
+            return self._cached
 
-    def verify(self, token: str) -> VerifiedClaims:
+    async def verify(self, token: str) -> VerifiedClaims:
         # First attempt against cached set; if the kid is missing, force a
         # fresh fetch (key rotation just happened).
         try:
             return _verify_against_keyset(
                 token,
-                key_set=self._current(),
+                key_set=await self._current(),
                 expected_issuer=self.expected_issuer,
                 expected_audience=self.expected_audience,
                 leeway_seconds=self.leeway_seconds,
             )
         except AuthError as exc:
             if "kid" in str(exc).lower():
-                # Force a re-fetch and try again
-                self._cached = None
+                # Force a re-fetch and try again.
+                async with self._get_lock():
+                    self._cached = None
                 return _verify_against_keyset(
                     token,
-                    key_set=self._current(),
+                    key_set=await self._current(),
                     expected_issuer=self.expected_issuer,
                     expected_audience=self.expected_audience,
                     leeway_seconds=self.leeway_seconds,

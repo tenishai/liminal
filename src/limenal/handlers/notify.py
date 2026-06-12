@@ -42,6 +42,7 @@ from datetime import UTC
 from typing import Any
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 import structlog
 
@@ -131,6 +132,7 @@ class WebhookTransport(Transport):
     denied_networks: list[Any] = field(default_factory=lambda: list(PRIVATE_NETWORKS))
     timeout_seconds: float = 10.0
     server_allowed_hosts: list[str] = field(default_factory=lambda: ["*"])
+    _shared_client: httpx.AsyncClient | None = field(default=None, init=False)
 
     @property
     def credential_keys(self) -> list[str]:
@@ -153,7 +155,7 @@ class WebhookTransport(Transport):
                 "(set NOTIFY_WEBHOOK_URL via `cbl secret set` or pass "
                 "notify.webhook_url in tool_extras)"
             )
-        err = _check_url(
+        err = await _check_url(
             url,
             ctx,
             denied_networks=self.denied_networks,
@@ -177,16 +179,18 @@ class WebhookTransport(Transport):
                 f"exceeds {WEBHOOK_MAX_BODY_BYTES}"
             )
 
-        client = self._build_client()
+        client, owned = self._get_client()
         try:
-            async with client:
-                resp = await client.post(
-                    url,
-                    content=body,
-                    headers={"content-type": "application/json"},
-                )
+            resp = await client.post(
+                url,
+                content=body,
+                headers={"content-type": "application/json"},
+            )
         except httpx.HTTPError as exc:
             raise NotifyError(f"webhook POST failed: {exc}") from exc
+        finally:
+            if owned:
+                await client.aclose()
 
         return {
             "transport": "webhook",
@@ -195,23 +199,42 @@ class WebhookTransport(Transport):
             "ok": 200 <= resp.status_code < 300,
         }
 
-    def _build_client(self) -> httpx.AsyncClient:
-        if self.http_client_factory is not None:
-            return self.http_client_factory()
-        return httpx.AsyncClient(
+    async def startup(self) -> None:
+        self._shared_client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout_seconds),
             follow_redirects=False,
         )
 
-    def _resolve(self, host: str) -> list[str]:
+    async def shutdown(self) -> None:
+        if self._shared_client is not None:
+            await self._shared_client.aclose()
+            self._shared_client = None
+
+    def _get_client(self) -> tuple[httpx.AsyncClient, bool]:
+        """Return (client, owned). owned=True means the caller must close it."""
+        if self.http_client_factory is not None:
+            return self.http_client_factory(), True
+        if self._shared_client is not None:
+            return self._shared_client, False
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout_seconds),
+            follow_redirects=False,
+        ), True
+
+    async def _resolve(self, host: str) -> list[str]:
         if self.dns_resolver is not None:
             try:
-                return self.dns_resolver(host)
+                result = self.dns_resolver(host)
+                if hasattr(result, "__await__"):
+                    result = await result
+                return result
             except Exception as exc:  # noqa: BLE001
                 log.warning("notify.dns_resolver_failed", host=host, error=str(exc))
                 return []
         try:
-            infos = socket.getaddrinfo(host, None)
+            infos = await anyio.to_thread.run_sync(
+                lambda: socket.getaddrinfo(host, None)
+            )
         except socket.gaierror:
             return []
         return [info[4][0] for info in infos]
@@ -399,7 +422,7 @@ class NotifyHandler:
 # ---- URL safety (mirrors web handler's SSRF defense) ---------------------
 
 
-def _check_url(
+async def _check_url(
     url: str,
     ctx: Context,
     *,
@@ -425,7 +448,7 @@ def _check_url(
     if server_allowed_hosts and not _host_in_allowlist(host, server_allowed_hosts):
         return f"host {host!r} not permitted by server configuration"
 
-    resolved_ips = resolver(host)
+    resolved_ips = await resolver(host)
     if not resolved_ips:
         return f"could not resolve host {host!r}"
     for ip_str in resolved_ips:

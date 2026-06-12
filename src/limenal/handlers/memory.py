@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import structlog
 
 from limenal.protocol import Context, Handler, ToolResult, ToolSpec
@@ -169,9 +170,9 @@ class MemoryHandler:
             )
 
         if name == "recall":
-            return self._recall(techne, db_path, payload)
+            return await self._recall(techne, db_path, payload)
         if name == "commit":
-            return self._commit(techne, db_path, payload)
+            return await self._commit(techne, db_path, payload)
         return ToolResult.failure(f"unknown tool {name!r}")
 
     # ---- per-request config ----------------------------------------------
@@ -220,7 +221,7 @@ class MemoryHandler:
 
     # ---- tools ----------------------------------------------------------
 
-    def _recall(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
+    async def _recall(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
         query = payload.get("query")
         if not isinstance(query, str) or not query.strip():
             return ToolResult.failure("'query' must be a non-empty string")
@@ -233,14 +234,17 @@ class MemoryHandler:
             payload.get("limit") or self.default_config.default_recall_limit
         )
         limit = max(1, min(limit, 50))
+        use_vectors = self.default_config.use_vectors
 
         try:
-            results = techne.search.search(
-                db_path,
-                sanitized,
-                table="knowledge",
-                limit=limit,
-                use_vectors=self.default_config.use_vectors,
+            results = await anyio.to_thread.run_sync(
+                lambda: techne.search.search(
+                    db_path,
+                    sanitized,
+                    table="knowledge",
+                    limit=limit,
+                    use_vectors=use_vectors,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult.failure(f"recall failed: {exc}")
@@ -257,7 +261,7 @@ class MemoryHandler:
         ]
         return ToolResult.json({"query": query, "hits": hits})
 
-    def _commit(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
+    async def _commit(self, techne: Any, db_path: Path, payload: dict[str, Any]) -> ToolResult:
         content = payload.get("content")
         if not isinstance(content, str) or not content.strip():
             return ToolResult.failure("'content' must be a non-empty string")
@@ -276,24 +280,25 @@ class MemoryHandler:
         if not isinstance(tags, str):
             return ToolResult.failure("'tags' must be a string")
 
-        # Initialize the DB if it doesn't exist — operators expect the
-        # handler to bootstrap on first use rather than error on a
-        # missing file.
-        if not db_path.exists():
+        if not await anyio.to_thread.run_sync(db_path.exists):
             try:
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                techne.init_db(db_path)
+                await anyio.to_thread.run_sync(
+                    lambda: db_path.parent.mkdir(parents=True, exist_ok=True)
+                )
+                await anyio.to_thread.run_sync(lambda: techne.init_db(db_path))
             except Exception as exc:  # noqa: BLE001
                 return ToolResult.failure(f"could not initialize techne DB: {exc}")
 
         try:
-            techne.knowledge.store(
-                db_path,
-                content=content,
-                type=ktype,
-                tags=tags,
-                confidence=confidence,
-                source="limenal",
+            await anyio.to_thread.run_sync(
+                lambda: techne.knowledge.store(
+                    db_path,
+                    content=content,
+                    type=ktype,
+                    tags=tags,
+                    confidence=confidence,
+                    source="limenal",
+                )
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult.failure(f"commit failed: {exc}")
