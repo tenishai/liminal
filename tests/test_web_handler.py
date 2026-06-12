@@ -387,6 +387,7 @@ async def test_dns_rebinding_blocked_via_ip_pin(tmp_path) -> None:
     not the original hostname.
     """
     import httpx
+
     from limenal.handlers.web import WebConfig, WebHandler
 
     connect_urls: list[str] = []
@@ -423,6 +424,7 @@ async def test_dns_rebinding_blocked_via_ip_pin(tmp_path) -> None:
 async def test_head_applies_content_type_allowlist(tmp_path) -> None:
     """web.head must enforce the content-type allowlist (parity with web.fetch)."""
     import httpx
+
     from limenal.handlers.web import WebConfig, WebHandler
     from limenal.protocol import Context
 
@@ -446,6 +448,7 @@ async def test_head_applies_content_type_allowlist(tmp_path) -> None:
 async def test_head_caps_large_headers(tmp_path) -> None:
     """web.head must truncate oversized response header sets."""
     import httpx
+
     from limenal.handlers.web import WebConfig, WebHandler
     from limenal.protocol import Context
 
