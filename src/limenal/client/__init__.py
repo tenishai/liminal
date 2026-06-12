@@ -12,6 +12,8 @@ The Bearer token is provided via a `token_provider` callable so callers
 that mint short-lived JWTs can refresh transparently.
 """
 
+from limenal.client.factory import from_config
+from limenal.client.library import LibraryLimenalClient
 from limenal.client.mcp import (
     AsyncMCPClient,
     MCPClient,
@@ -21,8 +23,16 @@ from limenal.client.mcp import (
     Tool,
     ToolCallOutcome,
 )
+from limenal.client.protocol import LimenalClient
+from limenal.client.proxy import ProxyLimenalClient
 
 __all__ = [
+    # Protocol + impls (preferred surface)
+    "LimenalClient",
+    "LibraryLimenalClient",
+    "ProxyLimenalClient",
+    "from_config",
+    # MCP client (backward-compat; AsyncMCPClient is what ProxyLimenalClient wraps)
     "AsyncMCPClient",
     "MCPClient",
     "MCPError",
