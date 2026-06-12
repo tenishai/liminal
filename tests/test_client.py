@@ -4,6 +4,8 @@ ASGITransport. Both sync and async clients covered.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -55,7 +57,7 @@ def _sync_mock_handler():
                 storage[args["key"]] = args["value"]
                 return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": "set"}], "isError": False}})
             if name == "scratchpad.get":
-                return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "json", "data": {"value": storage.get(args["key"])}}], "isError": False}})
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": json.dumps({"value": storage.get(args["key"])})}], "isError": False}})
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "error": {"code": -32002, "message": f"unknown tool {name!r}"}})
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "method not found"}})
 
@@ -113,7 +115,7 @@ async def test_async_call_tool_roundtrip(async_http, mint_token) -> None:
     )
     outcome = await client.call_tool("scratchpad.get", {"key": "color"})
     assert outcome.is_error is False
-    assert outcome.content[0]["data"]["value"] == "purple"
+    assert json.loads(outcome.content[0]["text"])["value"] == "purple"
     await client.aclose()
 
 
@@ -194,7 +196,7 @@ def test_sync_call_tool_roundtrip(sync_http, mint_token) -> None:
     )
     client.call_tool("scratchpad.set", {"key": "k", "value": "v"})
     outcome = client.call_tool("scratchpad.get", {"key": "k"})
-    assert outcome.content[0]["data"]["value"] == "v"
+    assert json.loads(outcome.content[0]["text"])["value"] == "v"
 
 
 def test_sync_remote_error_propagates(sync_http, mint_token) -> None:

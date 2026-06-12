@@ -13,6 +13,8 @@ client that doesn't yet have a token can still complete the handshake.
 
 from __future__ import annotations
 
+import json as _json
+
 import structlog
 from fastapi import APIRouter, Header, Request, Response
 
@@ -67,6 +69,24 @@ async def _authenticate(
     if not isinstance(scope, list) or "dispatch" not in scope:
         raise AuthError("dispatch scope required")
     return claims
+
+
+def _to_spec_content(blocks: list[dict]) -> list[dict]:
+    """Convert internal content blocks to MCP-spec types.
+
+    limenal handlers use {"type": "json", "data": <dict>} for structured
+    results — convenient for Python but not in the MCP spec (only text,
+    image, resource are defined). Convert to {"type": "text", "text":
+    json_string} so any strict third-party MCP client can parse the output.
+    """
+    out = []
+    for block in blocks:
+        if block.get("type") == "json":
+            data = block.get("data", {})
+            out.append({"type": "text", "text": _json.dumps(data, ensure_ascii=False)})
+        else:
+            out.append(block)
+    return out
 
 
 def build_router() -> APIRouter:
@@ -309,7 +329,7 @@ async def _handle_tools_call(
         )
 
     result = ToolCallResult(
-        content=tool_result.content,
+        content=_to_spec_content(tool_result.content),
         isError=tool_result.is_error,
     )
     return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))

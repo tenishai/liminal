@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 # ---- healthz --------------------------------------------------------------
@@ -212,7 +214,7 @@ async def test_tools_call_dispatches_to_scratchpad(client, mint_token) -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     body = r.json()
-    assert body["result"]["content"][0]["data"]["value"] == "blue"
+    assert json.loads(body["result"]["content"][0]["text"])["value"] == "blue"
 
 
 @pytest.mark.asyncio
@@ -249,7 +251,7 @@ async def test_tools_call_isolated_per_agent(client, mint_token) -> None:
         headers={"Authorization": f"Bearer {secundus}"},
     )
     body = r.json()
-    assert body["result"]["content"][0]["data"]["value"] is None
+    assert json.loads(body["result"]["content"][0]["text"])["value"] is None
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ which already pass and prove the receiving side.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -105,7 +106,7 @@ async def test_tool_extras_claim_reaches_handler(
         )
     body = r.json()
     assert body.get("error") is None, body
-    extra = body["result"]["content"][0]["data"]["extra"]
+    extra = json.loads(body["result"]["content"][0]["text"])["extra"]
     assert extra["marker"] == "rook-config"
     assert extra["web.allowed_hosts"] == ["docs.python.org"]
 
@@ -129,7 +130,7 @@ async def test_missing_tool_extras_yields_empty_extra(
         )
     body = r.json()
     assert body.get("error") is None, body
-    extra = body["result"]["content"][0]["data"]["extra"]
+    extra = json.loads(body["result"]["content"][0]["text"])["extra"]
     assert extra == {}
 
 

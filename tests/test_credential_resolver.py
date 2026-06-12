@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -313,6 +314,6 @@ async def test_resolver_credentials_reach_handler(
         )
     body = r.json()
     assert body.get("error") is None, body
-    creds = body["result"]["content"][0]["data"]["creds"]
+    creds = json.loads(body["result"]["content"][0]["text"])["creds"]
     assert creds == {"SECRET_KEY": "value-for-rook-echo-creds"}
     assert seen_persona_handler == [("rook", "echo-creds")]
