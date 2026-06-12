@@ -93,13 +93,8 @@ def build_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/healthz")
-    async def healthz(request: Request) -> dict:
-        reg = request.app.state.registry
-        return {
-            "status": "ok",
-            "version": __version__,
-            "handlers": reg.names() if reg else [],
-        }
+    async def healthz() -> dict:
+        return {"status": "ok"}
 
     @router.post("/mcp", response_model=None)
     async def mcp(

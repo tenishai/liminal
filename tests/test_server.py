@@ -10,12 +10,10 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_healthz_lists_handlers(client) -> None:
+async def test_healthz_returns_ok(client) -> None:
     r = await client.get("/healthz")
     assert r.status_code == 200
-    body = r.json()
-    assert body["status"] == "ok"
-    assert "scratchpad" in body["handlers"]
+    assert r.json() == {"status": "ok"}
 
 
 # ---- initialize -----------------------------------------------------------

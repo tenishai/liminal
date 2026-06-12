@@ -324,7 +324,7 @@ class FilesHandler:
             def _scan() -> list[dict[str, Any]]:
                 entries: list[dict[str, Any]] = []
                 for child in sorted(path.iterdir()):
-                    if len(entries) >= max_entries:
+                    if len(entries) > max_entries:
                         break
                     try:
                         stat = child.stat()
@@ -342,11 +342,14 @@ class FilesHandler:
             entries = await anyio.to_thread.run_sync(_scan)
         except OSError as exc:
             return ToolResult.failure(f"list failed: {exc}")
+        truncated = len(entries) > cfg.max_list_entries
+        if truncated:
+            entries = entries[: cfg.max_list_entries]
         return ToolResult.json(
             {
                 "path": str(path),
                 "entries": entries,
-                "truncated": len(entries) >= cfg.max_list_entries,
+                "truncated": truncated,
             }
         )
 

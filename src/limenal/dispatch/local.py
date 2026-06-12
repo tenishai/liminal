@@ -85,6 +85,5 @@ class InProcessDispatcher:
                 error=str(exc),
             )
             return ToolResult.failure(
-                f"{handler_name}.{local_name} raised "
-                f"{type(exc).__name__}: {exc}"
+                f"{handler_name}.{local_name} raised {type(exc).__name__}"
             )

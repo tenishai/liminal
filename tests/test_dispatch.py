@@ -103,4 +103,4 @@ async def test_handler_exception_becomes_tool_result_failure() -> None:
     d = InProcessDispatcher(registry=r)
     result = await d.dispatch(tool_name="raise.boom", payload={}, ctx=_ctx())
     assert result.is_error is True
-    assert "kaboom" in result.error
+    assert "RuntimeError" in result.error

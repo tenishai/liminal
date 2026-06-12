@@ -106,12 +106,6 @@ class ScratchpadHandler:
         return ToolResult.failure(f"unknown tool {name!r}")
 
 
-_SINGLETON: ScratchpadHandler | None = None
-
-
 def get_handler() -> Handler:
-    """Entry-point factory."""
-    global _SINGLETON
-    if _SINGLETON is None:
-        _SINGLETON = ScratchpadHandler()
-    return _SINGLETON
+    """Entry-point factory. Returns a fresh instance per app."""
+    return ScratchpadHandler()
