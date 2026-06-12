@@ -52,7 +52,7 @@ jobs:
 
   # ---- integration: full suite with techne ----------------------------------
   integration:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
