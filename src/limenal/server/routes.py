@@ -271,16 +271,7 @@ async def _handle_tools_call(
     credentials: dict[str, str] = {}
     if resolver is not None:
         try:
-            result = resolver(claims.identity, handler_name)
-            # Accept both sync and async resolvers — production
-            # CabalCoreCredentialResolver.fetch is async; in-process
-            # tests / solo-mode adapters may be sync.
-            import inspect
-
-            if inspect.isawaitable(result):
-                credentials = await result
-            else:
-                credentials = result
+            credentials = await resolver(claims.identity, handler_name)
         except Exception as exc:  # noqa: BLE001
             log.warning("credential.resolve_failed", error=str(exc))
             return make_error(

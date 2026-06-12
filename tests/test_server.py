@@ -337,7 +337,7 @@ async def test_credential_resolver_invoked_per_call(keyset, mint_token, registry
 
     calls: list[tuple[str, str]] = []
 
-    def resolver(persona: str, handler: str) -> dict[str, str]:
+    async def resolver(persona: str, handler: str) -> dict[str, str]:
         calls.append((persona, handler))
         return {"SLACK_TOKEN": f"sk-{persona}-{handler}"}
 

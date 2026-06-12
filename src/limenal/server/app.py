@@ -7,7 +7,7 @@ against Cabal Core.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import structlog
@@ -26,7 +26,7 @@ def create_app(
     *,
     jwt_verifier: JWTVerifier | None = None,
     registry: Registry | None = None,
-    credential_resolver: Callable[[str, str], dict[str, str]] | None = None,
+    credential_resolver: Callable[[str, str], Awaitable[dict[str, str]]] | None = None,
     server_name: str = "limenal",
 ) -> FastAPI:
     """Build a FastAPI MCP server.
