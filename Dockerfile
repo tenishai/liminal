@@ -17,19 +17,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Layer caching: copy only metadata first, install deps, then copy source.
-COPY pyproject.toml README.md LICENSE ./
-COPY src ./src
-
 # techne is brought in via BuildKit `--build-context techne=../techne`
 # (set by docker-compose.yml's additional_contexts). See CABAL-DECISIONS D-008/D-012.
 # When techne lands on PyPI, drop both COPY+install lines and add a `techne>=0.6.0`
 # pin to pyproject.toml's dependencies.
 COPY --from=techne / /build/techne
 
+# Layer-cache: copy pyproject.toml first, install all deps (and a stub package
+# so the build system is satisfied), then copy the real source last so a
+# code-only change doesn't bust the dependency install layer.
+COPY pyproject.toml README.md LICENSE ./
 RUN python3 -m venv /venv \
  && /venv/bin/pip install --no-cache-dir /build/techne \
- && /venv/bin/pip install --no-cache-dir .
+ && mkdir -p src/limenal && touch src/limenal/__init__.py \
+ && /venv/bin/pip install --no-cache-dir . \
+ && rm -rf src
+
+COPY src ./src
+RUN /venv/bin/pip install --no-cache-dir --no-deps .
 
 # ----- Runtime stage --------------------------------------------------------
 FROM python:3.12-slim AS runtime
