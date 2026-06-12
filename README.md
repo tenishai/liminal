@@ -119,4 +119,4 @@ and `techne`, install with `pip install -e ../limenal`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).

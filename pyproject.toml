@@ -7,12 +7,11 @@ name = "limenal"
 version = "0.1.0"
 description = "MCP gateway — one MCP connection per agent, many backend handlers behind it"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
 authors = [{ name = "Richard DiMartino" }]
 requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
