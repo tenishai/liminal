@@ -4,10 +4,12 @@ Requires `techne` installed as a sibling (see README). Tests that don't
 need techne mock the import; the rest exercise the real backend against
 a tmp_path SQLite DB.
 """
-
 from __future__ import annotations
 
 import sys
+
+import pytest
+pytest.importorskip("techne")
 from pathlib import Path
 from typing import Any
 
