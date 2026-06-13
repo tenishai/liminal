@@ -45,6 +45,7 @@ def create_app(
     registry: Registry | None = None,
     credential_resolver: Callable[[str, str], Awaitable[dict[str, str]]] | None = None,
     server_name: str = "limenal",
+    mcp_proxies: list | None = None,
 ) -> FastAPI:
     """Build a FastAPI MCP server.
 
@@ -59,10 +60,27 @@ def create_app(
             scratchpad). Phase 1.6 will swap a real Cabal Core fetcher in
             via this hook.
         server_name: the name reported by the `initialize` handshake.
+        mcp_proxies: optional list of ``ProxyConfig`` describing upstream
+            MCP servers to forward to. Each config becomes a runtime
+            handler in the registry under its ``prefix`` name. The
+            existing lifespan calls ``startup()`` on each handler, so
+            the proxies connect, initialize, and fetch their tool
+            catalogs automatically. Used for persona graduation (when a
+            cabal persona moves to its own container) and for third-
+            party MCP server integration (Jira, Slack, GitHub, etc.).
     """
 
     # Resolve the registry once; lifespan closes over it.
     reg = registry if registry is not None else discover_handlers()
+
+    # Register MCP proxy configs as runtime handlers before the dispatcher
+    # closes over the registry. Each proxy becomes a Handler under its
+    # configured prefix; the lifespan's existing startup() loop connects
+    # them, initializes their MCP clients, and fetches tool catalogs.
+    if mcp_proxies:
+        from limenal.handlers.mcp_proxy import register_proxies
+        register_proxies(reg, mcp_proxies)
+
     dispatcher = InProcessDispatcher(registry=reg)
 
     auth_disabled = _auth_disabled_from_env()
