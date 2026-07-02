@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -208,3 +209,55 @@ def test_build_rejects_duplicate_ids() -> None:
 def test_build_rejects_empty() -> None:
     with pytest.raises(ValueError, match="empty"):
         build_multi_issuer_verifier([], service_audience=SVC_AUD)
+
+
+# ---- per-issuer blast-radius isolation (real URLJWKSVerifier) --------------
+
+
+def _jwks_body(key: RSAKey) -> dict:
+    return {"keys": [key.as_dict(private=False)]}
+
+
+@pytest.mark.asyncio
+async def test_per_issuer_outage_isolation() -> None:
+    """One issuer's JWKS endpoint being down denies only that issuer's callers.
+
+    Exercises the production composition (real URLJWKSVerifiers with per-issuer
+    httpx clients), not the StaticKeySetVerifier stand-in — the load-bearing
+    security claim of the design (spec §Security notes).
+    """
+    key_a, key_b = _make_key(), _make_key()
+
+    def down(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    def serves_b(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_jwks_body(key_b))
+
+    va = URLJWKSVerifier(
+        jwks_url="https://a.invalid/jwks.json",
+        expected_issuer="cabal-a",
+        expected_audience=SVC_AUD,
+    )
+    vb = URLJWKSVerifier(
+        jwks_url="https://b.invalid/jwks.json",
+        expected_issuer="cabal-b",
+        expected_audience=SVC_AUD,
+    )
+    va._client = httpx.AsyncClient(transport=httpx.MockTransport(down))
+    vb._client = httpx.AsyncClient(transport=httpx.MockTransport(serves_b))
+    verifier = MultiIssuerJWKSVerifier(
+        registry={"cabal-a": va, "cabal-b": vb},
+        parents=frozenset({"cabal-a"}),
+    )
+    try:
+        # B verifies despite A being down...
+        assert (await verifier.verify(_mint(key_b, iss="cabal-b"))).issuer == "cabal-b"
+        # ...A's outage denies its own callers (does not resolve/allow)...
+        with pytest.raises(httpx.HTTPStatusError):
+            await verifier.verify(_mint(key_a, iss="cabal-a"))
+        # ...and B is unaffected by A's failure — isolation holds.
+        assert (await verifier.verify(_mint(key_b, iss="cabal-b"))).issuer == "cabal-b"
+    finally:
+        await va._client.aclose()
+        await vb._client.aclose()

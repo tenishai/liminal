@@ -252,7 +252,7 @@ def _peek_iss(token: str) -> str | None:
     except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
         return None
     iss = payload.get("iss")
-    return str(iss) if iss is not None else None
+    return iss if isinstance(iss, str) else None
 
 
 @dataclass
