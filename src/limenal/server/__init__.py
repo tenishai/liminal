@@ -11,9 +11,13 @@ KeySet (tests) or a remote JWKS URL (production, e.g. Cabal Core).
 from limenal.server.app import create_app
 from limenal.server.auth import (
     AuthError,
+    IssuerConfig,
     JWTVerifier,
+    MultiIssuerJWKSVerifier,
     StaticKeySetVerifier,
     URLJWKSVerifier,
+    VerifiedClaims,
+    build_multi_issuer_verifier,
 )
 from limenal.server.credentials import (
     CabalCoreCredentialResolver,
@@ -36,14 +40,18 @@ __all__ = [
     "CredentialResolver",
     "InitializeParams",
     "InitializeResult",
+    "IssuerConfig",
     "JSONRPCError",
     "JSONRPCRequest",
     "JSONRPCResponse",
     "JWTVerifier",
+    "MultiIssuerJWKSVerifier",
     "StaticKeySetVerifier",
     "ToolCallParams",
     "ToolCallResult",
     "ToolsListResult",
     "URLJWKSVerifier",
+    "VerifiedClaims",
+    "build_multi_issuer_verifier",
     "create_app",
 ]

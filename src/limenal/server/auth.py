@@ -19,6 +19,9 @@ grained authorization (per-tool ACLs) is a Phase 2 concern.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -51,6 +54,10 @@ class VerifiedClaims:
     identity: str
     agent_name: str
     raw: dict[str, Any]
+    # Which trusted issuer minted this token. Populated by the verify helper.
+    # "" for legacy single-issuer callers and the auth-disabled anonymous path.
+    # Sovereign (multi-issuer) authorization keys on it: (issuer, persona).
+    issuer: str = ""
 
 
 class JWTVerifier(Protocol):
@@ -164,6 +171,22 @@ class URLJWKSVerifier:
 # ---- shared verify helper -------------------------------------------------
 
 
+def _aud_ok(aud: Any, expected: str | None) -> bool:
+    """Audience match that accepts a list-valued `aud`.
+
+    RFC 7519 permits `aud` to be a string OR an array of strings. Cabal mints
+    per-target tokens (cabal D-010) whose `aud` may carry several audiences,
+    so exact string equality is wrong. `None` expected means "don't check".
+    """
+    if expected is None:
+        return True
+    if isinstance(aud, str):
+        return aud == expected
+    if isinstance(aud, (list, tuple)):
+        return expected in aud
+    return False
+
+
 def _verify_against_keyset(
     token: str,
     *,
@@ -187,7 +210,7 @@ def _verify_against_keyset(
     if claims.get("iss") != expected_issuer:
         raise AuthError(f"unexpected iss: {claims.get('iss')!r}")
 
-    if expected_audience is not None and claims.get("aud") != expected_audience:
+    if not _aud_ok(claims.get("aud"), expected_audience):
         raise AuthError("invalid_audience")
 
     exp = claims.get("exp")
@@ -203,4 +226,102 @@ def _verify_against_keyset(
         raise AuthError(
             "token missing cabal_persona / sub claims (need both to dispatch)"
         )
-    return VerifiedClaims(identity=str(persona), agent_name=str(sub), raw=claims)
+    return VerifiedClaims(
+        identity=str(persona),
+        agent_name=str(sub),
+        raw=claims,
+        issuer=str(claims.get("iss")),
+    )
+
+
+# ---- Multi-issuer (sovereign / federated) ---------------------------------
+
+
+def _peek_iss(token: str) -> str | None:
+    """Read the UNVERIFIED `iss` claim to select which issuer's keys to use.
+
+    Selection only — this value is never trusted. Signature verification
+    against the selected issuer's KeySet (in the delegated verify) is the
+    real gate: a token that lies about `iss` to pick issuer X's keys will
+    fail X's signature check and be rejected. Safe by construction.
+    """
+    try:
+        seg = token.split(".")[1]
+        seg += "=" * (-len(seg) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(seg))
+    except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
+        return None
+    iss = payload.get("iss")
+    return iss if isinstance(iss, str) else None
+
+
+@dataclass
+class MultiIssuerJWKSVerifier:
+    """Verifies tokens minted by any of several trusted cabals.
+
+    Each issuer id maps to its own single-issuer verifier (production wires a
+    per-issuer `URLJWKSVerifier`, so every issuer keeps an independent JWKS
+    cache + kid-miss re-fetch and one issuer's JWKS outage only denies that
+    issuer's callers). Tests inject `StaticKeySetVerifier`s.
+
+    `parents` carries the issuers with guardian standing — used by the admin
+    plane to reject `admin/*` from non-parent issuers before touching policy.
+    """
+
+    registry: dict[str, JWTVerifier]
+    parents: frozenset[str] = frozenset()
+
+    async def verify(self, token: str) -> VerifiedClaims:
+        iss = _peek_iss(token)
+        if iss is None:
+            raise AuthError("token missing iss claim")
+        inner = self.registry.get(iss)
+        if inner is None:
+            raise AuthError(f"untrusted issuer: {iss!r}")
+        # Delegate: signature vs that issuer's keys, RS256 pin, iss/aud/exp/iat,
+        # persona+sub. The inner verifier's expected_issuer == iss re-confirms
+        # the peeked value; VerifiedClaims.issuer comes back set.
+        return await inner.verify(token)
+
+
+@dataclass(frozen=True, slots=True)
+class IssuerConfig:
+    """One trusted cabal in a sovereign service's trust registry."""
+
+    id: str
+    jwks_uri: str
+    parent: bool = False
+
+
+def build_multi_issuer_verifier(
+    issuers: list[IssuerConfig],
+    *,
+    service_audience: str,
+    cache_ttl_seconds: float = 300.0,
+) -> MultiIssuerJWKSVerifier:
+    """Wire a `MultiIssuerJWKSVerifier` from trust-registry config.
+
+    `service_audience` is this sovereign persona's stable service id, which
+    every caller must mint into the token `aud`. Exactly one issuer must be
+    flagged `parent` — the guardian that graduated this persona.
+    """
+    if not issuers:
+        raise ValueError("trust registry is empty; at least one issuer required")
+    ids = [i.id for i in issuers]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"duplicate issuer ids in trust registry: {ids}")
+    parents = frozenset(i.id for i in issuers if i.parent)
+    if len(parents) != 1:
+        raise ValueError(
+            f"exactly one parent issuer required, got {len(parents)}: {sorted(parents)}"
+        )
+    registry: dict[str, JWTVerifier] = {
+        i.id: URLJWKSVerifier(
+            jwks_url=i.jwks_uri,
+            expected_issuer=i.id,
+            expected_audience=service_audience,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
+        for i in issuers
+    }
+    return MultiIssuerJWKSVerifier(registry=registry, parents=parents)
