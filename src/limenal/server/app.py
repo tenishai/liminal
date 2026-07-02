@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -50,6 +51,7 @@ def create_app(
     mcp_proxies: list | None = None,
     policy_store: PolicyStore | None = None,
     policy_scope_for: Callable[[str], str | None] | None = None,
+    policy_tool_extras: dict[str, Any] | None = None,
 ) -> FastAPI:
     """Build a FastAPI MCP server.
 
@@ -148,6 +150,23 @@ def create_app(
     app.state.auth_disabled = auth_disabled
     app.state.policy_store = policy_store
     app.state.policy_scope_for = policy_scope_for
+    # Server-supplied sandbox config (memory.db_path, files.allowed_paths,
+    # egress allowlists) for sovereign mode. Used INSTEAD of the caller's
+    # token tool_extras when a grant is present — the token never picks a
+    # handler's operating boundary in a federated deployment.
+    app.state.policy_tool_extras = policy_tool_extras
+
+    # A wired policy store that can never run (auth disabled) is almost
+    # certainly a misconfiguration — the sovereign authz path is silently
+    # inert. Warn loudly rather than fail (trusted-network mode is valid).
+    if auth_disabled and policy_store is not None:
+        log.warning(
+            "limenal.policy_store_inert",
+            msg=(
+                "a policy_store is wired but LIMENAL_AUTH_DISABLED=1 — sovereign "
+                "authorization is bypassed (anonymous claims, no policy resolve)."
+            ),
+        )
 
     app.include_router(build_router())
     # Federation admin surface is only reachable when a policy store backs it.

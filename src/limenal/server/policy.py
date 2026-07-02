@@ -140,12 +140,21 @@ class SqlitePolicyStore:
         *,
         parent_issuer: str | None = None,
         parent_scopes: tuple[str, ...] = (ADMIN_SCOPE,),
+        audit_max_rows: int | None = 50_000,
+        audit_prune_interval: int = 500,
     ) -> None:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._lock = asyncio.Lock()
+        # Bound the audit table so an authenticated-but-ungranted (or
+        # repeatedly-denied) partner cabal can't fill the DB — a plausible
+        # availability vector across a federation. Trimmed to the most recent
+        # `audit_max_rows` every `audit_prune_interval` writes. None = unbounded.
+        self._audit_max_rows = audit_max_rows
+        self._audit_prune_interval = max(1, audit_prune_interval)
+        self._audit_writes = 0
         if parent_issuer is not None:
             self._seed_parent(parent_issuer, set(parent_scopes))
         # Parent set is immutable after seeding; cache it for the sync parents().
@@ -316,6 +325,16 @@ class SqlitePolicyStore:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (time.time(), action, issuer, persona, agent, json.dumps(detail) if detail else None),
         )
+        self._audit_writes += 1
+        if (
+            self._audit_max_rows is not None
+            and self._audit_writes % self._audit_prune_interval == 0
+        ):
+            self._conn.execute(
+                "DELETE FROM policy_audit WHERE id <= "
+                "(SELECT MAX(id) FROM policy_audit) - ?",
+                (self._audit_max_rows,),
+            )
 
     def close(self) -> None:
         self._conn.close()

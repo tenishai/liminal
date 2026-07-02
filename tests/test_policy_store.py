@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from limenal.server.policy import ParentImmutable, SqlitePolicyStore
@@ -89,6 +92,34 @@ async def test_list_grants_includes_parent(store) -> None:
     parents = [r for r in rows if r.is_parent]
     assert len(parents) == 1 and parents[0].issuer == "rd-cabal"
     assert any(r.issuer == "shaz" and r.persona == "rook" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_audit_since_filter(store) -> None:
+    await store.grant("shaz", "rook", scopes={"mem:query"}, allowed_handlers=None)
+    await asyncio.sleep(0.02)
+    mid = time.time()
+    await asyncio.sleep(0.02)
+    await store.grant("kyle", "rook", scopes={"mem:query"}, allowed_handlers=None)
+    recent = {r.issuer for r in await store.audit(since=mid, limit=50)}
+    assert "kyle" in recent and "shaz" not in recent
+
+
+@pytest.mark.asyncio
+async def test_audit_cap_prunes(tmp_path) -> None:
+    s = SqlitePolicyStore(
+        str(tmp_path / "p.db"), parent_issuer="rd-cabal",
+        audit_max_rows=5, audit_prune_interval=1,
+    )
+    try:
+        for i in range(30):
+            await s.record_access(
+                issuer="shaz", persona="rook", agent=None, allowed=False, detail={"i": i}
+            )
+        rows = await s.audit(limit=100)
+        assert len(rows) == 5  # bounded to the most recent audit_max_rows
+    finally:
+        s.close()
 
 
 def test_parent_reseed_is_idempotent(tmp_path) -> None:

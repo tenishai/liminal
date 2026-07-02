@@ -346,15 +346,24 @@ async def _handle_tools_call(
                 message=f"credential resolution failed: {exc}",
             )
 
-    # tool_extras (legacy alias: cabal_tool_extras) carries per-persona
-    # scoping config (web.allowed_hosts, files.allowed_paths,
-    # memory.db_path, etc.) embedded in the JWT at mint time. Forwarded
-    # into Context.extra so handlers can read it the same way they do
-    # for tests.
+    # tool_extras carries per-persona SANDBOX config (memory.db_path,
+    # files.allowed_paths, web/notify.allowed_hosts, ...) that bounds where a
+    # handler may operate. In SOVEREIGN mode (a grant is present) the caller's
+    # cabal is NOT trusted, so its token-embedded tool_extras is IGNORED —
+    # otherwise a foreign token could pick which persona's memory DB / paths /
+    # egress a granted handler uses (the tenant-isolation seam). The sovereign
+    # service supplies these boundaries itself via `policy_tool_extras`
+    # (operator-configured), never the token. Single-cabal keeps the trusted
+    # token-embedded path (its issuer is also the policy authority).
     extra: dict = {}
-    raw_extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
-    if isinstance(raw_extras, dict):
-        extra = dict(raw_extras)
+    if grant is not None:
+        server_extra = getattr(request.app.state, "policy_tool_extras", None)
+        if isinstance(server_extra, dict):
+            extra = dict(server_extra)
+    else:
+        raw_extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
+        if isinstance(raw_extras, dict):
+            extra = dict(raw_extras)
 
     ctx = Context(
         identity=claims.identity,
