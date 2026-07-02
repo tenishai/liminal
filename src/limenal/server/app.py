@@ -24,7 +24,9 @@ from fastapi import FastAPI
 from limenal import __version__
 from limenal.dispatch import InProcessDispatcher
 from limenal.registry import Registry, discover_handlers
-from limenal.server.auth import JWTVerifier
+from limenal.server.admin import build_admin_router
+from limenal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
+from limenal.server.policy import PolicyStore
 from limenal.server.routes import build_router
 
 log = structlog.get_logger(__name__)
@@ -46,6 +48,8 @@ def create_app(
     credential_resolver: Callable[[str, str], Awaitable[dict[str, str]]] | None = None,
     server_name: str = "limenal",
     mcp_proxies: list | None = None,
+    policy_store: PolicyStore | None = None,
+    policy_scope_for: Callable[[str], str | None] | None = None,
 ) -> FastAPI:
     """Build a FastAPI MCP server.
 
@@ -92,6 +96,18 @@ def create_app(
             "deployments (single operator, localhost client)."
         )
 
+    # Sovereign safety invariant: a multi-issuer verifier trusts several cabals,
+    # so it MUST NOT run on the token-embedded authz path — that would let any
+    # federated cabal self-grant scope via its own scope/tool_extras claims.
+    # A PolicyStore (server-side authorization) is required alongside it.
+    if isinstance(jwt_verifier, MultiIssuerJWKSVerifier) and policy_store is None:
+        raise RuntimeError(
+            "limenal misconfiguration: a MultiIssuerJWKSVerifier requires a "
+            "policy_store. Without server-side authorization, a federated cabal "
+            "could self-grant scope through its own token claims. Wire a "
+            "PolicyStore (e.g. SqlitePolicyStore) into create_app()."
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         log.info("limenal.startup", version=__version__, handlers=reg.names())
@@ -130,6 +146,11 @@ def create_app(
     app.state.credential_resolver = credential_resolver
     app.state.server_name = server_name
     app.state.auth_disabled = auth_disabled
+    app.state.policy_store = policy_store
+    app.state.policy_scope_for = policy_scope_for
 
     app.include_router(build_router())
+    # Federation admin surface is only reachable when a policy store backs it.
+    if policy_store is not None:
+        app.include_router(build_admin_router())
     return app

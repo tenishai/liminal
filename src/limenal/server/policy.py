@@ -1,0 +1,321 @@
+"""Server-side authorization policy for a sovereign limenal (federation Part 2).
+
+A *sovereign* limenal (a graduated singleton persona serving several
+independently-owned cabals) cannot derive authorization from claims the caller's
+own cabal minted — a foreign cabal would just mint itself generous
+`scope`/`tool_extras`. So authorization moves here: a policy table keyed on the
+**verified** `(issuer, persona)` that this service owns.
+
+Resolution precedence: exact `(issuer, persona)` → issuer-wide `(issuer, "*")` →
+`None` (deny). Fail-closed.
+
+The **parent** — the cabal that graduated this persona — is seeded as an immutable
+`is_parent` row with `admin:*`. No `grant`/`revoke` can touch it: "graduation does
+not orphan." `admin:*` implies every scope.
+
+This is limenal's first local persistent store: a small SQLite DB. All access is
+serialized through an asyncio lock and run off the event loop via `to_thread`, so
+the single connection is never touched concurrently.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Protocol, TypeVar
+
+_T = TypeVar("_T")
+
+ADMIN_SCOPE = "admin:*"
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeGrant:
+    """What a caller may do. `allowed_handlers=None` means every handler this
+    service exposes; an empty set denies all (fail-closed)."""
+
+    scopes: frozenset[str]
+    allowed_handlers: frozenset[str] | None = None
+
+    def has_scope(self, required: str) -> bool:
+        return ADMIN_SCOPE in self.scopes or required in self.scopes
+
+
+@dataclass(frozen=True, slots=True)
+class GrantRow:
+    issuer: str
+    persona: str
+    scopes: frozenset[str]
+    allowed_handlers: frozenset[str] | None
+    is_parent: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AuditRow:
+    ts: float
+    action: str
+    issuer: str | None
+    persona: str | None
+    agent: str | None
+    detail: dict[str, Any]
+
+
+class ParentImmutable(RuntimeError):
+    """Attempt to modify or remove the parent's guardian grant."""
+
+
+class PolicyStore(Protocol):
+    async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None: ...
+    async def grant(
+        self,
+        issuer: str,
+        persona: str,
+        *,
+        scopes: set[str],
+        allowed_handlers: set[str] | None,
+    ) -> None: ...
+    async def revoke(self, issuer: str, persona: str) -> None: ...
+    async def list_grants(self) -> list[GrantRow]: ...
+    async def record_access(
+        self, *, issuer: str, persona: str, agent: str | None, allowed: bool, detail: dict[str, Any]
+    ) -> None: ...
+    async def audit(
+        self, *, since: float | None = None, limit: int = 100
+    ) -> list[AuditRow]: ...
+    def parents(self) -> frozenset[str]: ...
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS policy_grants (
+    issuer            TEXT NOT NULL,
+    persona           TEXT NOT NULL,
+    scopes            TEXT NOT NULL,
+    allowed_handlers  TEXT,
+    is_parent         INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    PRIMARY KEY (issuer, persona)
+);
+CREATE TABLE IF NOT EXISTS policy_audit (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       REAL NOT NULL,
+    action   TEXT NOT NULL,
+    issuer   TEXT,
+    persona  TEXT,
+    agent    TEXT,
+    detail   TEXT
+);
+"""
+
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _dump_handlers(handlers: set[str] | None) -> str | None:
+    return json.dumps(sorted(handlers)) if handlers is not None else None
+
+
+def _load_handlers(raw: str | None) -> frozenset[str] | None:
+    return frozenset(json.loads(raw)) if raw is not None else None
+
+
+def _row_to_grant(row: sqlite3.Row) -> ScopeGrant:
+    return ScopeGrant(
+        scopes=frozenset(json.loads(row["scopes"])),
+        allowed_handlers=_load_handlers(row["allowed_handlers"]),
+    )
+
+
+class SqlitePolicyStore:
+    """SQLite-backed `PolicyStore`. Seeds the immutable parent row on init."""
+
+    def __init__(
+        self,
+        path: str,
+        *,
+        parent_issuer: str | None = None,
+        parent_scopes: tuple[str, ...] = (ADMIN_SCOPE,),
+    ) -> None:
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+        self._lock = asyncio.Lock()
+        if parent_issuer is not None:
+            self._seed_parent(parent_issuer, set(parent_scopes))
+        # Parent set is immutable after seeding; cache it for the sync parents().
+        self._parents = frozenset(
+            r["issuer"]
+            for r in self._conn.execute(
+                "SELECT issuer FROM policy_grants WHERE is_parent = 1"
+            ).fetchall()
+        )
+
+    def _seed_parent(self, issuer: str, scopes: set[str]) -> None:
+        existing = self._conn.execute(
+            "SELECT 1 FROM policy_grants WHERE issuer = ? AND is_parent = 1", (issuer,)
+        ).fetchone()
+        if existing is not None:
+            return
+        now = _now_iso()
+        self._conn.execute(
+            "INSERT INTO policy_grants"
+            "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
+            "VALUES (?, '*', ?, NULL, 1, ?, ?)",
+            (issuer, json.dumps(sorted(scopes | {ADMIN_SCOPE})), now, now),
+        )
+        self._conn.commit()
+
+    def parents(self) -> frozenset[str]:
+        return self._parents
+
+    async def _run(self, fn: Callable[[], _T]) -> _T:
+        async with self._lock:
+            return await asyncio.to_thread(fn)
+
+    async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None:
+        def _q() -> ScopeGrant | None:
+            for who in (persona, "*"):
+                row = self._conn.execute(
+                    "SELECT scopes, allowed_handlers FROM policy_grants "
+                    "WHERE issuer = ? AND persona = ?",
+                    (issuer, who),
+                ).fetchone()
+                if row is not None:
+                    return _row_to_grant(row)
+            return None
+
+        return await self._run(_q)
+
+    async def grant(
+        self,
+        issuer: str,
+        persona: str,
+        *,
+        scopes: set[str],
+        allowed_handlers: set[str] | None,
+    ) -> None:
+        def _op() -> None:
+            existing = self._conn.execute(
+                "SELECT is_parent FROM policy_grants WHERE issuer = ? AND persona = ?",
+                (issuer, persona),
+            ).fetchone()
+            if existing is not None and existing["is_parent"]:
+                raise ParentImmutable(
+                    f"cannot modify parent grant ({issuer!r}, {persona!r})"
+                )
+            now = _now_iso()
+            self._conn.execute(
+                "INSERT INTO policy_grants"
+                "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?) "
+                "ON CONFLICT(issuer, persona) DO UPDATE SET "
+                "scopes = excluded.scopes, allowed_handlers = excluded.allowed_handlers, "
+                "updated_at = excluded.updated_at",
+                (issuer, persona, json.dumps(sorted(scopes)), _dump_handlers(allowed_handlers), now, now),
+            )
+            self._audit(
+                "grant", issuer, persona, None,
+                {"scopes": sorted(scopes), "allowed_handlers": (sorted(allowed_handlers) if allowed_handlers is not None else None)},
+            )
+            self._conn.commit()
+
+        await self._run(_op)
+
+    async def revoke(self, issuer: str, persona: str) -> None:
+        def _op() -> None:
+            existing = self._conn.execute(
+                "SELECT is_parent FROM policy_grants WHERE issuer = ? AND persona = ?",
+                (issuer, persona),
+            ).fetchone()
+            if existing is None:
+                return
+            if existing["is_parent"]:
+                raise ParentImmutable(
+                    f"cannot revoke parent grant ({issuer!r}, {persona!r})"
+                )
+            self._conn.execute(
+                "DELETE FROM policy_grants WHERE issuer = ? AND persona = ?",
+                (issuer, persona),
+            )
+            self._audit("revoke", issuer, persona, None, {})
+            self._conn.commit()
+
+        await self._run(_op)
+
+    async def list_grants(self) -> list[GrantRow]:
+        def _q() -> list[GrantRow]:
+            rows = self._conn.execute(
+                "SELECT issuer, persona, scopes, allowed_handlers, is_parent "
+                "FROM policy_grants ORDER BY issuer, persona"
+            ).fetchall()
+            return [
+                GrantRow(
+                    issuer=r["issuer"],
+                    persona=r["persona"],
+                    scopes=frozenset(json.loads(r["scopes"])),
+                    allowed_handlers=_load_handlers(r["allowed_handlers"]),
+                    is_parent=bool(r["is_parent"]),
+                )
+                for r in rows
+            ]
+
+        return await self._run(_q)
+
+    async def record_access(
+        self, *, issuer: str, persona: str, agent: str | None, allowed: bool, detail: dict[str, Any]
+    ) -> None:
+        def _op() -> None:
+            self._audit(
+                "access_allow" if allowed else "access_deny", issuer, persona, agent, detail
+            )
+            self._conn.commit()
+
+        await self._run(_op)
+
+    async def audit(
+        self, *, since: float | None = None, limit: int = 100
+    ) -> list[AuditRow]:
+        def _q() -> list[AuditRow]:
+            if since is not None:
+                rows = self._conn.execute(
+                    "SELECT ts, action, issuer, persona, agent, detail FROM policy_audit "
+                    "WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
+                    (since, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT ts, action, issuer, persona, agent, detail FROM policy_audit "
+                    "ORDER BY ts DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [
+                AuditRow(
+                    ts=r["ts"],
+                    action=r["action"],
+                    issuer=r["issuer"],
+                    persona=r["persona"],
+                    agent=r["agent"],
+                    detail=json.loads(r["detail"]) if r["detail"] else {},
+                )
+                for r in rows
+            ]
+
+        return await self._run(_q)
+
+    def _audit(
+        self, action: str, issuer: str | None, persona: str | None, agent: str | None, detail: dict[str, Any]
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO policy_audit(ts, action, issuer, persona, agent, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (time.time(), action, issuer, persona, agent, json.dumps(detail) if detail else None),
+        )
+
+    def close(self) -> None:
+        self._conn.close()

@@ -29,7 +29,26 @@ def main(argv: list[str] | None = None) -> int:
         help="URL of the JWKS to verify caller tokens against. Required for any authenticated method (tools/list, tools/call).",
     )
     serve_p.add_argument(
-        "--issuer", default="cabal-core", help="Expected `iss` claim."
+        "--issuer", default="cabal-core", help="Expected `iss` claim (single-issuer mode)."
+    )
+    serve_p.add_argument(
+        "--trust-registry",
+        default=None,
+        help=(
+            "Path to a multi-issuer trust registry TOML (SOVEREIGN mode — a "
+            "graduated singleton persona serving several cabals). Mutually "
+            "exclusive with --jwks-url; requires --policy-db. TOML shape: a "
+            "top-level `service_audience` string + [[issuer]] tables with "
+            "id/jwks_uri/parent."
+        ),
+    )
+    serve_p.add_argument(
+        "--policy-db",
+        default=None,
+        help=(
+            "Path to the SQLite policy store backing sovereign authorization. "
+            "Required with --trust-registry; nonsensical without it."
+        ),
     )
     serve_p.add_argument(
         "--cabal-url",
@@ -89,18 +108,77 @@ def main(argv: list[str] | None = None) -> int:
 
         from limenal.server import (
             CabalCoreCredentialResolver,
+            IssuerConfig,
+            JWTVerifier,
+            SqlitePolicyStore,
             URLJWKSVerifier,
+            build_multi_issuer_verifier,
             create_app,
         )
 
-        verifier = None
-        if args.jwks_url:
+        # Config guards: single-issuer (--jwks-url) XOR sovereign
+        # (--trust-registry + --policy-db).
+        if args.jwks_url and args.trust_registry:
+            print(
+                "error: --jwks-url and --trust-registry are mutually exclusive "
+                "(single-cabal vs sovereign mode).",
+                file=sys.stderr,
+            )
+            return 2
+        if args.policy_db and not args.trust_registry:
+            print(
+                "error: --policy-db requires --trust-registry (server-side authz "
+                "is only meaningful with a multi-issuer verifier).",
+                file=sys.stderr,
+            )
+            return 2
+
+        verifier: JWTVerifier | None = None
+        policy_store = None
+        if args.trust_registry:
+            import tomllib
+
+            if not args.policy_db:
+                print(
+                    "error: --trust-registry requires --policy-db (sovereign mode "
+                    "must have server-side authorization).",
+                    file=sys.stderr,
+                )
+                return 2
+            with open(args.trust_registry, "rb") as fh:
+                cfg = tomllib.load(fh)
+            service_audience = cfg.get("service_audience")
+            if not service_audience:
+                print(
+                    "error: trust registry is missing a top-level `service_audience`.",
+                    file=sys.stderr,
+                )
+                return 2
+            issuers = [
+                IssuerConfig(
+                    id=i["id"], jwks_uri=i["jwks_uri"], parent=bool(i.get("parent", False))
+                )
+                for i in cfg.get("issuer", [])
+            ]
+            verifier = build_multi_issuer_verifier(
+                issuers, service_audience=service_audience
+            )
+            parent_issuer = next(i.id for i in issuers if i.parent)
+            policy_store = SqlitePolicyStore(args.policy_db, parent_issuer=parent_issuer)
+            print(
+                f"sovereign mode: {len(issuers)} trusted issuer(s), parent "
+                f"{parent_issuer!r}, audience {service_audience!r}, policy db "
+                f"{args.policy_db}",
+                file=sys.stderr,
+            )
+        elif args.jwks_url:
             verifier = URLJWKSVerifier(
                 jwks_url=args.jwks_url, expected_issuer=args.issuer
             )
         else:
             print(
-                "warning: --jwks-url not set; tools/list and tools/call will reject every request",
+                "warning: no verifier configured (--jwks-url or --trust-registry); "
+                "tools/list and tools/call will reject every request",
                 file=sys.stderr,
             )
 
@@ -137,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         app = create_app(
             jwt_verifier=verifier,
             credential_resolver=credential_resolver,
+            policy_store=policy_store,
         )
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
