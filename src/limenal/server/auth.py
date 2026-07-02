@@ -104,9 +104,16 @@ class URLJWKSVerifier:
     cache_ttl_seconds: float = 300.0
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
     expected_audience: str | None = DEFAULT_AUD
+    # Minimum seconds between forced (kid-miss) re-fetches. Bounds the
+    # amplification vector where a caller — who under multi-issuer can select
+    # this verifier via an unverified `iss` — spams unknown-`kid` tokens to
+    # drive cache-busting outbound JWKS fetches. A real key rotation is still
+    # picked up on the first kid-miss; only the *rate* is capped.
+    refetch_min_interval_seconds: float = 10.0
 
     _cached: KeySet | None = field(default=None, init=False)
     _cached_at: float = field(default=0.0, init=False)
+    _last_refetch_at: float = field(default=0.0, init=False)
     _lock: asyncio.Lock | None = field(default=None, init=False)
     # Injectable AsyncClient for tests; production creates per-fetch clients.
     _client: httpx.AsyncClient | None = field(default=None, init=False)
@@ -118,13 +125,19 @@ class URLJWKSVerifier:
 
     async def _fetch(self) -> KeySet:
         log.info("auth.jwks.fetch", url=self.jwks_url)
-        if self._client is not None:
-            resp = await self._client.get(self.jwks_url)
-        else:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                resp = await client.get(self.jwks_url)
-        resp.raise_for_status()
-        body = resp.json()
+        # Fail closed: a JWKS endpoint outage becomes an AuthError (→ 401 at
+        # the route) rather than an httpx.HTTPStatusError that would surface
+        # as a 500 (routes._authenticate only catches AuthError).
+        try:
+            if self._client is not None:
+                resp = await self._client.get(self.jwks_url)
+            else:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                    resp = await client.get(self.jwks_url)
+            resp.raise_for_status()
+            body = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AuthError(f"jwks fetch failed for {self.jwks_url}: {exc}") from exc
         keys = body.get("keys", [])
         ks = KeySet.import_key_set({"keys": keys}) if keys else KeySet([])
         self._cached = ks
@@ -154,8 +167,8 @@ class URLJWKSVerifier:
                 leeway_seconds=self.leeway_seconds,
             )
         except AuthError as exc:
-            if "kid" in str(exc).lower():
-                # Force a re-fetch and try again.
+            if "kid" in str(exc).lower() and self._may_refetch():
+                # Force a re-fetch and try again (throttled — see _may_refetch).
                 async with self._get_lock():
                     self._cached = None
                 return _verify_against_keyset(
@@ -166,6 +179,17 @@ class URLJWKSVerifier:
                     leeway_seconds=self.leeway_seconds,
                 )
             raise
+
+    def _may_refetch(self) -> bool:
+        """Rate-limit forced (kid-miss) re-fetches to bound the amplification
+        vector. Returns True at most once per `refetch_min_interval_seconds`.
+        A real rotation lands on the first kid-miss; a flood of unknown kids
+        can trigger at most one outbound fetch per interval."""
+        now = time.monotonic()
+        if now - self._last_refetch_at < self.refetch_min_interval_seconds:
+            return False
+        self._last_refetch_at = now
+        return True
 
 
 # ---- shared verify helper -------------------------------------------------

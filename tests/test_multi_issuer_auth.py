@@ -253,11 +253,40 @@ async def test_per_issuer_outage_isolation() -> None:
     try:
         # B verifies despite A being down...
         assert (await verifier.verify(_mint(key_b, iss="cabal-b"))).issuer == "cabal-b"
-        # ...A's outage denies its own callers (does not resolve/allow)...
-        with pytest.raises(httpx.HTTPStatusError):
+        # ...A's outage denies its own callers, fail-closed as AuthError (not a
+        # raw httpx error) so the route returns 401 rather than 500...
+        with pytest.raises(AuthError, match="jwks fetch failed"):
             await verifier.verify(_mint(key_a, iss="cabal-a"))
         # ...and B is unaffected by A's failure — isolation holds.
         assert (await verifier.verify(_mint(key_b, iss="cabal-b"))).issuer == "cabal-b"
     finally:
         await va._client.aclose()
         await vb._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_kid_miss_refetch_throttled() -> None:
+    """A flood of unknown-`kid` tokens triggers at most one forced re-fetch
+    within the throttle interval — bounds the JWKS-amplification vector."""
+    server_key = _make_key()  # the only key the JWKS ever serves
+    attacker_key = _make_key()  # signs with kids the JWKS never has
+    fetches = {"n": 0}
+
+    def serve(_request: httpx.Request) -> httpx.Response:
+        fetches["n"] += 1
+        return httpx.Response(200, json=_jwks_body(server_key))
+
+    v = URLJWKSVerifier(
+        jwks_url="https://a.invalid/jwks.json",
+        expected_issuer="cabal-a",
+        expected_audience=SVC_AUD,
+    )
+    v._client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    try:
+        for _ in range(6):
+            with pytest.raises(AuthError):
+                await v.verify(_mint(attacker_key, iss="cabal-a"))
+        # Initial fetch + exactly one throttled forced re-fetch.
+        assert fetches["n"] == 2
+    finally:
+        await v._client.aclose()

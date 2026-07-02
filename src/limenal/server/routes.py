@@ -38,6 +38,7 @@ from limenal.server.mcp_types import (
     make_error,
     make_success,
 )
+from limenal.server.policy import PolicyStore, ScopeGrant
 from limenal.wire import to_spec_content as _to_spec_content
 
 log = structlog.get_logger(__name__)
@@ -53,8 +54,10 @@ def _bearer(authorization: str | None) -> str | None:
 
 
 async def _authenticate(
-    verifier: JWTVerifier | None, authorization: str | None
-) -> VerifiedClaims:
+    verifier: JWTVerifier | None,
+    authorization: str | None,
+    policy_store: PolicyStore | None = None,
+) -> tuple[VerifiedClaims, ScopeGrant | None]:
     token = _bearer(authorization)
     if token is None:
         raise AuthError("missing or malformed Authorization header")
@@ -63,14 +66,29 @@ async def _authenticate(
             "this server has no JWT verifier configured — every request denied"
         )
     claims = await verifier.verify(token)
-    # All authenticated limenal methods require dispatch scope.
-    # Accept `scope` as a fallback for `cabal_scope` so non-Cabal MCP
-    # clients (Claude Desktop, Cursor, etc.) can mint tokens without
-    # carrying Cabal-specific claim names.
-    scope = claims.raw.get("cabal_scope") or claims.raw.get("scope")
-    if not isinstance(scope, list) or "dispatch" not in scope:
-        raise AuthError("dispatch scope required")
-    return claims
+
+    if policy_store is None:
+        # Single-cabal: the one trusted cabal is also the policy authority, so
+        # trust its token-embedded scope. Accept `scope` as a fallback for
+        # `cabal_scope` so non-Cabal MCP clients (Claude Desktop, Cursor) work.
+        scope = claims.raw.get("cabal_scope") or claims.raw.get("scope")
+        if not isinstance(scope, list) or "dispatch" not in scope:
+            raise AuthError("dispatch scope required")
+        return claims, None
+
+    # Sovereign (multi-issuer): the caller's cabal is NOT the policy authority.
+    # Ignore token-embedded scope/tool_extras; resolve server-side by the
+    # verified (issuer, persona). No grant → deny (fail-closed) + audit.
+    grant = await policy_store.resolve(claims.issuer, claims.identity)
+    if grant is None:
+        await policy_store.record_access(
+            issuer=claims.issuer, persona=claims.identity,
+            agent=claims.agent_name, allowed=False, detail={"reason": "no grant"},
+        )
+        raise AuthError(
+            f"no policy grant for ({claims.issuer!r}, {claims.identity!r})"
+        )
+    return claims, grant
 
 
 def build_router() -> APIRouter:
@@ -116,6 +134,7 @@ def build_router() -> APIRouter:
         # solo/desktop deployments. The startup banner ensures the operator
         # knows this is on.
         claims: VerifiedClaims | None = None
+        grant: ScopeGrant | None = None
         auth_disabled = getattr(request.app.state, "auth_disabled", False)
         if rpc_req.method not in PUBLIC_METHODS:
             if auth_disabled:
@@ -127,10 +146,15 @@ def build_router() -> APIRouter:
                     identity="anonymous",
                     agent_name="anonymous",
                     raw={"scope": ["dispatch"]},
+                    issuer="local",
                 )
             else:
                 try:
-                    claims = await _authenticate(request.app.state.jwt_verifier, authorization)
+                    claims, grant = await _authenticate(
+                        request.app.state.jwt_verifier,
+                        authorization,
+                        getattr(request.app.state, "policy_store", None),
+                    )
                 except AuthError as exc:
                     return make_error(
                         id=rpc_req.id,
@@ -143,9 +167,9 @@ def build_router() -> APIRouter:
         if rpc_req.method == "ping":
             return make_success(id=rpc_req.id, result={})
         if rpc_req.method == "tools/list":
-            return await _handle_tools_list(request, rpc_req, claims)
+            return await _handle_tools_list(request, rpc_req, claims, grant)
         if rpc_req.method == "tools/call":
-            return await _handle_tools_call(request, rpc_req, claims)
+            return await _handle_tools_call(request, rpc_req, claims, grant)
 
         return make_error(
             id=rpc_req.id,
@@ -184,10 +208,11 @@ async def _handle_tools_list(
     request: Request,
     rpc_req: JSONRPCRequest,
     claims: VerifiedClaims | None,
+    grant: ScopeGrant | None = None,
 ) -> JSONRPCResponse:
     dispatcher: InProcessDispatcher = request.app.state.dispatcher
     tools = dispatcher.list_tools()
-    allowed = _allowed_handlers_for(claims)
+    allowed = _allowed_handlers_for(claims, grant)
     # MCP camelCase: snake → camel for input_schema. Also filter by
     # per-persona allowed_handlers when set so the LLM never sees tools
     # its persona can't actually call (consistent with the credentials
@@ -207,14 +232,22 @@ async def _handle_tools_list(
     return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))
 
 
-def _allowed_handlers_for(claims: VerifiedClaims | None) -> set[str] | None:
-    """Extract the per-persona allowlist from the JWT claim.
+def _allowed_handlers_for(
+    claims: VerifiedClaims | None, grant: ScopeGrant | None = None
+) -> set[str] | None:
+    """Resolve the per-caller handler allowlist.
 
     Returns None when there is no restriction (all handlers accessible).
-    Returns an empty set when the claim is present but malformed or empty
-    — fail closed so a broken claim denies all tools rather than opening
-    up to everything.
+    Returns an empty set when a restriction is present but empty/malformed
+    — fail closed so a broken input denies all tools rather than opening up.
+
+    Sovereign mode: when a server-side `grant` is present it is authoritative,
+    and the token's own `tool_extras` is ignored — a foreign cabal cannot widen
+    its own access by minting a generous allowlist claim. `grant.allowed_handlers
+    is None` means all handlers; an empty set denies all.
     """
+    if grant is not None:
+        return None if grant.allowed_handlers is None else set(grant.allowed_handlers)
     if claims is None:
         return None
     # `tool_extras` is the standalone-friendly alias for `cabal_tool_extras`.
@@ -232,7 +265,10 @@ def _allowed_handlers_for(claims: VerifiedClaims | None) -> set[str] | None:
 
 
 async def _handle_tools_call(
-    request: Request, rpc_req: JSONRPCRequest, claims: VerifiedClaims | None
+    request: Request,
+    rpc_req: JSONRPCRequest,
+    claims: VerifiedClaims | None,
+    grant: ScopeGrant | None = None,
 ) -> JSONRPCResponse:
     if claims is None:
         # Shouldn't happen because PUBLIC_METHODS gated it, but defend.
@@ -253,8 +289,16 @@ async def _handle_tools_call(
     # defense-in-depth posture: an LLM that hallucinates a tool name
     # from training data shouldn't bypass the allowlist.
     handler_name = params.name.split(".", 1)[0]
-    allowed = _allowed_handlers_for(claims)
+    allowed = _allowed_handlers_for(claims, grant)
     if allowed is not None and handler_name not in allowed:
+        if grant is not None:
+            store = getattr(request.app.state, "policy_store", None)
+            if store is not None:
+                await store.record_access(
+                    issuer=claims.issuer, persona=claims.identity,
+                    agent=claims.agent_name, allowed=False,
+                    detail={"handler": handler_name, "reason": "handler not allowed"},
+                )
         return make_error(
             id=rpc_req.id,
             code=ERROR_UNKNOWN_TOOL,
@@ -263,6 +307,28 @@ async def _handle_tools_call(
                 f"({sorted(allowed)})"
             ),
         )
+
+    # Sovereign scope gate: when a grant and a per-handler scope map are wired,
+    # the handler's required scope must be held. `policy_scope_for` maps a
+    # handler name to the scope it needs (None = no scope requirement); it is
+    # supplied per sovereign deployment so the scope vocabulary isn't hard-coded
+    # here. admin:* satisfies any scope (see ScopeGrant.has_scope).
+    if grant is not None:
+        scope_for = getattr(request.app.state, "policy_scope_for", None)
+        required = scope_for(handler_name) if scope_for is not None else None
+        if required and not grant.has_scope(required):
+            store = getattr(request.app.state, "policy_store", None)
+            if store is not None:
+                await store.record_access(
+                    issuer=claims.issuer, persona=claims.identity,
+                    agent=claims.agent_name, allowed=False,
+                    detail={"handler": handler_name, "required_scope": required},
+                )
+            return make_error(
+                id=rpc_req.id,
+                code=ERROR_UNAUTHORIZED,
+                message=f"scope {required!r} required for handler {handler_name!r}",
+            )
 
     # Credential resolver lookup. If none was wired, the handler gets {}
     # and either errors gracefully (slack, github) or works fine
@@ -280,15 +346,24 @@ async def _handle_tools_call(
                 message=f"credential resolution failed: {exc}",
             )
 
-    # tool_extras (legacy alias: cabal_tool_extras) carries per-persona
-    # scoping config (web.allowed_hosts, files.allowed_paths,
-    # memory.db_path, etc.) embedded in the JWT at mint time. Forwarded
-    # into Context.extra so handlers can read it the same way they do
-    # for tests.
+    # tool_extras carries per-persona SANDBOX config (memory.db_path,
+    # files.allowed_paths, web/notify.allowed_hosts, ...) that bounds where a
+    # handler may operate. In SOVEREIGN mode (a grant is present) the caller's
+    # cabal is NOT trusted, so its token-embedded tool_extras is IGNORED —
+    # otherwise a foreign token could pick which persona's memory DB / paths /
+    # egress a granted handler uses (the tenant-isolation seam). The sovereign
+    # service supplies these boundaries itself via `policy_tool_extras`
+    # (operator-configured), never the token. Single-cabal keeps the trusted
+    # token-embedded path (its issuer is also the policy authority).
     extra: dict = {}
-    raw_extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
-    if isinstance(raw_extras, dict):
-        extra = dict(raw_extras)
+    if grant is not None:
+        server_extra = getattr(request.app.state, "policy_tool_extras", None)
+        if isinstance(server_extra, dict):
+            extra = dict(server_extra)
+    else:
+        raw_extras = claims.raw.get("cabal_tool_extras") or claims.raw.get("tool_extras")
+        if isinstance(raw_extras, dict):
+            extra = dict(raw_extras)
 
     ctx = Context(
         identity=claims.identity,

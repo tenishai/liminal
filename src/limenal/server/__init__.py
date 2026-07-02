@@ -8,6 +8,7 @@ as a valid bearer. The built-in implementations verify against a static
 KeySet (tests) or a remote JWKS URL (production, e.g. Cabal Core).
 """
 
+from limenal.server.admin import build_admin_router
 from limenal.server.app import create_app
 from limenal.server.auth import (
     AuthError,
@@ -33,11 +34,21 @@ from limenal.server.mcp_types import (
     ToolCallResult,
     ToolsListResult,
 )
+from limenal.server.policy import (
+    AuditRow,
+    GrantRow,
+    ParentImmutable,
+    PolicyStore,
+    ScopeGrant,
+    SqlitePolicyStore,
+)
 
 __all__ = [
+    "AuditRow",
     "AuthError",
     "CabalCoreCredentialResolver",
     "CredentialResolver",
+    "GrantRow",
     "InitializeParams",
     "InitializeResult",
     "IssuerConfig",
@@ -46,12 +57,17 @@ __all__ = [
     "JSONRPCResponse",
     "JWTVerifier",
     "MultiIssuerJWKSVerifier",
+    "ParentImmutable",
+    "PolicyStore",
+    "ScopeGrant",
+    "SqlitePolicyStore",
     "StaticKeySetVerifier",
     "ToolCallParams",
     "ToolCallResult",
     "ToolsListResult",
     "URLJWKSVerifier",
     "VerifiedClaims",
+    "build_admin_router",
     "build_multi_issuer_verifier",
     "create_app",
 ]
