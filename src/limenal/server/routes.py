@@ -371,7 +371,9 @@ async def _handle_tools_call(
     # regardless of grant — closing the inbound half of #27.
     inbound_cid = request.headers.get("x-correlation-id")
     if inbound_cid:
-        extra["correlation_id"] = inbound_cid
+        # Clamp — a caller-supplied trace tag shouldn't flow unbounded into
+        # structured logs or the outbound x-correlation-id hop.
+        extra["correlation_id"] = inbound_cid[:200]
 
     ctx = Context(
         identity=claims.identity,

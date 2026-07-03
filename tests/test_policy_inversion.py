@@ -28,6 +28,7 @@ from limenal.server import (
     StaticKeySetVerifier,
     create_app,
 )
+from limenal.server.mcp_types import ERROR_UNKNOWN_TOOL
 from limenal.target.base import TrustTier
 from limenal.target.inprocess import InProcessTarget
 
@@ -404,5 +405,7 @@ async def test_mixed_kind_authz_gates_federated_target(tmp_path) -> None:
         err = (
             await _rpc(client, tok, "tools/call", {"name": "federated.do", "arguments": {}})
         ).json()["error"]
+        # Pin the *reason*: refused by the allowlist gate, not an incidental miss.
+        assert err["code"] == ERROR_UNKNOWN_TOOL
         assert "federated" in err["message"]
     store.close()
