@@ -54,9 +54,12 @@ PRIVATE_NETWORKS = [
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("169.254.0.0/16"),  # AWS / Azure / GCP metadata
+    ipaddress.ip_network("100.64.0.0/10"),   # CGNAT shared space (RFC 6598)
+    ipaddress.ip_network("0.0.0.0/8"),       # "This" network (RFC 1122 §3.2.1.3)
     ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),   # ULA
-    ipaddress.ip_network("fe80::/10"),  # link-local
+    ipaddress.ip_network("fc00::/7"),        # ULA
+    ipaddress.ip_network("fe80::/10"),       # link-local
+    ipaddress.ip_network("::ffff:0:0/96"),   # v4-mapped IPv6 (belt-and-suspenders)
 ]
 
 DEFAULT_MAX_RESPONSE_BYTES = 1_000_000  # 1 MB
@@ -240,12 +243,21 @@ class WebHandler:
                 ip = ipaddress.ip_address(ip_str)
             except ValueError:
                 return f"invalid IP {ip_str!r} from DNS", None
-            for net in cfg.denied_networks:
-                if ip in net:
-                    return (
-                        f"host {host!r} resolves to {ip_str} in denied "
-                        f"network {net} (SSRF protection)"
-                    ), None
+            # Normalize v4-mapped IPv6 (e.g. ::ffff:169.254.169.254 →
+            # 169.254.169.254) so the address is also checked against the
+            # IPv4 deny ranges.  Without this, ::ffff:127.0.0.1 and
+            # ::ffff:169.254.169.254 slip past the IPv4 network rules and
+            # only the belt-and-suspenders ::ffff:0:0/96 entry catches them.
+            ips_to_check: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+                ips_to_check.append(ip.ipv4_mapped)
+            for check_ip in ips_to_check:
+                for net in cfg.denied_networks:
+                    if check_ip in net:
+                        return (
+                            f"host {host!r} resolves to {ip_str} in denied "
+                            f"network {net} (SSRF protection)"
+                        ), None
             if first_valid is None:
                 first_valid = ip_str
         return None, first_valid

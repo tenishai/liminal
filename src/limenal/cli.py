@@ -8,6 +8,71 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
+from typing import Any
+
+
+def _parse_trust_registry_extra(
+    cfg: dict[str, Any],
+) -> tuple[dict[str, Any] | None, Callable[[str], str | None] | None]:
+    """Parse ``[tool_extras]`` and ``[scope_map]`` from a trust-registry TOML dict.
+
+    Returns ``(policy_tool_extras, policy_scope_for)``.  Both are ``None``
+    when the corresponding TOML section is absent — preserving the exact
+    current behaviour (no scope enforcement, no server-set tool extras).
+
+    Raises ``ValueError`` with a clear diagnostic on any malformed input so
+    ``cli.main()`` can print and exit 2 without silently passing bad config
+    (CLAUDE.md: No Silent Failures).
+
+    ``[tool_extras]`` is a flat table passed verbatim as ``policy_tool_extras``::
+
+        [tool_extras]
+        "memory.db_path" = "/shared/memory.db"
+
+    ``[scope_map]`` maps handler names to the scope string that handler
+    requires; absent handlers get ``None`` (no scope requirement)::
+
+        [scope_map]
+        scratchpad = "mem:append"
+        memory = "mem:query"
+    """
+    # [tool_extras] — flat TOML table → passed verbatim
+    tool_extras_raw = cfg.get("tool_extras")
+    if tool_extras_raw is not None and not isinstance(tool_extras_raw, dict):
+        raise ValueError(
+            f"[tool_extras] in the trust registry must be a TOML table (dict); "
+            f"got {type(tool_extras_raw).__name__!r}. "
+            "Check the registry file for a malformed [tool_extras] section."
+        )
+    policy_tool_extras: dict[str, Any] | None = tool_extras_raw
+
+    # [scope_map] — table of handler-name → required-scope (string values only)
+    scope_map_raw = cfg.get("scope_map")
+    policy_scope_for: Callable[[str], str | None] | None = None
+    if scope_map_raw is not None:
+        if not isinstance(scope_map_raw, dict):
+            raise ValueError(
+                f"[scope_map] in the trust registry must be a TOML table (dict); "
+                f"got {type(scope_map_raw).__name__!r}. "
+                "Check the registry file for a malformed [scope_map] section."
+            )
+        for handler_key, scope_val in scope_map_raw.items():
+            if not isinstance(scope_val, str):
+                raise ValueError(
+                    f"[scope_map] values must be strings; "
+                    f"key {handler_key!r} has a {type(scope_val).__name__!r} value. "
+                    "Each handler should map to a single scope string, e.g. "
+                    f'{handler_key!r} = "mem:query".'
+                )
+        scope_map: dict[str, str] = dict(scope_map_raw)
+
+        def _scope_for(handler: str, _sm: dict[str, str] = scope_map) -> str | None:
+            return _sm.get(handler)
+
+        policy_scope_for = _scope_for
+
+    return policy_tool_extras, policy_scope_for
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
 
         verifier: JWTVerifier | None = None
         policy_store = None
+        policy_tool_extras: dict[str, Any] | None = None
+        policy_scope_for: Callable[[str], str | None] | None = None
         if args.trust_registry:
             import tomllib
 
@@ -160,11 +227,28 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for i in cfg.get("issuer", [])
             ]
+            try:
+                policy_tool_extras, policy_scope_for = _parse_trust_registry_extra(cfg)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
             verifier = build_multi_issuer_verifier(
                 issuers, service_audience=service_audience
             )
             parent_issuer = next(i.id for i in issuers if i.parent)
             policy_store = SqlitePolicyStore(args.policy_db, parent_issuer=parent_issuer)
+            if policy_scope_for is not None:
+                print(
+                    f"sovereign scope enforcement: {len(cfg.get('scope_map', {}))} "
+                    "handler scope(s) wired from [scope_map]",
+                    file=sys.stderr,
+                )
+            if policy_tool_extras is not None:
+                print(
+                    f"sovereign tool extras: {len(policy_tool_extras)} key(s) wired "
+                    "from [tool_extras]",
+                    file=sys.stderr,
+                )
             print(
                 f"sovereign mode: {len(issuers)} trusted issuer(s), parent "
                 f"{parent_issuer!r}, audience {service_audience!r}, policy db "
@@ -216,6 +300,8 @@ def main(argv: list[str] | None = None) -> int:
             jwt_verifier=verifier,
             credential_resolver=credential_resolver,
             policy_store=policy_store,
+            policy_scope_for=policy_scope_for,
+            policy_tool_extras=policy_tool_extras,
         )
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0

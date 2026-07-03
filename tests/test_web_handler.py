@@ -472,3 +472,64 @@ async def test_head_caps_large_headers(tmp_path) -> None:
     # Should have replaced headers with the warning stub
     data = result.content[0]["data"]  # already a dict, not JSON string
     assert "x-limenal-warning" in data.get("headers", {})
+
+
+# ---- SSRF deny-list regression: new ranges + v4-mapped IPv6 (#24) ----------
+
+
+@pytest.mark.asyncio
+async def test_rejects_v4_mapped_metadata_ipv6() -> None:
+    """::ffff:169.254.169.254 is the cloud metadata IP wrapped in v4-mapped
+    IPv6. It must be denied via both the ::ffff:0:0/96 range and the
+    v4-normalized path (169.254.0.0/16)."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"ipv6meta.test": ["::ffff:169.254.169.254"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://ipv6meta.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_v4_mapped_loopback_ipv6() -> None:
+    """::ffff:127.0.0.1 is loopback wrapped in v4-mapped IPv6."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"ipv6loop.test": ["::ffff:127.0.0.1"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://ipv6loop.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_cgnat_address() -> None:
+    """100.64.0.0/10 (CGNAT shared space, RFC 6598) must be denied."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"cgnat.test": ["100.64.0.1"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://cgnat.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_zero_network_address() -> None:
+    """0.0.0.0 (0.0.0.0/8, 'this' network) must be denied."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"zerodot.test": ["0.0.0.0"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://zerodot.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
