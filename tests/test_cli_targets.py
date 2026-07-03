@@ -255,3 +255,68 @@ def test_main_returns_2_for_malformed_target(tmp_path, monkeypatch) -> None:
 
     rc = main(["serve", "--targets", path])
     assert rc == 2, f"expected exit code 2, got {rc}"
+
+
+# ---------------------------------------------------------------------------
+# Prudence #30 review: loud top-level typos + build-time errors return 2
+# ---------------------------------------------------------------------------
+
+
+def test_top_level_unknown_key_raises(tmp_path) -> None:
+    """A mistyped table-array (`[[targets]]`) or stray top-level key is a loud
+    error, not a silent zero-target run."""
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[targets]]\nname = "jira"\naddress = "https://jira/mcp"\n',
+    )
+    with pytest.raises(ValueError, match="unknown top-level key"):
+        _load_targets_file(path)
+
+
+def test_config_version_float_rejected(tmp_path) -> None:
+    """config_version = 1.0 (a TOML float) must not slip the integer gate."""
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1.0\n\n[[target]]\nname = "jira"\naddress = "https://jira/mcp"\n',
+    )
+    with pytest.raises(ValueError, match="not supported"):
+        _load_targets_file(path)
+
+
+def test_zero_targets_warns(tmp_path, capsys) -> None:
+    """A file with no [[target]] tables loads [] but warns (explicit intent)."""
+    path = _write_targets(tmp_path, "config_version = 1\n")
+    specs = _load_targets_file(path)
+    assert specs == []
+    assert "0 targets" in capsys.readouterr().err
+
+
+def test_main_returns_2_for_name_collision(tmp_path, monkeypatch) -> None:
+    """A --targets name colliding with an in-process handler must be a clean
+    exit 2 (via create_app/build_http_targets), not an uncaught traceback."""
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from limenal.cli import main
+
+    # "memory" is a built-in entry-point handler → name collision.
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[target]]\nname = "memory"\naddress = "https://x/mcp"\n',
+    )
+    assert main(["serve", "--targets", path]) == 2
+
+
+def test_main_returns_2_for_stdio_target(tmp_path, monkeypatch) -> None:
+    """A well-formed stdio target (valid config, but not served until Stage B)
+    must exit 2 with a diagnostic, not a traceback — the docs list stdio."""
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from limenal.cli import main
+
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[target]]\nname = "pdf"\ntransport = "stdio"\ncommand = ["npx", "pdf-mcp"]\n',
+    )
+    assert main(["serve", "--targets", path]) == 2

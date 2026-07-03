@@ -33,6 +33,18 @@ def _load_targets_file(path: str) -> list[Any]:
     with open(path, "rb") as fh:
         cfg = tomllib.load(fh)
 
+    # Reject stray top-level keys so a mistyped table-array (`[[targets]]`) or a
+    # fat-fingered `config_verison` is a loud error, not a silent zero-target
+    # run. Passing --targets is an explicit statement of intent (No Silent
+    # Failures).
+    unknown_top = set(cfg) - {"config_version", "target"}
+    if unknown_top:
+        raise ValueError(
+            f"targets file has unknown top-level key(s): {sorted(unknown_top)}. "
+            "Only `config_version` and `[[target]]` tables are allowed "
+            "(did you mean `[[target]]`?)."
+        )
+
     version = cfg.get("config_version")
     if version is None:
         print(
@@ -40,14 +52,19 @@ def _load_targets_file(path: str) -> list[Any]:
             f"add `config_version = {SUPPORTED_CONFIG_VERSION}` to suppress this warning.",
             file=sys.stderr,
         )
-    elif version != SUPPORTED_CONFIG_VERSION:
+    elif not isinstance(version, int) or isinstance(version, bool) or version != SUPPORTED_CONFIG_VERSION:
         raise ValueError(
             f"targets file config_version={version!r} is not supported "
-            f"(supported: {SUPPORTED_CONFIG_VERSION}). "
+            f"(supported: {SUPPORTED_CONFIG_VERSION}, as an integer). "
             "Upgrade limenal or use a config file generated for this version."
         )
 
     raw_targets = cfg.get("target", [])
+    if not raw_targets:
+        print(
+            "warning: --targets file declared no [[target]] tables (loaded 0 targets).",
+            file=sys.stderr,
+        )
     try:
         return load_target_specs(raw_targets)
     except TargetConfigError as exc:
@@ -363,14 +380,24 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-        app = create_app(
-            jwt_verifier=verifier,
-            credential_resolver=credential_resolver,
-            policy_store=policy_store,
-            policy_scope_for=policy_scope_for,
-            policy_tool_extras=policy_tool_extras,
-            targets=targets,
-        )
+        # create_app runs targets through build_http_targets, which raises
+        # TargetConfigError for a name that collides with an in-process handler
+        # or a stdio target (not served until Stage B). Catch it on the same
+        # `--targets` exit-2 path so it's a clean diagnostic, not a traceback.
+        from limenal.target.config import TargetConfigError
+
+        try:
+            app = create_app(
+                jwt_verifier=verifier,
+                credential_resolver=credential_resolver,
+                policy_store=policy_store,
+                policy_scope_for=policy_scope_for,
+                policy_tool_extras=policy_tool_extras,
+                targets=targets,
+            )
+        except TargetConfigError as exc:
+            print(f"error: --targets: {exc}", file=sys.stderr)
+            return 2
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 

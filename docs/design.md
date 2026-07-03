@@ -325,6 +325,8 @@ DTSP on-demand activation (`limenal__discover`, `limenal__activate`, federated `
 
 Federated MCP upstreams are declared in a versioned TOML file and loaded at startup via `limenal serve --targets <path>`.
 
+> **Stage status:** `http` targets are served now. `stdio` targets are **config-validated but not yet served** (Stage B) — declaring one is accepted by the schema but rejected at startup with a clear `error: --targets: …` diagnostic (exit 2). A target `name` that collides with a built-in handler (e.g. `memory`) is likewise rejected loudly at startup. Any bad `--targets` config exits 2, never a traceback.
+
 ### Schema
 
 ```toml
