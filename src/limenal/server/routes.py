@@ -369,6 +369,7 @@ async def _handle_tools_call(
         identity=claims.identity,
         agent_name=claims.agent_name,
         credentials=credentials,
+        issuer=claims.issuer,
         extra=extra,
     )
 

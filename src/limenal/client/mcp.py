@@ -160,14 +160,28 @@ class AsyncMCPClient:
         return tools
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any] | None = None
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        extra_headers: dict[str, str] | None = None,
     ) -> ToolCallOutcome:
+        """Invoke a tool.
+
+        ``extra_headers`` (if given) are merged into the request headers for
+        THIS call only — they are never stored on the client. This is the
+        per-call identity seam: a caller can attach persona / issuer /
+        correlation headers (and override ``Authorization``) without mutating
+        shared client state, so concurrent calls never leak each other's
+        headers.
+        """
         if not self._initialized:
             await self.initialize()
         result = await self._rpc(
             "tools/call",
             {"name": name, "arguments": arguments or {}},
             auth=True,
+            extra_headers=extra_headers,
         )
         return ToolCallOutcome(
             content=result.get("content", []),
@@ -180,7 +194,12 @@ class AsyncMCPClient:
     # ---- internals ---------------------------------------------------------
 
     async def _rpc(
-        self, method: str, params: dict[str, Any], *, auth: bool
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        auth: bool,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         envelope = {
             "jsonrpc": "2.0",
@@ -191,6 +210,10 @@ class AsyncMCPClient:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth:
             headers["Authorization"] = f"Bearer {self._token()}"
+        # Per-call headers win over the base set (e.g. an override Authorization
+        # carrying a per-persona service token). Applied last, stored nowhere.
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             resp = await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers

@@ -29,6 +29,12 @@ from limenal.server.admin import build_admin_router
 from limenal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
 from limenal.server.policy import PolicyStore
 from limenal.server.routes import build_router
+from limenal.target import (
+    InProcessTarget,
+    Target,
+    TargetSpec,
+    build_http_targets,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -48,7 +54,7 @@ def create_app(
     registry: Registry | None = None,
     credential_resolver: Callable[[str, str], Awaitable[dict[str, str]]] | None = None,
     server_name: str = "limenal",
-    mcp_proxies: list | None = None,
+    targets: list[TargetSpec] | None = None,
     policy_store: PolicyStore | None = None,
     policy_scope_for: Callable[[str], str | None] | None = None,
     policy_tool_extras: dict[str, Any] | None = None,
@@ -66,31 +72,35 @@ def create_app(
             scratchpad). Phase 1.6 will swap a real Cabal Core fetcher in
             via this hook.
         server_name: the name reported by the `initialize` handshake.
-        mcp_proxies: optional list of ``ProxyConfig`` describing upstream
-            MCP servers to forward to. Each config becomes a runtime
-            handler in the registry under its ``prefix`` name. The
-            existing lifespan calls ``startup()`` on each handler, so
-            the proxies connect, initialize, and fetch their tool
-            catalogs automatically. Used for persona graduation (when a
-            cabal persona moves to its own container) and for third-
-            party MCP server integration (Jira, Slack, GitHub, etc.).
+        targets: optional list of ``TargetSpec`` describing federated
+            upstream MCP servers (``transport="http"`` in Stage A). Each
+            becomes an ``HttpTarget`` in the Multiplexer under its ``name``,
+            namespacing the upstream's tools as ``"{name}.{tool}"``. The
+            lifespan connects, initializes, fetches + inspects each catalog,
+            and forwards calls with per-call persona identity. Used for
+            persona graduation (a cabal persona moving to its own container)
+            and third-party MCP integration (Jira, Slack, GitHub, etc.).
     """
 
     # Resolve the registry once; lifespan closes over it.
     reg = registry if registry is not None else discover_handlers()
 
-    # Register MCP proxy configs as runtime handlers before the dispatcher
-    # closes over the registry. Each proxy becomes a Handler under its
-    # configured prefix; the lifespan's existing startup() loop connects
-    # them, initializes their MCP clients, and fetches tool catalogs.
-    if mcp_proxies:
-        from limenal.handlers.mcp_proxy import register_proxies
-        register_proxies(reg, mcp_proxies)
-
-    # Wrap every in-process handler as an InProcessTarget behind the
-    # Multiplexer. Same public surface as InProcessDispatcher ({target}.{tool}
+    # Every in-process handler becomes an InProcessTarget; every configured
+    # federated upstream becomes an HttpTarget. Both plug into the same
+    # Multiplexer behind the identical public surface ({target}.{tool}
     # prefixing + dispatch signature) — the federation authz seam is unchanged.
-    dispatcher = Multiplexer.from_registry(reg)
+    all_targets: list[Target] = [
+        InProcessTarget(name=record.name, handler=record.handler)
+        for record in reg
+    ]
+    if targets:
+        # Reject any target name that collides with an in-process handler (or
+        # another target) — loud, per No Silent Failures.
+        all_targets.extend(
+            build_http_targets(targets, reserved_names=set(reg.names()))
+        )
+
+    dispatcher = Multiplexer(all_targets)
 
     auth_disabled = _auth_disabled_from_env()
     if auth_disabled and jwt_verifier is not None:

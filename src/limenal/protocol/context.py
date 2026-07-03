@@ -24,4 +24,5 @@ class Context:
     identity: str           # persona name (e.g., "rook", "archivist")
     agent_name: str         # specific agent (e.g., "rook-primus")
     credentials: dict[str, str]
+    issuer: str = ""        # verified token issuer (federated identity source)
     extra: dict[str, Any] = field(default_factory=dict)
