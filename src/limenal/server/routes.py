@@ -365,6 +365,14 @@ async def _handle_tools_call(
         if isinstance(raw_extras, dict):
             extra = dict(raw_extras)
 
+    # Accept an inbound correlation id for end-to-end tracing across the
+    # multiplexer→target hop (a fresh one is generated downstream if absent).
+    # It's a trace tag, not sandbox config or an authz input, so it's threaded
+    # regardless of grant — closing the inbound half of #27.
+    inbound_cid = request.headers.get("x-correlation-id")
+    if inbound_cid:
+        extra["correlation_id"] = inbound_cid
+
     ctx = Context(
         identity=claims.identity,
         agent_name=claims.agent_name,

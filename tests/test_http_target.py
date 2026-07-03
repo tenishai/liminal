@@ -282,14 +282,20 @@ async def test_identity_none_omits_persona_headers() -> None:
 
 @pytest.mark.asyncio
 async def test_concurrent_personas_never_swap_service_tokens() -> None:
-    """The #13/#25 footgun proof.
+    """The #13/#25 footgun regression tripwire.
 
     Fire many concurrent dispatches, each a different persona carrying its own
     service token, through a transport that DELAYS every request to force
     event-loop interleaving. Every captured tools/call must carry the
-    Authorization that matches its own persona header — persona A's token must
-    never ride persona B's request. The old shared-mutable-token proxy would
-    fail this under interleaving; per-call headers make it impossible.
+    Authorization that matches its own persona header.
+
+    Honest scope: with the current per-call-header design a mismatch is
+    impossible *by construction* (each call builds one synchronous dict), so
+    this also passes single-threaded — it verifies the per-call headers are
+    genuinely applied (an empty base token would fail the assertion). Its value
+    is as a tripwire: if a future refactor re-introduces shared mutable per-call
+    state with an await window (the #25 footgun), the interleaving here catches
+    the leak.
     """
     captured: list[dict] = []
     # A real delay forces the coroutines to overlap at the await point.
