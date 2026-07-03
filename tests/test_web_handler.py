@@ -472,3 +472,110 @@ async def test_head_caps_large_headers(tmp_path) -> None:
     # Should have replaced headers with the warning stub
     data = result.content[0]["data"]  # already a dict, not JSON string
     assert "x-limenal-warning" in data.get("headers", {})
+
+
+# ---- SSRF deny-list regression: new ranges + v4-mapped IPv6 (#24) ----------
+
+
+@pytest.mark.asyncio
+async def test_rejects_v4_mapped_metadata_ipv6() -> None:
+    """::ffff:169.254.169.254 is the cloud metadata IP wrapped in v4-mapped
+    IPv6. It must be denied via both the ::ffff:0:0/96 range and the
+    v4-normalized path (169.254.0.0/16)."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"ipv6meta.test": ["::ffff:169.254.169.254"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://ipv6meta.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_v4_mapped_loopback_ipv6() -> None:
+    """::ffff:127.0.0.1 is loopback wrapped in v4-mapped IPv6."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"ipv6loop.test": ["::ffff:127.0.0.1"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://ipv6loop.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_cgnat_address() -> None:
+    """100.64.0.0/10 (CGNAT shared space, RFC 6598) must be denied."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"cgnat.test": ["100.64.0.1"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://cgnat.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_zero_network_address() -> None:
+    """0.0.0.0 (0.0.0.0/8, 'this' network) must be denied."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"zerodot.test": ["0.0.0.0"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://zerodot.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_nat64_wrapped_metadata() -> None:
+    """A DNS64 resolver can synthesize 169.254.169.254 into the NAT64
+    well-known prefix (64:ff9b::a9fe:a9fe). Not v4-mapped/6to4 — must be
+    unwrapped from the low 32 bits and denied via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"nat64.test": ["64:ff9b::a9fe:a9fe"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://nat64.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_6to4_wrapped_metadata() -> None:
+    """A 6to4 address (2002::/16) embeds a v4 in bytes 2-5. 2002:a9fe:a9fe::
+    wraps 169.254.169.254 and must be denied via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"sixtofour.test": ["2002:a9fe:a9fe::"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://sixtofour.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+async def test_rejects_ipv4_compatible_metadata() -> None:
+    """Deprecated IPv4-compatible IPv6 (::a9fe:a9fe == ::169.254.169.254)
+    embeds the v4 in the low 32 bits — unwrapped for symmetry and denied
+    via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"v4compat.test": ["::a9fe:a9fe"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://v4compat.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
