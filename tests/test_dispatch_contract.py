@@ -25,7 +25,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 
-from limenal.dispatch import InProcessDispatcher
+from limenal.dispatch import (
+    DispatchError,
+    InProcessDispatcher,
+    Multiplexer,
+    UnknownTool,
+)
 from limenal.handlers.scratchpad import ScratchpadHandler
 from limenal.protocol import Context, ToolResult, ToolSpec
 from limenal.registry import Registry
@@ -276,3 +281,65 @@ async def test_grant_allowed_handlers_filters_list_and_call(
         assert "echo" in err["message"], err["message"]
 
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# 5-8. The SAME invariants for the live-server Multiplexer.
+#
+# After #12 the server dispatch path (routes.py + the PolicyStore authz) runs
+# through the Multiplexer, not InProcessDispatcher. The tests above still pin
+# InProcessDispatcher because it remains the live library-embed path
+# (client/library.py) — these pin the Multiplexer so the tripwire guards the
+# server path too. list_tools() is async on the Multiplexer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mux_list_tools_names_are_prefixed_with_target_name() -> None:
+    mux = Multiplexer.from_registry(_two_handler_registry())
+    tools = await mux.list_tools()
+    assert tools, "list_tools() must return at least one entry"
+    for spec in tools:
+        parts = spec["name"].split(".", 1)
+        assert len(parts) == 2 and parts[0] and parts[1], (
+            f"tool name {spec['name']!r} is not in '{{target}}.{{tool}}' format"
+        )
+    assert any(t["name"].startswith("scratchpad.") for t in tools)
+    assert any(t["name"].startswith("echo.") for t in tools)
+
+
+@pytest.mark.asyncio
+async def test_mux_dispatch_accepts_keyword_arguments() -> None:
+    mux = Multiplexer.from_registry(_two_handler_registry())
+    ctx = Context(identity="rook", agent_name="rook-primus", credentials={})
+    result = await mux.dispatch(
+        tool_name="scratchpad.set",
+        payload={"key": "k", "value": "v"},
+        ctx=ctx,
+    )
+    assert not result.is_error, result.error
+
+
+@pytest.mark.asyncio
+async def test_mux_target_name_from_tool_name_equals_registry_key() -> None:
+    reg = _two_handler_registry()
+    mux = Multiplexer.from_registry(reg)
+    for spec in await mux.list_tools():
+        target_name = spec["name"].split(".", 1)[0]
+        assert reg.get(target_name) is not None, (
+            f"target_name {target_name!r} derived from {spec['name']!r} "
+            "must exist as a registry key"
+        )
+        assert target_name in mux.targets, (
+            f"target_name {target_name!r} must exist in the multiplexer"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mux_routing_errors_match_inprocess() -> None:
+    mux = Multiplexer.from_registry(_two_handler_registry())
+    ctx = Context(identity="rook", agent_name="rook-primus", credentials={})
+    with pytest.raises(DispatchError):
+        await mux.dispatch(tool_name="noprefix", payload={}, ctx=ctx)
+    with pytest.raises(UnknownTool):
+        await mux.dispatch(tool_name="nonesuch.tool", payload={}, ctx=ctx)

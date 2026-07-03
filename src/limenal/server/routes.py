@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, Header, Request, Response
 
 from limenal import __version__
-from limenal.dispatch import DispatchError, InProcessDispatcher, UnknownTool
+from limenal.dispatch import DispatchError, Multiplexer, UnknownTool
 from limenal.protocol import Context
 from limenal.server.auth import AuthError, JWTVerifier, VerifiedClaims
 from limenal.server.mcp_types import (
@@ -210,8 +210,8 @@ async def _handle_tools_list(
     claims: VerifiedClaims | None,
     grant: ScopeGrant | None = None,
 ) -> JSONRPCResponse:
-    dispatcher: InProcessDispatcher = request.app.state.dispatcher
-    tools = dispatcher.list_tools()
+    dispatcher: Multiplexer = request.app.state.dispatcher
+    tools = await dispatcher.list_tools()
     allowed = _allowed_handlers_for(claims, grant)
     # MCP camelCase: snake → camel for input_schema. Also filter by
     # per-persona allowed_handlers when set so the LLM never sees tools
@@ -365,14 +365,25 @@ async def _handle_tools_call(
         if isinstance(raw_extras, dict):
             extra = dict(raw_extras)
 
+    # Accept an inbound correlation id for end-to-end tracing across the
+    # multiplexer→target hop (a fresh one is generated downstream if absent).
+    # It's a trace tag, not sandbox config or an authz input, so it's threaded
+    # regardless of grant — closing the inbound half of #27.
+    inbound_cid = request.headers.get("x-correlation-id")
+    if inbound_cid:
+        # Clamp — a caller-supplied trace tag shouldn't flow unbounded into
+        # structured logs or the outbound x-correlation-id hop.
+        extra["correlation_id"] = inbound_cid[:200]
+
     ctx = Context(
         identity=claims.identity,
         agent_name=claims.agent_name,
         credentials=credentials,
+        issuer=claims.issuer,
         extra=extra,
     )
 
-    dispatcher: InProcessDispatcher = request.app.state.dispatcher
+    dispatcher: Multiplexer = request.app.state.dispatcher
     try:
         tool_result = await dispatcher.dispatch(
             tool_name=params.name, payload=params.arguments, ctx=ctx

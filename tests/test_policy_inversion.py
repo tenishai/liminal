@@ -17,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
 
+from limenal.dispatch import Multiplexer
 from limenal.handlers.scratchpad import ScratchpadHandler
 from limenal.protocol import Context, ToolResult, ToolSpec
 from limenal.registry import Registry
@@ -27,6 +28,9 @@ from limenal.server import (
     StaticKeySetVerifier,
     create_app,
 )
+from limenal.server.mcp_types import ERROR_UNKNOWN_TOOL
+from limenal.target.base import TrustTier
+from limenal.target.inprocess import InProcessTarget
 
 SVC = "archivist@rd"
 
@@ -318,3 +322,90 @@ async def test_admin_revoke_nonparent_grant(sov) -> None:
     )
     assert r.status_code == 200
     assert await store.resolve("shaz-cabal", "rook") is None
+
+
+# ---- inbound correlation-id at the boundary (#27 inbound half, Prudence #29) ----
+
+
+@pytest.mark.asyncio
+async def test_inbound_correlation_id_reaches_ctx_extra(tmp_path) -> None:
+    """An inbound x-correlation-id header must reach ctx.extra at the server
+    boundary — proven THROUGH the HTTP route (not by setting ctx.extra directly),
+    so end-to-end trace continuity across the multiplexer->target hop holds."""
+    kp, ks = _key(), _key()
+    store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
+    reg = Registry()
+    register_explicit(reg, "echo", _EchoExtraHandler())
+    app = create_app(jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await store.grant("shaz-cabal", "rook", scopes=set(), allowed_handlers={"echo"})
+        tok = _mint(ks, iss="shaz-cabal")
+        r = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "echo.peek", "arguments": {}},
+            },
+            headers={"Authorization": f"Bearer {tok}", "x-correlation-id": "trace-abc-123"},
+        )
+        raw = r.text
+    store.close()
+    assert "trace-abc-123" in raw, "inbound x-correlation-id must reach ctx.extra"
+
+
+# ---- mixed-kind authz: the allowed_handlers gate applies to a federated target ----
+
+
+class _StubTarget:
+    """A non-in-process Target double — stands in for a federated (http/stdio)
+    target so the allowed_handlers gate can be exercised across a target kind
+    that ISN'T InProcessTarget. The gate is at the Multiplexer/routes layer
+    (keyed on target name), so a stub is a sufficient double."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.trust = TrustTier.UNTRUSTED
+
+    async def startup(self) -> None: ...
+    async def shutdown(self) -> None: ...
+
+    async def list_tools(self) -> list[ToolSpec]:
+        return [ToolSpec(name="do", description="federated tool", input_schema={"type": "object", "properties": {}})]
+
+    async def dispatch(self, tool: str, payload: dict, ctx: Context) -> ToolResult:
+        return ToolResult.json({"ok": True})
+
+    def protocol_version(self) -> str | None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_mixed_kind_authz_gates_federated_target(tmp_path) -> None:
+    """grant.allowed_handlers gates a FEDERATED (non-in-process) target's tools
+    identically to in-process ones — the one federation-authz invariant not
+    otherwise exercised across a target kind (Prudence #29)."""
+    kp, ks = _key(), _key()
+    store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
+    reg = Registry()
+    register_explicit(reg, "scratchpad", ScratchpadHandler())
+    app = create_app(jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store)
+    # Inject a federated-kind target alongside the in-process one.
+    app.state.dispatcher = Multiplexer(
+        [InProcessTarget(name="scratchpad", handler=ScratchpadHandler()), _StubTarget("federated")]
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Grant only scratchpad — NOT the federated target.
+        await store.grant("shaz-cabal", "rook", scopes=set(), allowed_handlers={"scratchpad"})
+        tok = _mint(ks, iss="shaz-cabal")
+        tools = (await _rpc(client, tok, "tools/list")).json()["result"]["tools"]
+        assert all(not t["name"].startswith("federated.") for t in tools), tools
+        assert any(t["name"].startswith("scratchpad.") for t in tools)
+        err = (
+            await _rpc(client, tok, "tools/call", {"name": "federated.do", "arguments": {}})
+        ).json()["error"]
+        # Pin the *reason*: refused by the allowlist gate, not an incidental miss.
+        assert err["code"] == ERROR_UNKNOWN_TOOL
+        assert "federated" in err["message"]
+    store.close()
