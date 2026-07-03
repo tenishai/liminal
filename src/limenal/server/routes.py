@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, Header, Request, Response
 
 from limenal import __version__
-from limenal.dispatch import DispatchError, InProcessDispatcher, UnknownTool
+from limenal.dispatch import DispatchError, Multiplexer, UnknownTool
 from limenal.protocol import Context
 from limenal.server.auth import AuthError, JWTVerifier, VerifiedClaims
 from limenal.server.mcp_types import (
@@ -210,8 +210,8 @@ async def _handle_tools_list(
     claims: VerifiedClaims | None,
     grant: ScopeGrant | None = None,
 ) -> JSONRPCResponse:
-    dispatcher: InProcessDispatcher = request.app.state.dispatcher
-    tools = dispatcher.list_tools()
+    dispatcher: Multiplexer = request.app.state.dispatcher
+    tools = await dispatcher.list_tools()
     allowed = _allowed_handlers_for(claims, grant)
     # MCP camelCase: snake → camel for input_schema. Also filter by
     # per-persona allowed_handlers when set so the LLM never sees tools
@@ -372,7 +372,7 @@ async def _handle_tools_call(
         extra=extra,
     )
 
-    dispatcher: InProcessDispatcher = request.app.state.dispatcher
+    dispatcher: Multiplexer = request.app.state.dispatcher
     try:
         tool_result = await dispatcher.dispatch(
             tool_name=params.name, payload=params.arguments, ctx=ctx

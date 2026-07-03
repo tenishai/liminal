@@ -23,7 +23,7 @@ import structlog
 from fastapi import FastAPI
 
 from limenal import __version__
-from limenal.dispatch import InProcessDispatcher
+from limenal.dispatch import Multiplexer
 from limenal.registry import Registry, discover_handlers
 from limenal.server.admin import build_admin_router
 from limenal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
@@ -87,7 +87,10 @@ def create_app(
         from limenal.handlers.mcp_proxy import register_proxies
         register_proxies(reg, mcp_proxies)
 
-    dispatcher = InProcessDispatcher(registry=reg)
+    # Wrap every in-process handler as an InProcessTarget behind the
+    # Multiplexer. Same public surface as InProcessDispatcher ({target}.{tool}
+    # prefixing + dispatch signature) — the federation authz seam is unchanged.
+    dispatcher = Multiplexer.from_registry(reg)
 
     auth_disabled = _auth_disabled_from_env()
     if auth_disabled and jwt_verifier is not None:
@@ -124,16 +127,13 @@ def create_app(
                     "production."
                 ),
             )
-        # Call startup() on handlers that define it (e.g. to open pooled clients).
-        handlers = [record.handler for record in reg]
-        for handler in handlers:
-            if hasattr(handler, "startup"):
-                await handler.startup()
+        # Start every target (in registration order). InProcessTarget
+        # delegates to its handler's startup() when defined (e.g. to open
+        # pooled clients); HttpTarget connects + fetches its catalog.
+        await dispatcher.startup()
         yield
-        # Call shutdown() in reverse order.
-        for handler in reversed(handlers):
-            if hasattr(handler, "shutdown"):
-                await handler.shutdown()
+        # Shut down in reverse registration order.
+        await dispatcher.shutdown()
         log.info("limenal.shutdown")
 
     app = FastAPI(
