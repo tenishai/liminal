@@ -533,3 +533,34 @@ async def test_rejects_zero_network_address() -> None:
     )
     assert result.is_error is True
     assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_nat64_wrapped_metadata() -> None:
+    """A DNS64 resolver can synthesize 169.254.169.254 into the NAT64
+    well-known prefix (64:ff9b::a9fe:a9fe). Not v4-mapped/6to4 — must be
+    unwrapped from the low 32 bits and denied via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"nat64.test": ["64:ff9b::a9fe:a9fe"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://nat64.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
+
+
+@pytest.mark.asyncio
+async def test_rejects_6to4_wrapped_metadata() -> None:
+    """A 6to4 address (2002::/16) embeds a v4 in bytes 2-5. 2002:a9fe:a9fe::
+    wraps 169.254.169.254 and must be denied via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"sixtofour.test": ["2002:a9fe:a9fe::"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://sixtofour.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error

@@ -56,11 +56,45 @@ PRIVATE_NETWORKS = [
     ipaddress.ip_network("169.254.0.0/16"),  # AWS / Azure / GCP metadata
     ipaddress.ip_network("100.64.0.0/10"),   # CGNAT shared space (RFC 6598)
     ipaddress.ip_network("0.0.0.0/8"),       # "This" network (RFC 1122 §3.2.1.3)
+    ipaddress.ip_network("224.0.0.0/4"),     # multicast
+    ipaddress.ip_network("240.0.0.0/4"),     # reserved
+    ipaddress.ip_network("255.255.255.255/32"),  # limited broadcast
+    ipaddress.ip_network("::/128"),          # unspecified
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),        # ULA
     ipaddress.ip_network("fe80::/10"),       # link-local
     ipaddress.ip_network("::ffff:0:0/96"),   # v4-mapped IPv6 (belt-and-suspenders)
 ]
+
+
+def _embedded_v4s(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> list[ipaddress.IPv4Address]:
+    """Extract any IPv4 address embedded in an IPv6 address.
+
+    An IPv6 address can wrap a v4 target that a gateway translates back to
+    IPv4 at connect time — so the embedded v4 must also be checked against
+    the IPv4 deny ranges, or a metadata/loopback IP slips past wearing an
+    IPv6 disguise. Three transition mechanisms embed a v4:
+
+      - v4-mapped (::ffff:a.b.c.d) — already blanket-denied by the
+        ::ffff:0:0/96 range in PRIVATE_NETWORKS; unwrapped here belt-and-
+        suspenders so the check stays correct if someone ever narrows that
+        range.
+      - 6to4 (2002::/16) — bytes 2-5 carry the v4 (ip.sixtofour).
+      - NAT64 (64:ff9b::/96 well-known prefix) — the low 32 bits carry the
+        v4; a DNS64 resolver synthesizes e.g. 64:ff9b::a9fe:a9fe for
+        169.254.169.254, which is neither v4-mapped nor 6to4.
+    """
+    out: list[ipaddress.IPv4Address] = []
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            out.append(ip.ipv4_mapped)
+        if ip.sixtofour is not None:
+            out.append(ip.sixtofour)
+        if ip in ipaddress.ip_network("64:ff9b::/96"):
+            out.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    return out
 
 DEFAULT_MAX_RESPONSE_BYTES = 1_000_000  # 1 MB
 DEFAULT_TIMEOUT_SECONDS = 15.0
@@ -243,14 +277,14 @@ class WebHandler:
                 ip = ipaddress.ip_address(ip_str)
             except ValueError:
                 return f"invalid IP {ip_str!r} from DNS", None
-            # Normalize v4-mapped IPv6 (e.g. ::ffff:169.254.169.254 →
-            # 169.254.169.254) so the address is also checked against the
-            # IPv4 deny ranges.  Without this, ::ffff:127.0.0.1 and
-            # ::ffff:169.254.169.254 slip past the IPv4 network rules and
-            # only the belt-and-suspenders ::ffff:0:0/96 entry catches them.
-            ips_to_check: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
-            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-                ips_to_check.append(ip.ipv4_mapped)
+            # Also check any IPv4 embedded in an IPv6 address (v4-mapped,
+            # 6to4, NAT64) against the IPv4 deny ranges — a gateway
+            # translates those back to IPv4 at connect time, so the wrapped
+            # metadata/loopback IP would otherwise evade every v4 rule.
+            ips_to_check: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [
+                ip,
+                *_embedded_v4s(ip),
+            ]
             for check_ip in ips_to_check:
                 for net in cfg.denied_networks:
                     if check_ip in net:

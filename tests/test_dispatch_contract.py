@@ -155,18 +155,28 @@ def test_handler_name_from_tool_name_equals_registry_key() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _mint(key, *, iss: str, persona: str = "rook", sub: str = "rook-primus", ttl: int = 60) -> str:
+def _mint(
+    key,
+    *,
+    iss: str,
+    persona: str = "rook",
+    sub: str = "rook-primus",
+    ttl: int = 60,
+    **extra,
+) -> str:
     now = int(time.time())
+    payload = {
+        "iss": iss,
+        "sub": sub,
+        "aud": _SVC,
+        "iat": now,
+        "exp": now + ttl,
+        "cabal_persona": persona,
+    }
+    payload.update(extra)
     return jwt.encode(
         {"alg": "RS256", "kid": key.kid, "typ": "JWT"},
-        {
-            "iss": iss,
-            "sub": sub,
-            "aud": _SVC,
-            "iat": now,
-            "exp": now + ttl,
-            "cabal_persona": persona,
-        },
+        payload,
         key,
     )
 
@@ -176,12 +186,16 @@ async def test_grant_allowed_handlers_filters_list_and_call(
     tmp_path, signing_key, keyset
 ) -> None:
     """ScopeGrant.allowed_handlers is authoritative for both tools/list and
-    tools/call — the token cannot override it (federation inversion proof).
+    tools/call — a WIDENING token cannot override it (federation inversion proof).
 
-    This pins the pre-#12 contract so restructuring cannot break it silently:
-    - tools/list must hide handlers not in allowed_handlers
-    - tools/call to an excluded handler must be refused (-32002)
-    - tools/call to an included handler must succeed
+    The proof only bites if the token actively TRIES to widen: the caller mints
+    cabal_tool_extras.limenal.allowed_handlers = ["echo"] (self-granting echo),
+    while the server grant lists only {"scratchpad"} (echo excluded). If the
+    precedence ever flipped so the token's extras won, echo would leak — this
+    test would go red. Pins the pre-#12 contract so restructuring can't break it:
+    - tools/list must hide echo despite the token claiming it
+    - tools/call to echo (self-granted by token) must be refused (-32002)
+    - tools/call to the server-granted scratchpad must succeed
     """
     verifier = MultiIssuerJWKSVerifier(
         registry={
@@ -205,12 +219,17 @@ async def test_grant_allowed_handlers_filters_list_and_call(
         scopes={"dispatch"},
         allowed_handlers={"scratchpad"},
     )
-    tok = _mint(signing_key, iss="rd-cabal")
+    # The token TRIES to widen its own access to echo — the server grant must win.
+    tok = _mint(
+        signing_key,
+        iss="rd-cabal",
+        cabal_tool_extras={"limenal.allowed_handlers": ["echo"]},
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
 
-        # tools/list: only scratchpad visible.
+        # tools/list: only scratchpad visible — echo hidden despite the token claim.
         list_r = await client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -221,7 +240,7 @@ async def test_grant_allowed_handlers_filters_list_and_call(
             f"tools/list must show only scratchpad tools, got: {[t['name'] for t in tools]}"
         )
         assert not any(t["name"].startswith("echo.") for t in tools), (
-            "tools/list must not expose echo (excluded by grant)"
+            "tools/list must not expose echo even though the token self-granted it"
         )
 
         # tools/call to included handler: succeed.
@@ -237,7 +256,8 @@ async def test_grant_allowed_handlers_filters_list_and_call(
         )
         assert ok.json().get("error") is None, ok.json()
 
-        # tools/call to excluded handler: refused with -32002.
+        # tools/call to echo (self-granted by the token) must still be refused:
+        # the server grant excludes echo and wins over the token's extras.
         deny = await client.post(
             "/mcp",
             json={
@@ -249,7 +269,9 @@ async def test_grant_allowed_handlers_filters_list_and_call(
             headers={"Authorization": f"Bearer {tok}"},
         )
         err = deny.json().get("error")
-        assert err is not None, "echo.ping must be refused when echo is excluded"
+        assert err is not None, (
+            "echo.ping must be refused — the token self-granting echo must not win"
+        )
         assert err["code"] == -32002, err
         assert "echo" in err["message"], err["message"]
 
