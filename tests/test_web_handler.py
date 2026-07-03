@@ -564,3 +564,18 @@ async def test_rejects_6to4_wrapped_metadata() -> None:
     )
     assert result.is_error is True
     assert "denied" in result.error or "SSRF" in result.error
+
+
+async def test_rejects_ipv4_compatible_metadata() -> None:
+    """Deprecated IPv4-compatible IPv6 (::a9fe:a9fe == ::169.254.169.254)
+    embeds the v4 in the low 32 bits — unwrapped for symmetry and denied
+    via 169.254.0.0/16."""
+    handler = _build_handler(
+        mock=httpx.MockTransport(lambda _: httpx.Response(200)),
+        dns_map={"v4compat.test": ["::a9fe:a9fe"]},
+    )
+    result = await handler.dispatch(
+        "fetch", {"url": "https://v4compat.test/"}, _ctx()
+    )
+    assert result.is_error is True
+    assert "denied" in result.error or "SSRF" in result.error
