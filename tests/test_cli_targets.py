@@ -307,6 +307,17 @@ def test_main_returns_2_for_name_collision(tmp_path, monkeypatch) -> None:
     assert main(["serve", "--targets", path]) == 2
 
 
+def test_single_table_target_typo_hints(tmp_path) -> None:
+    """A single ``[target]`` table (instead of the array ``[[target]]``) exits
+    loudly with a hint, not a cryptic downstream error."""
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[target]\nname = "jira"\naddress = "https://jira/mcp"\n',
+    )
+    with pytest.raises(ValueError, match=r"\[\[target\]\]"):
+        _load_targets_file(path)
+
+
 def test_main_returns_2_for_stdio_target(tmp_path, monkeypatch) -> None:
     """A well-formed stdio target (valid config, but not served until Stage B)
     must exit 2 with a diagnostic, not a traceback — the docs list stdio."""

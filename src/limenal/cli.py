@@ -60,6 +60,11 @@ def _load_targets_file(path: str) -> list[Any]:
         )
 
     raw_targets = cfg.get("target", [])
+    if not isinstance(raw_targets, list):
+        raise ValueError(
+            "targets file `target` must be an array of tables written as "
+            "`[[target]]` — got a single `[target]` table. Did you mean `[[target]]`?"
+        )
     if not raw_targets:
         print(
             "warning: --targets file declared no [[target]] tables (loaded 0 targets).",

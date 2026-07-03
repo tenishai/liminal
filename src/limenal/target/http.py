@@ -39,7 +39,7 @@ from limenal.client.mcp import (
 )
 from limenal.protocol import Context, ToolResult, ToolSpec
 from limenal.target.base import Target, TrustTier
-from limenal.target.config import TargetSpec
+from limenal.target.config import TargetConfigError, TargetSpec
 from limenal.target.inspect import inspect_catalog
 
 log = structlog.get_logger(__name__)
@@ -61,7 +61,7 @@ class HttpTarget(Target):
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if spec.transport != "http":
-            raise ValueError(
+            raise TargetConfigError(
                 f"HttpTarget requires transport='http', got {spec.transport!r} "
                 f"for target {spec.name!r}"
             )
