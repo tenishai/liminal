@@ -321,6 +321,75 @@ DTSP on-demand activation (`limenal__discover`, `limenal__activate`, federated `
 
 ---
 
+## Declarative targets (`--targets`) — #15
+
+Federated MCP upstreams are declared in a versioned TOML file and loaded at startup via `limenal serve --targets <path>`.
+
+> **Stage status:** `http` targets are served now. `stdio` targets are **config-validated but not yet served** (Stage B) — declaring one is accepted by the schema but rejected at startup with a clear `error: --targets: …` diagnostic (exit 2). A target `name` that collides with a built-in handler (e.g. `memory`) is likewise rejected loudly at startup. Any bad `--targets` config exits 2, never a traceback.
+
+### Schema
+
+```toml
+# targets.toml
+config_version = 1          # required; limenal will refuse version != 1 loudly
+
+# Minimal http target — the common case (two keys required)
+[[target]]
+name    = "jira"
+address = "https://jira-mcp.internal/mcp"
+
+# Fuller example — bearer-auth, trusted, with untrusted-tool policy
+[[target]]
+name        = "github"
+address     = "https://github-mcp.internal/mcp"
+auth_method = "bearer"
+bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
+trust       = "trusted"
+on_untrusted = "strip"      # only matters when trust = "untrusted"
+identity    = "forward"     # forward caller persona as x-limenal-persona header
+```
+
+### Keys
+
+| Key | Required | Default | Notes |
+|-----|----------|---------|-------|
+| `name` | yes | — | Namespace / authz key; becomes the `{name}.{tool}` prefix. No `.` allowed. |
+| `address` | yes (http) | — | Upstream MCP endpoint URL. |
+| `transport` | no | `"http"` | `"http"` or `"stdio"`. |
+| `command` | yes (stdio) | — | argv list for the spawned stdio child. |
+| `trust` | no | `"untrusted"` | `"trusted"` or `"untrusted"`. |
+| `on_untrusted` | no | `"flag"` | `"flag"`, `"strip"`, or `"block"` — how to handle suspicious tools from untrusted targets. |
+| `identity` | no | `"none"` | `"forward"` (http only) sends caller persona as headers. Rejected for stdio. |
+| `auth_method` | no | `"none"` | `"bearer"`, `"service-token"`, or `"none"`. |
+| `bearer_token` | if bearer | — | Static token sent as `Authorization: Bearer`. |
+| `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
+| `timeout_seconds` | no | `30.0` | Per-call timeout. |
+| `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
+| `relevance_signals` | no | `[]` | Routing hints (v2 on-demand activation). |
+| `client_name` | no | `"limenal-target"` | Advertised in `initialize` handshake. |
+
+### Version handling
+
+- `config_version = 1` — accepted.
+- `config_version` absent — accepted with a stderr warning recommending it be set.
+- `config_version != 1` — loud error, exit 2 (No Silent Failures).
+
+Unknown keys in a `[[target]]` table are also rejected loudly (a typo like `addres` must not silently no-op).
+
+### Auth modes
+
+`--targets` is auth-mode-agnostic — it works with `--jwks-url` (single-cabal) and `--trust-registry` (sovereign) alike. Targets are not auth-mode-specific config.
+
+### Example invocation
+
+```bash
+limenal serve \
+  --jwks-url https://cabal-core:8080/.well-known/jwks.json \
+  --targets targets.toml
+```
+
+---
+
 ## References
 
 - [`pattern-toolbox.md`](pattern-toolbox.md) — Pattern Toolbox proposal (planned limenal handler)

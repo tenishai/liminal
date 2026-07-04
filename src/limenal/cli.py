@@ -11,6 +11,70 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+# Versioned declarative target config — #15.  Only version 1 is understood.
+# Bump this constant (and add a migration path) before accepting a new version.
+SUPPORTED_CONFIG_VERSION = 1
+
+
+def _load_targets_file(path: str) -> list[Any]:
+    """Parse a ``--targets`` TOML file and return validated ``TargetSpec`` list.
+
+    Raises ``ValueError`` (with a clear message) on any config error —
+    including an unsupported ``config_version`` — so the caller can print and
+    exit 2 (No Silent Failures).
+
+    Prints a ``stderr`` warning when ``config_version`` is absent, recommending
+    the operator pin it explicitly.
+    """
+    import tomllib
+
+    from limenal.target.config import TargetConfigError, load_target_specs
+
+    with open(path, "rb") as fh:
+        cfg = tomllib.load(fh)
+
+    # Reject stray top-level keys so a mistyped table-array (`[[targets]]`) or a
+    # fat-fingered `config_verison` is a loud error, not a silent zero-target
+    # run. Passing --targets is an explicit statement of intent (No Silent
+    # Failures).
+    unknown_top = set(cfg) - {"config_version", "target"}
+    if unknown_top:
+        raise ValueError(
+            f"targets file has unknown top-level key(s): {sorted(unknown_top)}. "
+            "Only `config_version` and `[[target]]` tables are allowed "
+            "(did you mean `[[target]]`?)."
+        )
+
+    version = cfg.get("config_version")
+    if version is None:
+        print(
+            "warning: targets file is missing config_version; "
+            f"add `config_version = {SUPPORTED_CONFIG_VERSION}` to suppress this warning.",
+            file=sys.stderr,
+        )
+    elif not isinstance(version, int) or isinstance(version, bool) or version != SUPPORTED_CONFIG_VERSION:
+        raise ValueError(
+            f"targets file config_version={version!r} is not supported "
+            f"(supported: {SUPPORTED_CONFIG_VERSION}, as an integer). "
+            "Upgrade limenal or use a config file generated for this version."
+        )
+
+    raw_targets = cfg.get("target", [])
+    if not isinstance(raw_targets, list):
+        raise ValueError(
+            "targets file `target` must be an array of tables written as "
+            "`[[target]]` — got a single `[target]` table. Did you mean `[[target]]`?"
+        )
+    if not raw_targets:
+        print(
+            "warning: --targets file declared no [[target]] tables (loaded 0 targets).",
+            file=sys.stderr,
+        )
+    try:
+        return load_target_specs(raw_targets)
+    except TargetConfigError as exc:
+        raise ValueError(f"targets file: {exc}") from exc
+
 
 def _parse_trust_registry_extra(
     cfg: dict[str, Any],
@@ -139,6 +203,17 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=15 * 60,
         help="Credential cache TTL in seconds (default 900).",
+    )
+    serve_p.add_argument(
+        "--targets",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to a versioned targets TOML file declaring federated MCP upstreams "
+            "(``[[target]]`` tables). The file must set ``config_version = 1``. "
+            "Works in both --jwks-url (single-cabal) and --trust-registry (sovereign) modes. "
+            "Example: ``limenal serve --jwks-url ... --targets targets.toml``."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -296,13 +371,38 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-        app = create_app(
-            jwt_verifier=verifier,
-            credential_resolver=credential_resolver,
-            policy_store=policy_store,
-            policy_scope_for=policy_scope_for,
-            policy_tool_extras=policy_tool_extras,
-        )
+        # Load declarative federated targets if --targets was supplied (#15).
+        # Not auth-mode-specific: works with --jwks-url and --trust-registry alike.
+        targets = None
+        if args.targets:
+            try:
+                targets = _load_targets_file(args.targets)
+            except (ValueError, OSError) as exc:
+                print(f"error: --targets: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"targets: loaded {len(targets)} target(s) from {args.targets}",
+                file=sys.stderr,
+            )
+
+        # create_app runs targets through build_http_targets, which raises
+        # TargetConfigError for a name that collides with an in-process handler
+        # or a stdio target (not served until Stage B). Catch it on the same
+        # `--targets` exit-2 path so it's a clean diagnostic, not a traceback.
+        from limenal.target.config import TargetConfigError
+
+        try:
+            app = create_app(
+                jwt_verifier=verifier,
+                credential_resolver=credential_resolver,
+                policy_store=policy_store,
+                policy_scope_for=policy_scope_for,
+                policy_tool_extras=policy_tool_extras,
+                targets=targets,
+            )
+        except TargetConfigError as exc:
+            print(f"error: --targets: {exc}", file=sys.stderr)
+            return 2
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 
