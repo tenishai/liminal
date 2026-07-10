@@ -34,6 +34,11 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
 ]
+# Enables the techne-backed `memory` handler (imported lazily; limenal runs
+# without it). techne is not on a public index, so pair this extra with the
+# git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
+# Dev/CI keep an editable techne instead: `pip install -e ../techne`.
+memory = ["techne>=0.9.0"]
 
 [project.scripts]
 limenal = "limenal.cli:main"
@@ -48,7 +53,7 @@ memory     = "limenal.handlers.memory:get_handler"
 notify     = "limenal.handlers.notify:get_handler"
 
 [project.urls]
-Source = "https://github.com/dimartin/limenal"
+Source = "https://github.com/tenishai/limenal"
 
 [tool.setuptools.packages.find]
 where = ["src"]
