@@ -57,6 +57,18 @@ pip install -e ../techne        # sibling install for the memory handler
 pytest -q
 ```
 
+## Install (non-dev / clean machine)
+
+The `memory` handler needs `techne`, which is not on a public index. To install
+without a sibling checkout (agents, other hosts, containers), pin the git source
+alongside the extra:
+
+```bash
+pip install -r requirements-sources.txt ".[memory]"
+```
+
+Dev/CI keep the editable sibling checkout above (`pip install -e ../techne`).
+
 ## Repository layout
 
 ```
@@ -110,11 +122,11 @@ async with AsyncMCPClient(
 ## Relationship to Cabal
 
 limenal is standalone — any MCP-speaking agent can use it. Cabal
-(`github.com/dimartin/cabal`) is the primary downstream consumer; Cabal personas
+(`github.com/tenishai/cabal`) is the primary downstream consumer; Cabal personas
 connect to limenal for their tool surface and limenal asks Cabal Core for
 credentials per `(persona, handler)`.
 
-Sibling-checkout convention: clone `dimartin/limenal` as a sibling of `cabal`
+Sibling-checkout convention: clone `tenishai/limenal` as a sibling of `cabal`
 and `techne`, install with `pip install -e ../limenal`.
 
 ## License

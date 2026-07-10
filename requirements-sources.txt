@@ -11,5 +11,7 @@
 #   Dev/CI keep techne editable instead (live local edits):
 #       pip install -e ../techne
 #
-# Bump the pinned tag when you want consumers to pick up a new techne release.
+# Bump the pinned tag below when consumers should pick up a new techne release —
+# and lift the matching `techne>=X` floor in pyproject.toml's `memory` extra so the
+# abstract floor and the concrete pin stay in step.
 techne @ git+https://github.com/tenishai/techne.git@v0.9.0

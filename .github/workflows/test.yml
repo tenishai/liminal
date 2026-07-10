@@ -68,7 +68,7 @@ jobs:
       - name: Checkout techne
         uses: actions/checkout@v4
         with:
-          repository: dimartin/techne
+          repository: tenishai/techne
           token: ${{ secrets.GH_PAT_REPOS }}
           path: techne
 
