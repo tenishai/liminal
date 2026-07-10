@@ -1,0 +1,15 @@
+# Source pins for non-PyPI dependencies.
+#
+# limenal's abstract deps live in pyproject.toml. Its optional `memory` extra
+# needs `techne`, which is not published to a public index — this file supplies
+# the concrete git source so it can be installed on a clean machine (agents,
+# other hosts, containers) without a sibling checkout.
+#
+#   Non-dev install with the memory handler:
+#       pip install -r requirements-sources.txt ".[memory]"
+#
+#   Dev/CI keep techne editable instead (live local edits):
+#       pip install -e ../techne
+#
+# Bump the pinned tag when you want consumers to pick up a new techne release.
+techne @ git+https://github.com/tenishai/techne.git@v0.9.0
