@@ -79,27 +79,23 @@ def _load_targets_file(path: str) -> list[Any]:
 def _parse_trust_registry_extra(
     cfg: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, Callable[[str], str | None] | None]:
-    """Parse ``[tool_extras]`` and ``[scope_map]`` from a trust-registry TOML dict.
+    """Parse ``[tool_extras]`` from a trust-registry TOML dict.
 
-    Returns ``(policy_tool_extras, policy_scope_for)``.  Both are ``None``
-    when the corresponding TOML section is absent — preserving the exact
-    current behaviour (no scope enforcement, no server-set tool extras).
+    Returns ``(policy_tool_extras, None)``. The second element (the scope
+    resolver) is always ``None`` now: sovereign scopes are derived from the
+    handler capability cards by the server (limenal#26), not from config. A
+    ``[scope_map]`` section is DEPRECATED and ignored, with a warning.
 
-    Raises ``ValueError`` with a clear diagnostic on any malformed input so
-    ``cli.main()`` can print and exit 2 without silently passing bad config
-    (CLAUDE.md: No Silent Failures).
+    ``policy_tool_extras`` is ``None`` when ``[tool_extras]`` is absent.
+
+    Raises ``ValueError`` with a clear diagnostic on a malformed
+    ``[tool_extras]`` so ``cli.main()`` can print and exit 2 without silently
+    passing bad config (CLAUDE.md: No Silent Failures).
 
     ``[tool_extras]`` is a flat table passed verbatim as ``policy_tool_extras``::
 
         [tool_extras]
         "memory.db_path" = "/shared/memory.db"
-
-    ``[scope_map]`` maps handler names to the scope string that handler
-    requires; absent handlers get ``None`` (no scope requirement)::
-
-        [scope_map]
-        scratchpad = "mem:append"
-        memory = "mem:query"
     """
     # [tool_extras] — flat TOML table → passed verbatim
     tool_extras_raw = cfg.get("tool_extras")
@@ -111,32 +107,19 @@ def _parse_trust_registry_extra(
         )
     policy_tool_extras: dict[str, Any] | None = tool_extras_raw
 
-    # [scope_map] — table of handler-name → required-scope (string values only)
-    scope_map_raw = cfg.get("scope_map")
-    policy_scope_for: Callable[[str], str | None] | None = None
-    if scope_map_raw is not None:
-        if not isinstance(scope_map_raw, dict):
-            raise ValueError(
-                f"[scope_map] in the trust registry must be a TOML table (dict); "
-                f"got {type(scope_map_raw).__name__!r}. "
-                "Check the registry file for a malformed [scope_map] section."
-            )
-        for handler_key, scope_val in scope_map_raw.items():
-            if not isinstance(scope_val, str):
-                raise ValueError(
-                    f"[scope_map] values must be strings; "
-                    f"key {handler_key!r} has a {type(scope_val).__name__!r} value. "
-                    "Each handler should map to a single scope string, e.g. "
-                    f'{handler_key!r} = "mem:query".'
-                )
-        scope_map: dict[str, str] = dict(scope_map_raw)
+    # [scope_map] is DEPRECATED (limenal#26): sovereign scopes are now derived
+    # from each handler's CapabilityCard.required_scope, so the vocabulary can't
+    # drift from the handler surface. A present [scope_map] is ignored (with a
+    # warning) rather than silently honoured.
+    if cfg.get("scope_map") is not None:
+        print(
+            "warning: [scope_map] is deprecated and ignored — sovereign scopes "
+            "are now derived from handler capability cards (required_scope). "
+            "Remove [scope_map] from the trust registry.",
+            file=sys.stderr,
+        )
 
-        def _scope_for(handler: str, _sm: dict[str, str] = scope_map) -> str | None:
-            return _sm.get(handler)
-
-        policy_scope_for = _scope_for
-
-    return policy_tool_extras, policy_scope_for
+    return policy_tool_extras, None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -312,12 +295,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             parent_issuer = next(i.id for i in issuers if i.parent)
             policy_store = SqlitePolicyStore(args.policy_db, parent_issuer=parent_issuer)
-            if policy_scope_for is not None:
-                print(
-                    f"sovereign scope enforcement: {len(cfg.get('scope_map', {}))} "
-                    "handler scope(s) wired from [scope_map]",
-                    file=sys.stderr,
-                )
+            print(
+                "sovereign scope enforcement: handler-derived "
+                "(from capability card required_scope)",
+                file=sys.stderr,
+            )
             if policy_tool_extras is not None:
                 print(
                     f"sovereign tool extras: {len(policy_tool_extras)} key(s) wired "

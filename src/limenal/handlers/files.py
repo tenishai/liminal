@@ -49,6 +49,7 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 
 CARD = {
     "handler": "files",
+    "required_scope": "files:access",
     "description": "Scoped file I/O against operator-allowlisted paths",
     "tools": [
         {"name": "read", "description": "Read a file's text content (UTF-8)."},

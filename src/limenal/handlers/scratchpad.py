@@ -17,6 +17,7 @@ from limenal.protocol import Context, Handler, ToolResult, ToolSpec
 
 CARD = {
     "handler": "scratchpad",
+    "required_scope": None,  # ephemeral, process-local notes — no scope gate
     "description": "Per-agent ephemeral key/value notes (process-local; cleared on restart)",
     "tools": [
         {"name": "set", "description": "Store a value under a key"},

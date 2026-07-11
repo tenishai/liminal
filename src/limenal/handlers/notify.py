@@ -58,6 +58,7 @@ WEBHOOK_MAX_BODY_BYTES = 16_000
 
 CARD = {
     "handler": "notify",
+    "required_scope": "notify:send",
     "description": "Transport-agnostic notifications (webhook in v1; Slack/Discord/email plug in later).",
     "tools": [
         {"name": "send", "description": "Send a notification via the configured transport."},

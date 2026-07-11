@@ -67,6 +67,7 @@ _STOPWORDS = frozenset({
 
 CARD = {
     "handler": "memory",
+    "required_scope": "mem:access",
     "description": "techne-backed knowledge recall + commit (per-persona DB)",
     "tools": [
         {

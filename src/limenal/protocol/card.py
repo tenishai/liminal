@@ -40,6 +40,12 @@ class CapabilityCard(_Open):
     relevance_signals: list[str] = Field(default_factory=list)
     credential_keys: list[str] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
+    # The scope a sovereign grant must hold (or admin:*) to invoke this
+    # handler. None = no scope gate (an open handler). In a sovereign
+    # deployment the server derives the handler->scope map from these fields
+    # (limenal#26) rather than a hand-authored [scope_map] that can drift from
+    # the handler surface.
+    required_scope: str | None = None
 
 
 class CardValidationError(ValueError):

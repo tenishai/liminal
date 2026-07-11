@@ -48,6 +48,27 @@ def _auth_disabled_from_env() -> bool:
     return os.environ.get(_AUTH_DISABLED_ENV, "").lower() in _AUTH_DISABLED_TRUTHY
 
 
+def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
+    """Derive the handler -> required-scope map from the registered capability
+    cards (limenal#26).
+
+    Each handler declares its own ``required_scope`` on its CapabilityCard;
+    ``None`` means no scope gate. Deriving the map from the cards — rather than
+    a hand-authored ``[scope_map]`` — keeps the sovereign scope vocabulary from
+    drifting away from the actual handler surface.
+    """
+    scope_map: dict[str, str] = {
+        record.name: record.card.required_scope
+        for record in reg
+        if record.card.required_scope
+    }
+
+    def _scope_for(handler: str, _sm: dict[str, str] = scope_map) -> str | None:
+        return _sm.get(handler)
+
+    return _scope_for
+
+
 def create_app(
     *,
     jwt_verifier: JWTVerifier | None = None,
@@ -159,7 +180,13 @@ def create_app(
     app.state.server_name = server_name
     app.state.auth_disabled = auth_disabled
     app.state.policy_store = policy_store
-    app.state.policy_scope_for = policy_scope_for
+    # Scope map is handler-derived (limenal#26): each CapabilityCard declares
+    # its required_scope, and the server builds the handler->scope map from the
+    # registered cards. An explicit policy_scope_for (tests) still overrides.
+    app.state.policy_scope_for = (
+        policy_scope_for if policy_scope_for is not None
+        else scope_for_from_registry(reg)
+    )
     # Server-supplied sandbox config (memory.db_path, files.allowed_paths,
     # egress allowlists) for sovereign mode. Used INSTEAD of the caller's
     # token tool_extras when a grant is present — the token never picks a

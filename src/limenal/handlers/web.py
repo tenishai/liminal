@@ -122,6 +122,7 @@ DEFAULT_CONTENT_TYPES = {
 
 CARD = {
     "handler": "web",
+    "required_scope": "web:fetch",
     "description": "HTTP fetch with hostname allowlist + SSRF defense",
     "tools": [
         {
