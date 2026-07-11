@@ -99,13 +99,19 @@ def test_parse_trust_registry_extra_absent_sections_returns_none() -> None:
     assert policy_scope_for is None
 
 
-def test_parse_trust_registry_extra_malformed_scope_map_raises() -> None:
-    """A non-table [scope_map] must raise ValueError with a clear message
-    (CLAUDE.md: No Silent Failures — a malformed section must not pass silently)."""
+def test_parse_trust_registry_extra_scope_map_deprecated_and_ignored(capsys) -> None:
+    """[scope_map] is DEPRECATED (limenal#26): scopes are derived from handler
+    capability cards now, so a present [scope_map] is ignored (resolver stays
+    None) with a warning — not honoured, and not raised on."""
     from limenal.cli import _parse_trust_registry_extra
 
-    with pytest.raises(ValueError, match="scope_map"):
-        _parse_trust_registry_extra({"scope_map": "not-a-dict"})
+    _tool_extras, policy_scope_for = _parse_trust_registry_extra(
+        {"scope_map": {"scratchpad": "mem:append"}}
+    )
+    assert policy_scope_for is None  # no longer builds a config-driven resolver
+    assert "deprecated" in capsys.readouterr().err
+    # Even a malformed [scope_map] is just ignored now (not validated/raised).
+    _parse_trust_registry_extra({"scope_map": "not-a-dict"})
 
 
 def test_parse_trust_registry_extra_malformed_tool_extras_raises() -> None:
@@ -116,28 +122,33 @@ def test_parse_trust_registry_extra_malformed_tool_extras_raises() -> None:
         _parse_trust_registry_extra({"tool_extras": ["list", "not", "dict"]})
 
 
-def test_parse_trust_registry_extra_scope_map_non_string_value_raises() -> None:
-    """A scope_map value that is not a string must raise ValueError."""
-    from limenal.cli import _parse_trust_registry_extra
+def test_scope_for_from_registry_derives_from_cards() -> None:
+    """scope_for_from_registry builds the handler->scope map from each card's
+    required_scope; a None-scope handler (scratchpad) is absent from the map."""
+    from limenal.handlers.scratchpad import ScratchpadHandler
+    from limenal.handlers.web import WebHandler
+    from limenal.registry import Registry
+    from limenal.registry.discover import register_explicit
+    from limenal.server.app import scope_for_from_registry
 
-    with pytest.raises(ValueError, match="scope_map"):
-        _parse_trust_registry_extra({"scope_map": {"scratchpad": 42}})
+    reg = Registry()
+    register_explicit(reg, "web", WebHandler())
+    register_explicit(reg, "scratchpad", ScratchpadHandler())
+
+    scope_for = scope_for_from_registry(reg)
+    assert scope_for("web") == "web:fetch"  # declared on the web card
+    assert scope_for("scratchpad") is None  # required_scope=None → open
+    assert scope_for("nonexistent") is None
 
 
 @pytest.mark.asyncio
-async def test_cli_scope_map_gates_tools_call(tmp_path, signing_key, keyset) -> None:
-    """Wire policy_scope_for via the CLI helper (_parse_trust_registry_extra)
-    and assert the scope gate refuses calls lacking the required scope and
-    records a deny audit entry.
-
-    This is the CLI-config path test for limenal #26 (partial): scope
-    enforcement is POSSIBLE via [scope_map]; the full method→scope derivation
-    from the handler surface stays in #26.
+async def test_handler_derived_scope_gates_tools_call(tmp_path, signing_key, keyset) -> None:
+    """Part 3 of limenal#26: a granted-but-under-scoped caller is refused at a
+    scope-gated handler, with the scope map DERIVED FROM THE HANDLER CARDS —
+    no policy_scope_for is injected. `web` declares required_scope='web:fetch';
+    the scope gate refuses a grant that lacks it and records a deny audit entry.
     """
-    import tomllib
-
-    from limenal.cli import _parse_trust_registry_extra
-    from limenal.handlers.scratchpad import ScratchpadHandler
+    from limenal.handlers.web import WebHandler
     from limenal.registry import Registry
     from limenal.registry.discover import register_explicit
     from limenal.server import (
@@ -147,64 +158,34 @@ async def test_cli_scope_map_gates_tools_call(tmp_path, signing_key, keyset) -> 
     )
 
     _SVC = "scope-gate-test"
-
-    # Simulate the TOML the CLI would load from --trust-registry.
-    toml_text = (
-        'service_audience = "scope-gate-test"\n'
-        '\n'
-        '[[issuer]]\n'
-        'id = "rd-cabal"\n'
-        'jwks_uri = "http://unused"\n'
-        'parent = true\n'
-        '\n'
-        '[scope_map]\n'
-        'scratchpad = "mem:append"\n'
-    )
-    cfg = tomllib.loads(toml_text)
-    policy_tool_extras, policy_scope_for = _parse_trust_registry_extra(cfg)
-
-    assert policy_scope_for is not None
-    assert policy_scope_for("scratchpad") == "mem:append"
-    assert policy_scope_for("memory") is None
-
     verifier = MultiIssuerJWKSVerifier(
         registry={
             "rd-cabal": StaticKeySetVerifier(
-                key_set=keyset,
-                expected_issuer="rd-cabal",
-                expected_audience=_SVC,
+                key_set=keyset, expected_issuer="rd-cabal", expected_audience=_SVC,
             ),
         },
         parents=frozenset({"rd-cabal"}),
     )
     store = SqlitePolicyStore(str(tmp_path / "scope.db"), parent_issuer="rd-cabal")
     reg = Registry()
-    register_explicit(reg, "scratchpad", ScratchpadHandler())
-    app = create_app(
-        jwt_verifier=verifier,
-        registry=reg,
-        policy_store=store,
-        policy_scope_for=policy_scope_for,
-        policy_tool_extras=policy_tool_extras,
-    )
+    register_explicit(reg, "web", WebHandler())
 
-    # Grant scratchpad access but only with mem:query — the handler needs mem:append.
+    # No policy_scope_for passed → create_app DERIVES it from the cards.
+    app = create_app(jwt_verifier=verifier, registry=reg, policy_store=store)
+    assert app.state.policy_scope_for("web") == "web:fetch"
+
+    # Grant web access but WITHOUT web:fetch — allowed_handlers passes the first
+    # gate; the scope gate is what must refuse.
     await store.grant(
-        "rd-cabal", "rook",
-        scopes={"mem:query"},
-        allowed_handlers={"scratchpad"},
+        "rd-cabal", "rook", scopes={"mem:query"}, allowed_handlers={"web"},
     )
 
     now = int(time.time())
     tok = jwt.encode(
         {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"},
         {
-            "iss": "rd-cabal",
-            "sub": "rook-primus",
-            "aud": _SVC,
-            "iat": now,
-            "exp": now + 60,
-            "cabal_persona": "rook",
+            "iss": "rd-cabal", "sub": "rook-primus", "aud": _SVC,
+            "iat": now, "exp": now + 60, "cabal_persona": "rook",
         },
         signing_key,
     )
@@ -214,18 +195,38 @@ async def test_cli_scope_map_gates_tools_call(tmp_path, signing_key, keyset) -> 
         r = await client.post(
             "/mcp",
             json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "scratchpad.set", "arguments": {}},
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "web.fetch", "arguments": {"url": "http://x"}},
             },
             headers={"Authorization": f"Bearer {tok}"},
         )
         err = r.json()["error"]
-        assert "scope 'mem:append' required" in err["message"], err["message"]
+        assert "scope 'web:fetch' required" in err["message"], err["message"]
         denies = [d for d in await store.audit(limit=20) if d.action == "access_deny"]
 
+        # Admission: re-grant WITH web:fetch → the scope gate now passes. The
+        # call still fails downstream (unresolvable host), but NOT on scope —
+        # this rules out a gate that refuses everything.
+        await store.grant(
+            "rd-cabal", "rook", scopes={"web:fetch"}, allowed_handlers={"web"},
+        )
+        r2 = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {
+                    "name": "web.fetch",
+                    "arguments": {"url": "http://nonexistent.invalid"},
+                },
+            },
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        msg2 = (r2.json().get("error") or {}).get("message", "")
+        assert "scope 'web:fetch' required" not in msg2, (
+            f"scope gate should have ADMITTED the web:fetch-scoped grant: {msg2!r}"
+        )
+
     store.close()
-    assert any(d.detail.get("required_scope") == "mem:append" for d in denies), (
-        "access_deny audit entry with required_scope=mem:append not found"
+    assert any(d.detail.get("required_scope") == "web:fetch" for d in denies), (
+        "access_deny audit entry with required_scope=web:fetch not found"
     )

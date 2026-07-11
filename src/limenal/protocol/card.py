@@ -40,6 +40,19 @@ class CapabilityCard(_Open):
     relevance_signals: list[str] = Field(default_factory=list)
     credential_keys: list[str] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
+    # The scope a sovereign grant must hold (or admin:*) to invoke this
+    # handler. None = no scope gate (an open handler). In a sovereign
+    # deployment the server derives the handler->scope map from these fields
+    # (limenal#26) rather than a hand-authored [scope_map] that can drift from
+    # the handler surface.
+    #
+    # This is DEFENCE-IN-DEPTH atop the operator-authored allowed_handlers
+    # gate (which runs first, in routes.py), NOT the primary authorization
+    # boundary. A card is authored by handler code (server-side, already
+    # trusted); a grant's allowed_handlers is authored by the parent issuer.
+    # So a handler self-declaring required_scope=None only drops the scope
+    # refinement — it can still only be called if the operator granted it.
+    required_scope: str | None = None
 
 
 class CardValidationError(ValueError):

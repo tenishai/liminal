@@ -67,6 +67,12 @@ _STOPWORDS = frozenset({
 
 CARD = {
     "handler": "memory",
+    # Open for now: memory has a read/write split (recall vs commit) that the
+    # per-HANDLER scope gate can't express — the federation vocabulary
+    # (mem:query vs mem:append) is per-TOOL. Enforcing a single handler-level
+    # scope here would either lock out documented grants or silently collapse
+    # the query/append distinction. Deferred to per-tool scope enforcement.
+    "required_scope": None,
     "description": "techne-backed knowledge recall + commit (per-persona DB)",
     "tools": [
         {
