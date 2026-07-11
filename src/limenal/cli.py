@@ -295,11 +295,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             parent_issuer = next(i.id for i in issuers if i.parent)
             policy_store = SqlitePolicyStore(args.policy_db, parent_issuer=parent_issuer)
-            print(
-                "sovereign scope enforcement: handler-derived "
-                "(from capability card required_scope)",
-                file=sys.stderr,
-            )
+            # Print the derived handler->scope map so an operator can reconcile
+            # grants on upgrade (scope enforcement is now real — a non-admin
+            # grant must hold each listed scope, or admin:*). See limenal#26.
+            from limenal.registry import discover_handlers
+
+            _derived = {
+                r.name: r.card.required_scope
+                for r in discover_handlers()
+                if r.card.required_scope
+            }
+            if _derived:
+                _map = ", ".join(f"{h}->{s}" for h, s in sorted(_derived.items()))
+                print(
+                    f"sovereign scope enforcement (handler-derived): {_map}. "
+                    "Non-admin grants must hold these scopes (or admin:*).",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "sovereign scope enforcement: handler-derived "
+                    "(no handler declares a required_scope)",
+                    file=sys.stderr,
+                )
             if policy_tool_extras is not None:
                 print(
                     f"sovereign tool extras: {len(policy_tool_extras)} key(s) wired "

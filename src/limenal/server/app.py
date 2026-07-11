@@ -183,6 +183,9 @@ def create_app(
     # Scope map is handler-derived (limenal#26): each CapabilityCard declares
     # its required_scope, and the server builds the handler->scope map from the
     # registered cards. An explicit policy_scope_for (tests) still overrides.
+    # NOTE: this is a populated callable even in single-cabal mode, but it is
+    # inert there — the routes.py scope gate only runs when a grant is present,
+    # which only sovereign (multi-issuer + policy_store) deployments produce.
     app.state.policy_scope_for = (
         policy_scope_for if policy_scope_for is not None
         else scope_for_from_registry(reg)

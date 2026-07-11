@@ -49,7 +49,10 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 
 CARD = {
     "handler": "files",
-    "required_scope": "files:access",
+    # Open for now: files has a read/write split that the per-HANDLER scope
+    # gate can't express (a single scope can't separate read from write).
+    # Deferred to per-tool scope enforcement, same as memory.
+    "required_scope": None,
     "description": "Scoped file I/O against operator-allowlisted paths",
     "tools": [
         {"name": "read", "description": "Read a file's text content (UTF-8)."},

@@ -204,6 +204,28 @@ async def test_handler_derived_scope_gates_tools_call(tmp_path, signing_key, key
         assert "scope 'web:fetch' required" in err["message"], err["message"]
         denies = [d for d in await store.audit(limit=20) if d.action == "access_deny"]
 
+        # Admission: re-grant WITH web:fetch → the scope gate now passes. The
+        # call still fails downstream (unresolvable host), but NOT on scope —
+        # this rules out a gate that refuses everything.
+        await store.grant(
+            "rd-cabal", "rook", scopes={"web:fetch"}, allowed_handlers={"web"},
+        )
+        r2 = await client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {
+                    "name": "web.fetch",
+                    "arguments": {"url": "http://nonexistent.invalid"},
+                },
+            },
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        msg2 = (r2.json().get("error") or {}).get("message", "")
+        assert "scope 'web:fetch' required" not in msg2, (
+            f"scope gate should have ADMITTED the web:fetch-scoped grant: {msg2!r}"
+        )
+
     store.close()
     assert any(d.detail.get("required_scope") == "web:fetch" for d in denies), (
         "access_deny audit entry with required_scope=web:fetch not found"
