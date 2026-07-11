@@ -260,6 +260,13 @@ def main(argv: list[str] | None = None) -> int:
         policy_store = None
         policy_tool_extras: dict[str, Any] | None = None
         policy_scope_for: Callable[[str], str | None] | None = None
+        # Discover the handler registry ONCE and reuse it for both the derived
+        # scope-map banner and create_app, so the banner can't drift from what
+        # the app enforces if the serve path ever gains per-persona filtering
+        # (Prudence #41 review).
+        from limenal.registry import discover_handlers
+
+        reg = discover_handlers()
         if args.trust_registry:
             import tomllib
 
@@ -298,11 +305,9 @@ def main(argv: list[str] | None = None) -> int:
             # Print the derived handler->scope map so an operator can reconcile
             # grants on upgrade (scope enforcement is now real — a non-admin
             # grant must hold each listed scope, or admin:*). See limenal#26.
-            from limenal.registry import discover_handlers
-
             _derived = {
                 r.name: r.card.required_scope
-                for r in discover_handlers()
+                for r in reg
                 if r.card.required_scope
             }
             if _derived:
@@ -394,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             app = create_app(
                 jwt_verifier=verifier,
+                registry=reg,
                 credential_resolver=credential_resolver,
                 policy_store=policy_store,
                 policy_scope_for=policy_scope_for,
