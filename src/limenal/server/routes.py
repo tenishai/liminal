@@ -308,26 +308,27 @@ async def _handle_tools_call(
             ),
         )
 
-    # Sovereign scope gate: when a grant and a per-handler scope map are wired,
-    # the handler's required scope must be held. `policy_scope_for` maps a
-    # handler name to the scope it needs (None = no scope requirement); it is
-    # supplied per sovereign deployment so the scope vocabulary isn't hard-coded
-    # here. admin:* satisfies any scope (see ScopeGrant.has_scope).
+    # Sovereign scope gate: when a grant and a scope map are wired, the scope
+    # required by the specific TOOL must be held. `policy_scope_for` resolves
+    # the full tool name "<handler>.<tool>" — per-tool scope first, handler-level
+    # fallback (limenal#26 handler-level, #42 per-tool) — so a read/write split
+    # (memory recall vs commit) is enforceable, not collapsed. None = no scope
+    # requirement. admin:* satisfies any scope (see ScopeGrant.has_scope).
     if grant is not None:
         scope_for = getattr(request.app.state, "policy_scope_for", None)
-        required = scope_for(handler_name) if scope_for is not None else None
+        required = scope_for(params.name) if scope_for is not None else None
         if required and not grant.has_scope(required):
             store = getattr(request.app.state, "policy_store", None)
             if store is not None:
                 await store.record_access(
                     issuer=claims.issuer, persona=claims.identity,
                     agent=claims.agent_name, allowed=False,
-                    detail={"handler": handler_name, "required_scope": required},
+                    detail={"tool": params.name, "required_scope": required},
                 )
             return make_error(
                 id=rpc_req.id,
                 code=ERROR_UNAUTHORIZED,
-                message=f"scope {required!r} required for handler {handler_name!r}",
+                message=f"scope {required!r} required for tool {params.name!r}",
             )
 
     # Credential resolver lookup. If none was wired, the handler gets {}

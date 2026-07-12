@@ -55,10 +55,10 @@ CARD = {
     "required_scope": None,
     "description": "Scoped file I/O against operator-allowlisted paths",
     "tools": [
-        {"name": "read", "description": "Read a file's text content (UTF-8)."},
-        {"name": "write", "description": "Write text content to a file."},
-        {"name": "list", "description": "List entries in a directory."},
-        {"name": "exists", "description": "Test whether a path exists."},
+        {"name": "read", "description": "Read a file's text content (UTF-8).", "required_scope": "files:read"},
+        {"name": "write", "description": "Write text content to a file.", "required_scope": "files:write"},
+        {"name": "list", "description": "List entries in a directory.", "required_scope": "files:read"},
+        {"name": "exists", "description": "Test whether a path exists.", "required_scope": "files:read"},
     ],
     "activation": "always",
     "relevance_signals": [

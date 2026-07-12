@@ -78,10 +78,12 @@ CARD = {
         {
             "name": "recall",
             "description": "Search the knowledge corpus for entries relevant to a query.",
+            "required_scope": "mem:query",  # read
         },
         {
             "name": "commit",
             "description": "Persist a new knowledge entry (fact / decision / pattern / evaluation / procedure).",
+            "required_scope": "mem:append",  # write
         },
     ],
     "activation": "always",
