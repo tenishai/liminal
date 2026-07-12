@@ -141,6 +141,35 @@ def test_scope_for_from_registry_derives_from_cards() -> None:
     assert scope_for("nonexistent") is None
 
 
+def test_scope_for_from_registry_per_tool() -> None:
+    """#42: per-tool scopes resolve for the full "<handler>.<tool>" name, with
+    the handler-level scope as fallback and unscoped tools/handlers open."""
+    from limenal.handlers.files import FilesHandler
+    from limenal.handlers.memory import MemoryHandler
+    from limenal.handlers.web import WebHandler
+    from limenal.registry import Registry
+    from limenal.registry.discover import register_explicit
+    from limenal.server.app import scope_for_from_registry
+
+    reg = Registry()
+    register_explicit(reg, "memory", MemoryHandler())
+    register_explicit(reg, "files", FilesHandler())
+    register_explicit(reg, "web", WebHandler())
+
+    scope_for = scope_for_from_registry(reg)
+    # per-tool read/write split — the whole point of #42
+    assert scope_for("memory.recall") == "mem:query"
+    assert scope_for("memory.commit") == "mem:append"
+    assert scope_for("files.read") == "files:read"
+    assert scope_for("files.write") == "files:write"
+    assert scope_for("files.list") == "files:read"
+    assert scope_for("files.exists") == "files:read"
+    # handler-level fallback (web declares no per-tool scopes)
+    assert scope_for("web.fetch") == "web:fetch"
+    # memory/files handler-level is None → a bare handler is open
+    assert scope_for("memory") is None
+
+
 @pytest.mark.asyncio
 async def test_handler_derived_scope_gates_tools_call(tmp_path, signing_key, keyset) -> None:
     """Part 3 of limenal#26: a granted-but-under-scoped caller is refused at a

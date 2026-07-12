@@ -290,7 +290,10 @@ async def test_scope_gate_refuses_and_audits(tmp_path) -> None:
     register_explicit(reg, "scratchpad", ScratchpadHandler())
     app = create_app(
         jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store,
-        policy_scope_for=lambda h: "mem:append" if h == "scratchpad" else None,
+        # #42: the resolver now receives the full tool name "<handler>.<tool>".
+        policy_scope_for=lambda name: (
+            "mem:append" if name.split(".", 1)[0] == "scratchpad" else None
+        ),
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -304,6 +307,56 @@ async def test_scope_gate_refuses_and_audits(tmp_path) -> None:
         denies = [r for r in await store.audit(limit=20) if r.action == "access_deny"]
     store.close()
     assert any(d.detail.get("required_scope") == "mem:append" for d in denies)
+
+
+@pytest.mark.asyncio
+async def test_per_tool_scope_split_query_vs_append(tmp_path) -> None:
+    """#42 CORE PROOF: a grant of {mem:query} passes the scope gate for
+    memory.recall (read) but is DENIED memory.commit (write, needs mem:append)
+    — the read/write split enforced per TOOL, with the scope map derived from
+    the memory card's per-tool required_scope (no policy_scope_for injected).
+    """
+    from limenal.handlers.memory import MemoryHandler
+
+    kp, ks = _key(), _key()
+    store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
+    reg = Registry()
+    register_explicit(reg, "memory", MemoryHandler())
+    app = create_app(jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store)
+
+    # Derived per-tool scopes (no injection).
+    assert app.state.policy_scope_for("memory.recall") == "mem:query"
+    assert app.state.policy_scope_for("memory.commit") == "mem:append"
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Grant mem:query only; both memory tools allowed at the handler level.
+        await store.grant(
+            "shaz-cabal", "rook", scopes={"mem:query"}, allowed_handlers={"memory"}
+        )
+        tok = _mint(ks, iss="shaz-cabal")
+
+        # commit needs mem:append → REFUSED at the scope gate (never dispatches).
+        err = (
+            await _rpc(client, tok, "tools/call", {"name": "memory.commit", "arguments": {}})
+        ).json()["error"]
+        assert "scope 'mem:append' required for tool 'memory.commit'" in err["message"]
+
+        # recall needs mem:query (held) → the scope gate ADMITS it; any error is
+        # downstream, NOT a scope refusal.
+        recall = (
+            await _rpc(client, tok, "tools/call", {"name": "memory.recall", "arguments": {"query": "x"}})
+        ).json()
+        recall_msg = (recall.get("error") or {}).get("message", "")
+        assert "required for tool" not in recall_msg, recall_msg
+
+        denies = [r for r in await store.audit(limit=20) if r.action == "access_deny"]
+    store.close()
+    assert any(
+        d.detail.get("tool") == "memory.commit"
+        and d.detail.get("required_scope") == "mem:append"
+        for d in denies
+    )
 
 
 @pytest.mark.asyncio

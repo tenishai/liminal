@@ -49,22 +49,32 @@ def _auth_disabled_from_env() -> bool:
 
 
 def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
-    """Derive the handler -> required-scope map from the registered capability
-    cards (limenal#26).
+    """Derive the required-scope resolver from the registered capability cards
+    (limenal#26 handler-level, limenal#42 per-tool).
 
-    Each handler declares its own ``required_scope`` on its CapabilityCard;
-    ``None`` means no scope gate. Deriving the map from the cards — rather than
-    a hand-authored ``[scope_map]`` — keeps the sovereign scope vocabulary from
-    drifting away from the actual handler surface.
+    Each card declares a handler-level ``required_scope`` and, per tool, an
+    optional ``required_scope``. The map is keyed by both ``<handler>`` and
+    ``<handler>.<tool>``; the resolver, given a full tool name, prefers the
+    per-tool scope and falls back to the handler-level one (``None`` = open at
+    both levels). Deriving from the cards keeps the sovereign scope vocabulary
+    from drifting away from the actual handler/tool surface.
     """
-    scope_map: dict[str, str] = {
-        record.name: record.card.required_scope
-        for record in reg
-        if record.card.required_scope
-    }
+    scope_map: dict[str, str] = {}
+    for record in reg:
+        card = record.card
+        if card.required_scope:
+            scope_map[record.name] = card.required_scope
+        for tool in card.tools:
+            tool_scope = getattr(tool, "required_scope", None)
+            if tool_scope:
+                scope_map[f"{record.name}.{tool.name}"] = tool_scope
 
-    def _scope_for(handler: str, _sm: dict[str, str] = scope_map) -> str | None:
-        return _sm.get(handler)
+    def _scope_for(name: str, _sm: dict[str, str] = scope_map) -> str | None:
+        # `name` is a full tool name "<handler>.<tool>" (the tools/call path)
+        # or a bare handler. Per-tool scope wins; else the handler-level scope.
+        if name in _sm:
+            return _sm[name]
+        return _sm.get(name.split(".", 1)[0])
 
     return _scope_for
 

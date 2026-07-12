@@ -30,6 +30,17 @@ class _Open(BaseModel):
 class _ToolEntry(_Open):
     name: str
     description: str
+    # Per-tool required scope (limenal#42). Enforced at tools/call for the
+    # specific tool "<handler>.<name>", taking precedence over the handler-level
+    # required_scope. Lets a read/write split (memory recall vs commit, files
+    # read vs write) be scope-gated without collapsing to one privilege. None =
+    # fall back to the handler-level scope (or open if that's None too).
+    #
+    # FOOTGUN: per-tool wins even when WEAKER than the handler-level scope — a
+    # per-tool value can silently DOWNGRADE a tool below its handler's
+    # protection (there is no "max of the two"). Use this to REFINE (narrow) a
+    # handler scope, never to widen it.
+    required_scope: str | None = None
 
 
 class CapabilityCard(_Open):
