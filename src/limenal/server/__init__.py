@@ -9,7 +9,7 @@ KeySet (tests) or a remote JWKS URL (production, e.g. Cabal Core).
 """
 
 from limenal.server.admin import build_admin_router
-from limenal.server.app import create_app
+from limenal.server.app import ConfigError, create_app
 from limenal.server.auth import (
     AuthError,
     IssuerConfig,
@@ -47,6 +47,7 @@ __all__ = [
     "AuditRow",
     "AuthError",
     "CabalCoreCredentialResolver",
+    "ConfigError",
     "CredentialResolver",
     "GrantRow",
     "InitializeParams",

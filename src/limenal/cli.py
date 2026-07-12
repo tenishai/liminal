@@ -231,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
 
         from limenal.server import (
             CabalCoreCredentialResolver,
+            ConfigError,
             IssuerConfig,
             JWTVerifier,
             SqlitePolicyStore,
@@ -408,6 +409,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         except TargetConfigError as exc:
             print(f"error: --targets: {exc}", file=sys.stderr)
+            return 2
+        except ConfigError as exc:
+            # Build-time operator-config guards in create_app (e.g. AUTH_DISABLED
+            # alongside a verifier) — a clean exit-2 diagnostic, not a traceback
+            # (limenal#31).
+            print(f"error: {exc}", file=sys.stderr)
             return 2
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
