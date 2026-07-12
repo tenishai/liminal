@@ -48,6 +48,16 @@ def _auth_disabled_from_env() -> bool:
     return os.environ.get(_AUTH_DISABLED_ENV, "").lower() in _AUTH_DISABLED_TRUTHY
 
 
+class ConfigError(RuntimeError):
+    """A build-time operator-configuration mistake raised by ``create_app``.
+
+    Subclasses ``RuntimeError`` for back-compat with any existing ``except
+    RuntimeError`` — but having a distinct type lets ``cli.main()`` catch it at
+    the boundary and render ``error: <cause>`` with exit 2, honouring the
+    "config errors never surface as a traceback" contract (limenal#31).
+    """
+
+
 def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
     """Derive the required-scope resolver from the registered capability cards
     (limenal#26 handler-level, limenal#42 per-tool).
@@ -135,7 +145,7 @@ def create_app(
 
     auth_disabled = _auth_disabled_from_env()
     if auth_disabled and jwt_verifier is not None:
-        raise RuntimeError(
+        raise ConfigError(
             f"limenal misconfiguration: {_AUTH_DISABLED_ENV}=1 is set but a "
             "JWT verifier was passed to create_app(). These are mutually "
             "exclusive — pick one. Set the env var only for trusted-network "
@@ -147,7 +157,7 @@ def create_app(
     # federated cabal self-grant scope via its own scope/tool_extras claims.
     # A PolicyStore (server-side authorization) is required alongside it.
     if isinstance(jwt_verifier, MultiIssuerJWKSVerifier) and policy_store is None:
-        raise RuntimeError(
+        raise ConfigError(
             "limenal misconfiguration: a MultiIssuerJWKSVerifier requires a "
             "policy_store. Without server-side authorization, a federated cabal "
             "could self-grant scope through its own token claims. Wire a "
