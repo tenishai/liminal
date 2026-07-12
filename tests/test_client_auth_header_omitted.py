@@ -4,10 +4,12 @@ deployment, ``LIMENAL_AUTH_DISABLED=1``), instead of emitting ``Bearer `` — an
 empty value httpx rejects as an illegal header before the request leaves the
 client.
 
-``httpx.ASGITransport`` (used for in-process tests elsewhere) does NOT enforce
-header legality, so the bug hid behind green in-process tests while real-network
-calls failed. These use ``httpx.MockTransport`` to capture the exact headers the
-client puts on each request and assert on the header's presence/absence.
+The original bug hid behind green in-process tests because ``httpx.ASGITransport``
+does NOT enforce header legality (the real-network rejection lives in the h11
+layer, which both ASGITransport and MockTransport bypass). So these tests do NOT
+rely on any transport rejecting the header — they use ``httpx.MockTransport``
+purely to CAPTURE the exact headers the client sets on each request and assert
+on their presence/absence directly.
 """
 
 from __future__ import annotations
@@ -72,3 +74,13 @@ def test_sync_client_omits_auth_header_when_token_empty() -> None:
 
     assert len(seen) == 2
     assert all("authorization" not in h for h in seen)
+
+
+def test_sync_client_sends_auth_header_when_token_present() -> None:
+    seen, handler = _capture()
+    hc = httpx.Client(transport=httpx.MockTransport(handler))
+    client = MCPClient("http://limenal", token_provider=lambda: "tok-123", http_client=hc)
+    client._rpc("tools/list", {}, auth=True)
+    hc.close()
+
+    assert seen[0]["authorization"] == "Bearer tok-123"
