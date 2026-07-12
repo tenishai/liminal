@@ -73,6 +73,20 @@ class ToolCallOutcome:
         return "".join(out)
 
 
+def _auth_header(token: str) -> dict[str, str]:
+    """A ``{"Authorization": "Bearer <token>"}`` header — OMITTED when the token
+    is falsy (limenal#32).
+
+    A no-auth deployment (``LIMENAL_AUTH_DISABLED=1``) naturally passes an empty
+    token. Emitting ``Authorization: Bearer `` (trailing space, empty value)
+    makes httpx raise ``Illegal header value`` before the request leaves the
+    client — and ``httpx.ASGITransport`` does NOT enforce header legality, so
+    in-process tests pass while real-network calls fail. Omitting the header
+    keeps no-auth mode symmetric on both ends.
+    """
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 # ---- Async client ---------------------------------------------------------
 
 
@@ -209,7 +223,7 @@ class AsyncMCPClient:
         }
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth:
-            headers["Authorization"] = f"Bearer {self._token()}"
+            headers.update(_auth_header(self._token()))
         # Per-call headers win over the base set (e.g. an override Authorization
         # carrying a per-persona service token). Applied last, stored nowhere.
         if extra_headers:
@@ -238,10 +252,7 @@ class AsyncMCPClient:
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """One-way notify; no id field, no response body expected."""
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._token()}",
-        }
+        headers = {"Content-Type": "application/json", **_auth_header(self._token())}
         try:
             await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -353,7 +364,7 @@ class MCPClient:
         }
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth:
-            headers["Authorization"] = f"Bearer {self._token()}"
+            headers.update(_auth_header(self._token()))
         try:
             resp = self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -377,10 +388,7 @@ class MCPClient:
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._token()}",
-        }
+        headers = {"Content-Type": "application/json", **_auth_header(self._token())}
         try:
             self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
