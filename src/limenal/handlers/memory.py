@@ -32,6 +32,7 @@ Tools:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -345,5 +346,9 @@ def get_handler() -> Handler:
     """
     global _SINGLETON
     if _SINGLETON is None:
-        _SINGLETON = MemoryHandler()
+        db_env = os.environ.get("LIMENAL_MEMORY_DB")
+        config = (
+            MemoryConfig(db_path=Path(db_env).expanduser()) if db_env else MemoryConfig()
+        )
+        _SINGLETON = MemoryHandler(default_config=config)
     return _SINGLETON
