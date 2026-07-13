@@ -340,9 +340,14 @@ _SINGLETON: MemoryHandler | None = None
 def get_handler() -> Handler:
     """Entry-point factory.
 
-    Ships with NO default db_path — the operator wires this at
-    construction time (or per-persona via ctx.extra). A handler with
-    no DB path refuses every dispatch with a structured error.
+    If ``LIMENAL_MEMORY_DB`` is set, it seeds ``default_config.db_path`` so a
+    served handler (``limenal serve``) has a fixed fallback corpus without a
+    per-call override. A per-persona ``ctx.extra['memory.db_path']`` still
+    takes precedence (within the allowed-dir ceiling). With neither set, the
+    handler has no DB path and refuses every dispatch with a structured error.
+
+    Note: the env var is read once, when the process-wide singleton is first
+    built.
     """
     global _SINGLETON
     if _SINGLETON is None:

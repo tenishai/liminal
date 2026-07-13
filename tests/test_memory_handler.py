@@ -266,3 +266,28 @@ def test_capability_card_requires_no_credentials() -> None:
     card = get_handler().capability_card()
     assert card["credential_keys"] == []
     assert card["labels"]["backend"] == "techne"
+
+
+def test_get_handler_reads_env_db_path(monkeypatch, tmp_path) -> None:
+    """LIMENAL_MEMORY_DB seeds default_config.db_path; unset/empty → None.
+
+    The singleton is read once per process, so reset it before each call so the
+    env var is actually re-consulted (the ordering trap Prudence flagged).
+    """
+    import limenal.handlers.memory as mem
+
+    # env set → path populated (expanduser applied)
+    monkeypatch.setattr(mem, "_SINGLETON", None)
+    db = tmp_path / "techne.db"
+    monkeypatch.setenv("LIMENAL_MEMORY_DB", str(db))
+    assert mem.get_handler().default_config.db_path == db
+
+    # empty string is falsy → no db_path
+    monkeypatch.setattr(mem, "_SINGLETON", None)
+    monkeypatch.setenv("LIMENAL_MEMORY_DB", "")
+    assert mem.get_handler().default_config.db_path is None
+
+    # unset → None
+    monkeypatch.setattr(mem, "_SINGLETON", None)
+    monkeypatch.delenv("LIMENAL_MEMORY_DB", raising=False)
+    assert mem.get_handler().default_config.db_path is None
