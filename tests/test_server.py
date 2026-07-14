@@ -365,3 +365,52 @@ async def test_credential_resolver_invoked_per_call(keyset, mint_token, registry
         )
 
     assert calls == [("rook", "scratchpad")]
+
+
+# ---- JSON-RPC envelope invariants (result XOR error) ----------------------
+# Regression guard for the strict-client fix (PR #47): the Claude Agent SDK's
+# Zod validator — used by Claude Code and the claude-agent-acp adapter —
+# rejects an envelope carrying BOTH result and error, and rejects an optional
+# field sent as null. These assert *absence* on the wire. Note `body.get(
+# "error") is None` is NOT enough: it also passes for a present `error: null`,
+# which is exactly the broken pre-fix state.
+
+
+@pytest.mark.asyncio
+async def test_success_envelope_omits_error_key(client) -> None:
+    r = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+        },
+    )
+    body = r.json()
+    assert "result" in body
+    assert "error" not in body  # JSON-RPC 2.0 §5: result XOR error, never null
+
+
+@pytest.mark.asyncio
+async def test_error_envelope_omits_result_key(client) -> None:
+    # tools/list without auth → an error envelope
+    r = await client.post(
+        "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    )
+    body = r.json()
+    assert "error" in body
+    assert "result" not in body  # not merely result: null
+
+
+@pytest.mark.asyncio
+async def test_tools_list_omits_null_next_cursor(client, mint_token) -> None:
+    token = mint_token()
+    r = await client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = r.json()
+    # MCP types nextCursor as an optional string — omit when absent, never null
+    assert "nextCursor" not in body["result"]
