@@ -41,8 +41,9 @@ compliant, async-clean, SSRF-hardened, CI active on push/PR.
   `(persona, handler)` at dispatch time. No `.env` files on disk.
 - **Handler pooling** — `rook-primus` and `rook-secundus` share the same `slack`
   handler runtime and rate-limit budget.
-- **Same handler interface in solo and scale modes** — Python callables in
-  solo, subprocess JSON-RPC in scale (coming), identical `dispatch(name, payload, ctx)`.
+- **Same handler interface everywhere** — in-process Python callables today, with a
+  federation path (`limenal serve --targets`) for fanning out to upstream MCP servers;
+  identical `dispatch(name, payload, ctx)`.
 - **Capability cards** declare what each handler covers, what credentials it
   expects, and when it's relevant.
 
@@ -68,6 +69,33 @@ pip install -r requirements-sources.txt ".[memory]"
 ```
 
 Dev/CI keep the editable sibling checkout above (`pip install -e ../techne`).
+
+## Run the gateway (`limenal serve`)
+
+Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal
+personas) connects to. Handlers are **auto-discovered** from installed packages — install
+`cabal` alongside limenal and its `patterns` / `documents` / `code` / `archivist`
+handlers register automatically next to limenal's own five.
+
+```bash
+# local / trusted-network — single operator on localhost, auth off:
+LIMENAL_AUTH_DISABLED=1 limenal serve --host 127.0.0.1 --port 9100
+
+# production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
+limenal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
+```
+
+`limenal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
+`POST /mcp` (`initialize` / `tools/list` / `tools/call`). Point a client at it — e.g.
+Claude Code:
+
+```bash
+claude mcp add --transport http limenal http://127.0.0.1:9100/mcp
+```
+
+To have credentialed handlers fetch their secrets from Cabal at dispatch time, add
+`--cabal-url http://cabal-core:7400 --cabal-token-env LIMENAL_CABAL_TOKEN`. Federate
+extra MCP upstreams with `--targets targets.toml`.
 
 ## Repository layout
 
@@ -112,7 +140,7 @@ greet = "mypackage.greet:get_handler"
 from limenal.client import AsyncMCPClient
 
 async with AsyncMCPClient(
-    base_url="http://limenal:8000",
+    base_url="http://127.0.0.1:9100",   # wherever `limenal serve` is listening
     token_provider=lambda: my_token(),
 ) as client:
     tools = await client.list_tools()
