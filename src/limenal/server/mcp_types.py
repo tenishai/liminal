@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 # ---- JSON-RPC envelope ------------------------------------------------------
 
@@ -59,6 +59,19 @@ class JSONRPCResponse(BaseModel):
     error: JSONRPCError | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_serializer
+    def _ser(self) -> dict[str, Any]:
+        # JSON-RPC 2.0 §5: a response MUST contain result XOR error, never
+        # both. Pydantic's default dump emits both fields (with `error: null`
+        # on success), which strict clients — e.g. the Claude Agent SDK's Zod
+        # schema — reject as malformed. Emit exactly one.
+        out: dict[str, Any] = {"jsonrpc": self.jsonrpc, "id": self.id}
+        if self.error is not None:
+            out["error"] = self.error.model_dump()
+        else:
+            out["result"] = self.result
+        return out
 
 
 def make_error(

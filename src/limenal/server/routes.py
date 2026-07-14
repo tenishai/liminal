@@ -229,7 +229,10 @@ async def _handle_tools_list(
         }
         out.append(adapted)
     result = ToolsListResult(tools=out)
-    return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))
+    # MCP spec: `nextCursor` is optional — OMIT it when there's no next page
+    # rather than sending null. Strict clients (Claude Agent SDK Zod schema)
+    # type it as `string | undefined` and reject an explicit null.
+    return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True, exclude_none=True))
 
 
 def _allowed_handlers_for(
