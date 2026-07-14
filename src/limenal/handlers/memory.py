@@ -347,7 +347,10 @@ def get_handler() -> Handler:
     handler has no DB path and refuses every dispatch with a structured error.
 
     Note: the env var is read once, when the process-wide singleton is first
-    built.
+    built. Use an absolute or ``~``-rooted path — unlike a ``ctx.extra``
+    override (which is ``resolve()``'d), the env-seeded path is only
+    ``expanduser()``'d, so a relative value is interpreted against the
+    process CWD lazily at dispatch time rather than pinned at startup.
     """
     global _SINGLETON
     if _SINGLETON is None:
