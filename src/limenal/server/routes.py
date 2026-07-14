@@ -39,6 +39,7 @@ from limenal.server.mcp_types import (
     make_success,
 )
 from limenal.server.policy import PolicyStore, ScopeGrant
+from limenal.server.secret_guard import scan_tool_call
 from limenal.wire import to_spec_content as _to_spec_content
 
 log = structlog.get_logger(__name__)
@@ -332,6 +333,34 @@ async def _handle_tools_call(
                 id=rpc_req.id,
                 code=ERROR_UNAUTHORIZED,
                 message=f"scope {required!r} required for tool {params.name!r}",
+            )
+
+    # Fail-closed pre-persist secret guard (limenal#50): scan the content of
+    # write-path tools before dispatch so a real key can't be persisted into the
+    # corpus / a file / a notification. Placeholder forms are allowlisted in the
+    # scanner. Runs after authz — nothing to scan on a call we'd already deny.
+    if getattr(request.app.state, "secret_guard_enabled", True):
+        try:
+            secret_hits = scan_tool_call(params.name, params.arguments)
+        except Exception as exc:  # noqa: BLE001 — fail closed on scanner error
+            log.warning("secret_guard.scan_error", tool=params.name, error=str(exc))
+            return make_error(
+                id=rpc_req.id,
+                code=ERROR_INVALID_PARAMS,
+                message="secret guard scan failed; refusing to persist (fail-closed)",
+            )
+        if secret_hits:
+            log.warning(
+                "secret_guard.blocked", tool=params.name, hit_types=secret_hits
+            )
+            return make_error(
+                id=rpc_req.id,
+                code=ERROR_INVALID_PARAMS,
+                message=(
+                    f"refused: {params.name!r} content matched secret pattern(s) "
+                    f"{secret_hits} — remove the secret or use a placeholder "
+                    f"(REDACTED / ${{VAR}}). Set LIMENAL_SECRET_GUARD=0 to disable."
+                ),
             )
 
     # Credential resolver lookup. If none was wired, the handler gets {}
