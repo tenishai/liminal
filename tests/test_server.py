@@ -414,3 +414,112 @@ async def test_tools_list_omits_null_next_cursor(client, mint_token) -> None:
     body = r.json()
     # MCP types nextCursor as an optional string — omit when absent, never null
     assert "nextCursor" not in body["result"]
+
+
+# ---- secret guard (limenal#50) --------------------------------------------
+# The guard runs in _handle_tools_call BEFORE dispatch, so the block path fires
+# even though the memory handler isn't registered in this fixture. The allow
+# path therefore falls through to unknown-tool (-32002), which is exactly the
+# signal that the guard did NOT block it.
+
+
+@pytest.mark.asyncio
+async def test_secret_guard_blocks_write_with_secret(client, mint_token) -> None:
+    token = mint_token()
+    r = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.commit",
+                "arguments": {"content": "AKIAIOSFODNN7EXAMPLE"},
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = r.json()
+    assert body["error"]["code"] == -32602
+    assert "secret" in body["error"]["message"].lower()
+    assert "aws_access_key_id" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_secret_guard_allows_placeholder_content(client, mint_token) -> None:
+    token = mint_token()
+    r = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.commit",
+                "arguments": {"content": "api_key = ${OPENAI_API_KEY}"},
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = r.json()
+    # not blocked → reached dispatch → unknown tool (handler unregistered here)
+    assert body["error"]["code"] == -32002
+    assert "secret" not in body["error"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_secret_guard_ignores_unguarded_tool(client, mint_token) -> None:
+    token = mint_token(persona="rook", sub="rook-primus")
+    r = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "scratchpad.set",
+                "arguments": {"key": "k", "value": "AKIAIOSFODNN7EXAMPLE"},
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = r.json()
+    assert body.get("error") is None, body
+    assert body["result"]["isError"] is False
+
+
+@pytest.mark.asyncio
+async def test_secret_guard_off_switch_lets_secret_through(
+    monkeypatch, keyset, registry, mint_token
+) -> None:
+    """LIMENAL_SECRET_GUARD=0 disables the guard, so the off-switch itself is
+    exercised: a real key is no longer blocked (it falls through to dispatch →
+    unknown-tool here, i.e. NOT the -32602 secret refusal)."""
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from limenal.server import StaticKeySetVerifier, create_app
+
+    monkeypatch.setenv("LIMENAL_SECRET_GUARD", "0")
+    app: FastAPI = create_app(
+        jwt_verifier=StaticKeySetVerifier(key_set=keyset), registry=registry
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = mint_token()
+        r = await c.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory.commit",
+                    "arguments": {"content": "AKIAIOSFODNN7EXAMPLE"},
+                },
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    body = r.json()
+    assert body["error"]["code"] == -32002  # reached dispatch, not guard-blocked
+    assert "secret" not in body["error"]["message"].lower()

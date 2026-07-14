@@ -48,6 +48,18 @@ def _auth_disabled_from_env() -> bool:
     return os.environ.get(_AUTH_DISABLED_ENV, "").lower() in _AUTH_DISABLED_TRUTHY
 
 
+_SECRET_GUARD_ENV = "LIMENAL_SECRET_GUARD"
+_SECRET_GUARD_FALSEY = {"0", "false", "no", "off"}
+
+
+def _secret_guard_enabled_from_env() -> bool:
+    """Fail-closed secret guard is ON by default (limenal#50).
+
+    Disable per-deployment with a falsey ``LIMENAL_SECRET_GUARD`` (0/false/no/off).
+    """
+    return os.environ.get(_SECRET_GUARD_ENV, "").strip().lower() not in _SECRET_GUARD_FALSEY
+
+
 class ConfigError(RuntimeError):
     """A build-time operator-configuration mistake raised by ``create_app``.
 
@@ -199,6 +211,7 @@ def create_app(
     app.state.credential_resolver = credential_resolver
     app.state.server_name = server_name
     app.state.auth_disabled = auth_disabled
+    app.state.secret_guard_enabled = _secret_guard_enabled_from_env()
     app.state.policy_store = policy_store
     # Scope map is handler-derived (limenal#26): each CapabilityCard declares
     # its required_scope, and the server builds the handler->scope map from the
