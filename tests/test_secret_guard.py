@@ -18,7 +18,11 @@ from limenal.server.secret_guard import scan_for_secrets, scan_tool_call
         ("token ghp_" + "A" * 36, ["github_token"]),
         ("AKIAIOSFODNN7EXAMPLE", ["aws_access_key_id"]),
         ("xoxb-123456789012-abcdefABCDEF", ["slack_token"]),
-        ("key sk-" + "a" * 24, ["openai_key"]),
+        ("key sk-" + "a" * 24, ["sk_api_key"]),
+        # hyphenated modern keys (OpenAI project / Anthropic) — must not split
+        ("naked sk-ant-api03-" + "a" * 24, ["sk_api_key"]),
+        ("sk-proj-" + "a" * 24, ["sk_api_key"]),
+        ("ghr_" + "D" * 36, ["github_token"]),  # refresh token
         ("api_key = 9f8s7d6f5g4h3j2k1l0z", ["assigned_secret"]),
         ('password: "hunter2hunter2hunter2"', ["assigned_secret"]),
     ],
@@ -73,6 +77,13 @@ def test_notify_send_scans_the_message_field() -> None:
     assert scan_tool_call("notify.send", {"message": "ghp_" + "C" * 36}) == [
         "github_token"
     ]
+
+
+def test_notify_send_also_scans_the_title_sink() -> None:
+    # title rides the outbound webhook body alongside message — guard it too
+    assert scan_tool_call(
+        "notify.send", {"title": "AKIAIOSFODNN7EXAMPLE", "message": "hi"}
+    ) == ["aws_access_key_id"]
 
 
 def test_unguarded_tool_is_never_scanned() -> None:

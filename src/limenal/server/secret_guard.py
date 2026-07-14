@@ -26,7 +26,7 @@ import re
 GUARDED_FIELDS: dict[str, tuple[str, ...]] = {
     "files.write": ("content",),
     "memory.commit": ("content",),
-    "notify.send": ("message",),
+    "notify.send": ("message", "title"),
 }
 
 # (name, pattern). For patterns with a capture group, group(1) is the *value*
@@ -35,10 +35,13 @@ GUARDED_FIELDS: dict[str, tuple[str, ...]] = {
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pem_private_key", re.compile(
         r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----")),
-    ("github_token", re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b")),
+    ("github_token", re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{36,}\b")),
     ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    # sk- covers OpenAI (sk-, sk-proj-) and Anthropic (sk-ant-api03-…). Allow
+    # internal -/_ so a hyphenated project/vendor key isn't split at the hyphen
+    # (a naked `sk-ant-…` would otherwise slip past a contiguous-alnum shape).
+    ("sk_api_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     # Generic `key = value` assignment of a long, unbroken token. group(1) is
     # the value, which is placeholder-checked below.
     ("assigned_secret", re.compile(
@@ -51,7 +54,8 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # your-token, example-key, placeholder..., ellipsis.
 _PLACEHOLDER = re.compile(
     r"^(?:REDACTED|<[^>]+>|\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*"
-    r"|x{6,}|\*{4,}|changeme|your[-_].*|example[-_].*|placeholder.*|\.\.\.)$",
+    r"|x{6,}|\*{4,}|changeme|your[-_][a-z]+(?:[-_][a-z]+)*"
+    r"|example[-_][a-z]+(?:[-_][a-z]+)*|placeholder[a-z_-]*|\.\.\.)$",
     re.IGNORECASE,
 )
 
