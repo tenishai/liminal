@@ -81,8 +81,8 @@ handlers register automatically next to limenal's own five.
 # local / trusted-network — single operator on localhost, auth off:
 LIMENAL_AUTH_DISABLED=1 limenal serve --host 127.0.0.1 --port 9100
 
-# production — verify caller JWTs against Cabal Core's JWKS:
-limenal serve --port 9100 --jwks-url https://cabal-core/.well-known/jwks.json --issuer cabal-core
+# production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
+limenal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
 ```
 
 `limenal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
