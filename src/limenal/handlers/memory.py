@@ -32,6 +32,7 @@ Tools:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -339,11 +340,23 @@ _SINGLETON: MemoryHandler | None = None
 def get_handler() -> Handler:
     """Entry-point factory.
 
-    Ships with NO default db_path — the operator wires this at
-    construction time (or per-persona via ctx.extra). A handler with
-    no DB path refuses every dispatch with a structured error.
+    If ``LIMENAL_MEMORY_DB`` is set, it seeds ``default_config.db_path`` so a
+    served handler (``limenal serve``) has a fixed fallback corpus without a
+    per-call override. A per-persona ``ctx.extra['memory.db_path']`` still
+    takes precedence (within the allowed-dir ceiling). With neither set, the
+    handler has no DB path and refuses every dispatch with a structured error.
+
+    Note: the env var is read once, when the process-wide singleton is first
+    built. Use an absolute or ``~``-rooted path — unlike a ``ctx.extra``
+    override (which is ``resolve()``'d), the env-seeded path is only
+    ``expanduser()``'d, so a relative value is interpreted against the
+    process CWD lazily at dispatch time rather than pinned at startup.
     """
     global _SINGLETON
     if _SINGLETON is None:
-        _SINGLETON = MemoryHandler()
+        db_env = os.environ.get("LIMENAL_MEMORY_DB")
+        config = (
+            MemoryConfig(db_path=Path(db_env).expanduser()) if db_env else MemoryConfig()
+        )
+        _SINGLETON = MemoryHandler(default_config=config)
     return _SINGLETON
