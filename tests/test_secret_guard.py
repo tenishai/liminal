@@ -18,10 +18,11 @@ from limenal.server.secret_guard import scan_for_secrets, scan_tool_call
         ("token ghp_" + "A" * 36, ["github_token"]),
         ("AKIAIOSFODNN7EXAMPLE", ["aws_access_key_id"]),
         ("xoxb-123456789012-abcdefABCDEF", ["slack_token"]),
-        ("key sk-" + "a" * 24, ["sk_api_key"]),
+        # sk- keys must contain a digit in the tail (limenal#52); real keys do.
+        ("key sk-" + "a" * 20 + "0042", ["sk_api_key"]),
         # hyphenated modern keys (OpenAI project / Anthropic) — must not split
         ("naked sk-ant-api03-" + "a" * 24, ["sk_api_key"]),
-        ("sk-proj-" + "a" * 24, ["sk_api_key"]),
+        ("sk-proj-" + "a" * 20 + "1234", ["sk_api_key"]),
         ("ghr_" + "D" * 36, ["github_token"]),  # refresh token
         ("api_key = 9f8s7d6f5g4h3j2k1l0z", ["assigned_secret"]),
         ('password: "hunter2hunter2hunter2"', ["assigned_secret"]),
@@ -34,6 +35,13 @@ def test_real_secret_shapes_are_flagged(text, expected) -> None:
 def test_multiple_distinct_hits_deduped_and_sorted() -> None:
     text = "AKIAIOSFODNN7EXAMPLE and ghp_" + "B" * 36
     assert scan_for_secrets(text) == ["aws_access_key_id", "github_token"]
+
+
+def test_kebab_case_slug_is_not_a_false_positive() -> None:
+    # limenal#52: a long digit-free kebab-case slug (e.g. a CSS class name in a
+    # files.write payload) must not trip the sk- guard as a fail-closed false
+    # positive. Real sk- keys always carry a digit; a prose/slug collision won't.
+    assert scan_for_secrets("class sk-skeleton-loader-component-wrapper-xl") == []
 
 
 # ---- placeholders and clean text are NOT flagged --------------------------

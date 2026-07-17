@@ -41,7 +41,11 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # sk- covers OpenAI (sk-, sk-proj-) and Anthropic (sk-ant-api03-…). Allow
     # internal -/_ so a hyphenated project/vendor key isn't split at the hyphen
     # (a naked `sk-ant-…` would otherwise slip past a contiguous-alnum shape).
-    ("sk_api_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+    # The (?=…[0-9]) lookahead requires at least one digit in the tail, which
+    # prunes long kebab-case slugs (e.g. a `sk-skeleton-loader-…` CSS class in a
+    # files.write payload) that would otherwise trip the guard as a fail-closed
+    # false positive (limenal#52). Real sk- keys always contain digits.
+    ("sk_api_key", re.compile(r"\bsk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}\b")),
     # Generic `key = value` assignment of a long, unbroken token. group(1) is
     # the value, which is placeholder-checked below.
     ("assigned_secret", re.compile(
