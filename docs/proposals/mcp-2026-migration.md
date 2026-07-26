@@ -22,7 +22,9 @@ The MCP `2026-07-28` spec goes **stateless**: it removes the `initialize`/`initi
 
 Both assume the handshake that is going away.
 
-This is **not urgent** — MCP is version-negotiated, so old↔old keeps working; the break is new-client↔old-server, widening over months as the ecosystem adopts. But it is load-bearing and worth designing deliberately.
+**limenal's current starting point:** it is pinned to `protocolVersion 2025-06-18` (`src/limenal/client/mcp.py:26`, `src/limenal/server/mcp_types.py:103`). The current *stable* spec is already **`2025-11-25`** — so limenal is **one stable revision behind today**, before the `2026-07-28` RC even lands.
+
+The "**not urgent**" claim is therefore *contingent, not automatic*: MCP is version-negotiated, so old↔old keeps working **only while new clients keep negotiating down to `2025-06-18`**. Once clients floor their negotiation at `2025-11-25` (and, later, `2026-07-28`), the break arrives independent of anything in this proposal. Two practical consequences: (a) there is a **nearer-term, smaller task** — bring limenal current to `2025-11-25` — that is worth doing regardless of the stateless port; (b) the stateless port itself remains a deliberate, multi-session effort, but the runway is shorter than "new spec ships Monday" suggests, because limenal is already behind.
 
 ## The decision: build a *dual-era bridge*, not just "go stateless"
 
@@ -64,7 +66,7 @@ Because many good upstream MCP servers are unmaintained and will never port, **a
 - Concrete guidance for a gateway bridging **more than two** upstream eras simultaneously (only the two-party matrix is shown).
 
 ## Rough sequencing / effort (Claude-time)
-1. **Read-and-confirm pass** — re-verify the spec at pick-up time; confirm the MRTR/session/subscription assumptions against limenal's real code. *(small)*
+1. **Read-and-confirm pass** — re-verify the spec at pick-up time; confirm the MRTR/session/subscription assumptions against limenal's real code. **Resolve the open question "is `server/discover` auth-exempt?" first** — it directly contradicts today's `initialize`/`ping` carve-out (`PUBLIC_METHODS`), so its answer gates the whole server-side auth retirement in step 2. Also decide whether to fold in the smaller "get current to `2025-11-25`" bump. *(small)*
 2. **Server-side stateless path** — `server/discover` + `_meta` handling + header validation, behind a legacy `initialize` fallback. *(moderate)*
 3. **Client-side dual-era probing.** *(moderate)*
 4. **Auth alignment** — RFC 9728/8707/9207, co-designed with cabal#109. *(large — dominates)*
