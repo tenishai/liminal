@@ -1,6 +1,6 @@
 """#15 — declarative, versioned config-driven targets.
 
-Tests for ``--targets`` TOML loading on the ``limenal serve`` subcommand.
+Tests for ``--targets`` TOML loading on the ``liminal serve`` subcommand.
 
 Strategy: most tests exercise ``_load_targets_file`` directly (it is the
 unit-testable seam that all error paths flow through). One integration test
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.cli import SUPPORTED_CONFIG_VERSION, _load_targets_file
-from limenal.target.config import TargetConfigError, TargetSpec
+from liminal.cli import SUPPORTED_CONFIG_VERSION, _load_targets_file
+from liminal.target.config import TargetConfigError, TargetSpec
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -199,7 +199,7 @@ def test_targets_reach_dispatcher(tmp_path, keyset, registry) -> None:
     We assert the dispatcher knows the target by name — not a live call
     (ASGITransport tests don't run lifespan, so http targets won't connect).
     """
-    from limenal.server import StaticKeySetVerifier, create_app
+    from liminal.server import StaticKeySetVerifier, create_app
 
     specs = _load_targets_file(
         _write_targets(
@@ -234,7 +234,7 @@ def test_main_returns_2_for_unsupported_config_version(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
 
-    from limenal.cli import main
+    from liminal.cli import main
 
     rc = main(["serve", "--targets", path])
     assert rc == 2, f"expected exit code 2, got {rc}"
@@ -251,7 +251,7 @@ def test_main_returns_2_for_malformed_target(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
 
-    from limenal.cli import main
+    from liminal.cli import main
 
     rc = main(["serve", "--targets", path])
     assert rc == 2, f"expected exit code 2, got {rc}"
@@ -297,7 +297,7 @@ def test_main_returns_2_for_name_collision(tmp_path, monkeypatch) -> None:
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
-    from limenal.cli import main
+    from liminal.cli import main
 
     # "memory" is a built-in entry-point handler → name collision.
     path = _write_targets(
@@ -324,7 +324,7 @@ def test_main_returns_2_for_stdio_target(tmp_path, monkeypatch) -> None:
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
-    from limenal.cli import main
+    from liminal.cli import main
 
     path = _write_targets(
         tmp_path,

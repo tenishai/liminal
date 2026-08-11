@@ -37,7 +37,7 @@ async def test_initialize_handshake_no_auth_required(client) -> None:
     assert body["jsonrpc"] == "2.0"
     assert body["id"] == 1
     assert body.get("error") is None
-    assert body["result"]["serverInfo"]["name"] == "limenal"
+    assert body["result"]["serverInfo"]["name"] == "liminal"
     assert body["result"]["protocolVersion"] == "2025-06-18"
     assert "tools" in body["result"]["capabilities"]
 
@@ -135,7 +135,7 @@ async def test_missing_persona_claim_rejected(client, signing_key) -> None:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "cabal_scope": ["dispatch"],
@@ -333,7 +333,7 @@ async def test_credential_resolver_invoked_per_call(keyset, mint_token, registry
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
 
-    from limenal.server import StaticKeySetVerifier, create_app
+    from liminal.server import StaticKeySetVerifier, create_app
 
     calls: list[tuple[str, str]] = []
 
@@ -416,7 +416,7 @@ async def test_tools_list_omits_null_next_cursor(client, mint_token) -> None:
     assert "nextCursor" not in body["result"]
 
 
-# ---- secret guard (limenal#50) --------------------------------------------
+# ---- secret guard (liminal#50) --------------------------------------------
 # The guard runs in _handle_tools_call BEFORE dispatch, so the block path fires
 # even though the memory handler isn't registered in this fixture. The allow
 # path therefore falls through to unknown-tool (-32002), which is exactly the
@@ -492,15 +492,15 @@ async def test_secret_guard_ignores_unguarded_tool(client, mint_token) -> None:
 async def test_secret_guard_off_switch_lets_secret_through(
     monkeypatch, keyset, registry, mint_token
 ) -> None:
-    """LIMENAL_SECRET_GUARD=0 disables the guard, so the off-switch itself is
+    """LIMINAL_SECRET_GUARD=0 disables the guard, so the off-switch itself is
     exercised: a real key is no longer blocked (it falls through to dispatch →
     unknown-tool here, i.e. NOT the -32602 secret refusal)."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
 
-    from limenal.server import StaticKeySetVerifier, create_app
+    from liminal.server import StaticKeySetVerifier, create_app
 
-    monkeypatch.setenv("LIMENAL_SECRET_GUARD", "0")
+    monkeypatch.setenv("LIMINAL_SECRET_GUARD", "0")
     app: FastAPI = create_app(
         jwt_verifier=StaticKeySetVerifier(key_set=keyset), registry=registry
     )

@@ -1,4 +1,4 @@
-"""SqlitePolicyStore unit tests — federation Part 2 (limenal#20)."""
+"""SqlitePolicyStore unit tests — federation Part 2 (liminal#20)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from limenal.server.policy import ParentImmutable, SqlitePolicyStore
+from liminal.server.policy import ParentImmutable, SqlitePolicyStore
 
 
 @pytest.fixture

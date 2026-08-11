@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from limenal.handlers.files import FilesConfig, FilesHandler
-from limenal.protocol import Context
+from liminal.handlers.files import FilesConfig, FilesHandler
+from liminal.protocol import Context
 
 
 def _ctx(extra: dict[str, Any] | None = None) -> Context:
@@ -339,7 +339,7 @@ async def test_per_persona_allowlist_via_ctx_extra(tmp_path) -> None:
 
 
 def test_handler_is_registered_in_entry_points() -> None:
-    from limenal.registry import discover_handlers
+    from liminal.registry import discover_handlers
 
     registry = discover_handlers()
     record = registry.get("files")
@@ -350,7 +350,7 @@ def test_handler_is_registered_in_entry_points() -> None:
 
 
 def test_capability_card_requires_no_credentials() -> None:
-    from limenal.handlers.files import get_handler
+    from liminal.handlers.files import get_handler
 
     card = get_handler().capability_card()
     assert card["credential_keys"] == []

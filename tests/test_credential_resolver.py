@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from limenal.server.credentials import (
+from liminal.server.credentials import (
     DEFAULT_CACHE_TTL_SECONDS,
     CabalCoreCredentialResolver,
 )
@@ -264,10 +264,10 @@ async def test_resolver_credentials_reach_handler(
 ) -> None:
     """Wire the resolver into create_app; verify the credentials it
     returns land in Context.credentials seen by the handler."""
-    from limenal.protocol import Context, ToolResult, ToolSpec
-    from limenal.registry import Registry
-    from limenal.registry.discover import register_explicit
-    from limenal.server import StaticKeySetVerifier, create_app
+    from liminal.protocol import Context, ToolResult, ToolSpec
+    from liminal.registry import Registry
+    from liminal.registry.discover import register_explicit
+    from liminal.server import StaticKeySetVerifier, create_app
 
     class _EchoCredsHandler:
         name = "echo-creds"

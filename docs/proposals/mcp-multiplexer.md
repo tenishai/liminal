@@ -13,7 +13,7 @@
 
 ## Goal
 
-Turn limenal from *in-process-handlers + a bolted-on `MCPProxyHandler`* into a **thin MCP multiplexer over typed targets**. A backend becomes a **named target with a transport** (`in_process` | `http` | `stdio`); in-process handlers become *one target kind* among others; federation is first-class, not an add-on. Target config is modeled on agentgateway's `McpTargetSpec` so limenal can *optionally* compose behind agentgateway later without a rewrite (the #5 "swappability insurance").
+Turn liminal from *in-process-handlers + a bolted-on `MCPProxyHandler`* into a **thin MCP multiplexer over typed targets**. A backend becomes a **named target with a transport** (`in_process` | `http` | `stdio`); in-process handlers become *one target kind* among others; federation is first-class, not an add-on. Target config is modeled on agentgateway's `McpTargetSpec` so liminal can *optionally* compose behind agentgateway later without a rewrite (the #5 "swappability insurance").
 
 ## Non-goals (deliberate scope boundaries)
 
@@ -70,7 +70,7 @@ Three implementations:
 
 `MCPProxyHandler` today mutates a **shared** client's token in place per call (`mcp_proxy/handler.py:105-123`) — a cross-persona credential-leak footgun (#25). `HttpTarget` replaces it:
 
-- **Per-call request headers, never shared mutable state.** Each dispatch builds fresh headers: forward the caller's identity as `x-limenal-persona: {ctx.identity}` + `x-limenal-issuer: {ctx.issuer}`, and the backend **self-resolves its own creds** from that identity (the #7 model). Existing `service-token` auth stays (resolve `ctx.credentials[key]` per call) but as a per-call header, not a swapped shared token.
+- **Per-call request headers, never shared mutable state.** Each dispatch builds fresh headers: forward the caller's identity as `x-liminal-persona: {ctx.identity}` + `x-liminal-issuer: {ctx.issuer}`, and the backend **self-resolves its own creds** from that identity (the #7 model). Existing `service-token` auth stays (resolve `ctx.credentials[key]` per call) but as a per-call header, not a swapped shared token.
 - **Hard constraint (verified in the agentgateway eval):** a **`stdio` target cannot carry per-request identity** — stdio children discard per-request headers. So `StdioTarget` is for **identity-agnostic** backends only. Config validation **rejects** (loud `ValueError`, No Silent Failures) a `stdio` target configured with `service-token`/identity-forwarding.
 
 ## Fold-in #27 — correlation-id + per-target protocol version

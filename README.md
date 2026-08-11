@@ -1,11 +1,11 @@
-# limenal
+# liminal
 
 MCP gateway — one MCP connection per agent, many backend handlers behind it.
 
-From Latin *limen*, "threshold." limenal is the boundary an agent crosses to
+From Latin *limen*, "threshold." liminal is the boundary an agent crosses to
 reach its tools: memory, web fetch, file I/O, notifications, and persona-specific
 backends. Instead of every agent running N MCP server processes, agents connect
-to one limenal and limenal dispatches.
+to one liminal and liminal dispatches.
 
 ## Status
 
@@ -32,17 +32,17 @@ compliant, async-clean, SSRF-hardened, CI active on push/PR.
 - **Async throughout** — JWKS fetch, DNS resolution, file I/O, and SQLite all off
   the event loop via `anyio.to_thread`.
 - **MCP client lib** — `MCPClient` (sync) and `AsyncMCPClient` (async) in
-  `limenal.client` for downstream consumers (Cabal, third-party agents).
+  `liminal.client` for downstream consumers (Cabal, third-party agents).
 
 ## Why
 
 - **One MCP connection per agent**, not N.
-- **Persona-scoped credentials** — limenal fetches the credential set for
+- **Persona-scoped credentials** — liminal fetches the credential set for
   `(persona, handler)` at dispatch time. No `.env` files on disk.
 - **Handler pooling** — `rook-primus` and `rook-secundus` share the same `slack`
   handler runtime and rate-limit budget.
 - **Same handler interface everywhere** — in-process Python callables today, with a
-  federation path (`limenal serve --targets`) for fanning out to upstream MCP servers;
+  federation path (`liminal serve --targets`) for fanning out to upstream MCP servers;
   identical `dispatch(name, payload, ctx)`.
 - **Capability cards** declare what each handler covers, what credentials it
   expects, and when it's relevant.
@@ -70,37 +70,37 @@ pip install -r requirements-sources.txt ".[memory]"
 
 Dev/CI keep the editable sibling checkout above (`pip install -e ../techne`).
 
-## Run the gateway (`limenal serve`)
+## Run the gateway (`liminal serve`)
 
 Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal
 personas) connects to. Handlers are **auto-discovered** from installed packages — install
-`cabal` alongside limenal and its `patterns` / `documents` / `code` / `archivist`
-handlers register automatically next to limenal's own five.
+`cabal` alongside liminal and its `patterns` / `documents` / `code` / `archivist`
+handlers register automatically next to liminal's own five.
 
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
-LIMENAL_AUTH_DISABLED=1 limenal serve --host 127.0.0.1 --port 9100
+LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
-limenal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
+liminal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
 ```
 
-`limenal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
+`liminal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
 `POST /mcp` (`initialize` / `tools/list` / `tools/call`). Point a client at it — e.g.
 Claude Code:
 
 ```bash
-claude mcp add --transport http limenal http://127.0.0.1:9100/mcp
+claude mcp add --transport http liminal http://127.0.0.1:9100/mcp
 ```
 
 To have credentialed handlers fetch their secrets from Cabal at dispatch time, add
-`--cabal-url http://cabal-core:7400 --cabal-token-env LIMENAL_CABAL_TOKEN`. Federate
+`--cabal-url http://cabal-core:7400 --cabal-token-env LIMINAL_CABAL_TOKEN`. Federate
 extra MCP upstreams with `--targets targets.toml`.
 
 ## Repository layout
 
 ```
-src/limenal/
+src/liminal/
   protocol/        Handler Protocol, Context, ToolSpec, ToolResult, CapabilityCard
   registry/        Entry-point discovery + handler registration
   dispatch/        In-process dispatcher
@@ -115,7 +115,7 @@ docs/
 ## Wiring a handler (custom)
 
 ```python
-from limenal.protocol import Context, Handler, ToolResult, ToolSpec
+from liminal.protocol import Context, Handler, ToolResult, ToolSpec
 
 class GreetHandler(Handler):
     def tools(self) -> list[ToolSpec]: ...
@@ -130,17 +130,17 @@ def get_handler() -> Handler:
 Register via `pyproject.toml`:
 
 ```toml
-[project.entry-points."limenal.handlers"]
+[project.entry-points."liminal.handlers"]
 greet = "mypackage.greet:get_handler"
 ```
 
 ## Using the MCP client
 
 ```python
-from limenal.client import AsyncMCPClient
+from liminal.client import AsyncMCPClient
 
 async with AsyncMCPClient(
-    base_url="http://127.0.0.1:9100",   # wherever `limenal serve` is listening
+    base_url="http://127.0.0.1:9100",   # wherever `liminal serve` is listening
     token_provider=lambda: my_token(),
 ) as client:
     tools = await client.list_tools()
@@ -149,13 +149,13 @@ async with AsyncMCPClient(
 
 ## Relationship to Cabal
 
-limenal is standalone — any MCP-speaking agent can use it. Cabal
+liminal is standalone — any MCP-speaking agent can use it. Cabal
 (`github.com/tenishai/cabal`) is the primary downstream consumer; Cabal personas
-connect to limenal for their tool surface and limenal asks Cabal Core for
+connect to liminal for their tool surface and liminal asks Cabal Core for
 credentials per `(persona, handler)`.
 
-Sibling-checkout convention: clone `tenishai/limenal` as a sibling of `cabal`
-and `techne`, install with `pip install -e ../limenal`.
+Sibling-checkout convention: clone `tenishai/liminal` as a sibling of `cabal`
+and `techne`, install with `pip install -e ../liminal`.
 
 ## License
 

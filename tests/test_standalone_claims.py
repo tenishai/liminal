@@ -1,9 +1,9 @@
-"""Standalone-evaluation tests for limenal#1.
+"""Standalone-evaluation tests for liminal#1.
 
 Three pieces:
   1. `scope` claim works as a fallback for `cabal_scope`
   2. `tool_extras` claim works as a fallback for `cabal_tool_extras`
-  3. LIMENAL_AUTH_DISABLED=1 disables JWT enforcement at the route layer
+  3. LIMINAL_AUTH_DISABLED=1 disables JWT enforcement at the route layer
      (with a startup banner; misconfiguration with a jwt_verifier raises
      at create_app)
 """
@@ -16,10 +16,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import StaticKeySetVerifier, create_app
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import StaticKeySetVerifier, create_app
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def mint_token_with_claims(signing_key):
         payload = {
             "iss": "cabal-core",
             "sub": sub,
-            "aud": "limenal",
+            "aud": "liminal",
             "iat": now,
             "exp": now + ttl,
             "cabal_persona": persona,
@@ -119,7 +119,7 @@ async def test_tool_extras_claim_accepted_as_fallback(
         jwt_verifier=StaticKeySetVerifier(key_set=keyset),
         registry=fresh_registry,
     )
-    extras = {"limenal.allowed_handlers": ["scratchpad"]}
+    extras = {"liminal.allowed_handlers": ["scratchpad"]}
     token = mint_token_with_claims(
         extras_claim_name="tool_extras", extras_value=extras
     )
@@ -136,16 +136,16 @@ async def test_tool_extras_claim_accepted_as_fallback(
     assert any(n.startswith("scratchpad.") for n in tool_names)
 
 
-# ---- LIMENAL_AUTH_DISABLED -------------------------------------------------
+# ---- LIMINAL_AUTH_DISABLED -------------------------------------------------
 
 
 def test_auth_disabled_with_jwt_verifier_raises(
     monkeypatch, fresh_registry, keyset
 ) -> None:
-    """Setting LIMENAL_AUTH_DISABLED=1 AND passing a jwt_verifier is a
+    """Setting LIMINAL_AUTH_DISABLED=1 AND passing a jwt_verifier is a
     configuration error — fail loudly at create_app."""
-    monkeypatch.setenv("LIMENAL_AUTH_DISABLED", "1")
-    with pytest.raises(RuntimeError, match="LIMENAL_AUTH_DISABLED"):
+    monkeypatch.setenv("LIMINAL_AUTH_DISABLED", "1")
+    with pytest.raises(RuntimeError, match="LIMINAL_AUTH_DISABLED"):
         create_app(
             jwt_verifier=StaticKeySetVerifier(key_set=keyset),
             registry=fresh_registry,
@@ -156,9 +156,9 @@ def test_auth_disabled_with_jwt_verifier_raises(
 async def test_auth_disabled_accepts_unauthenticated_requests(
     monkeypatch, fresh_registry
 ) -> None:
-    """With LIMENAL_AUTH_DISABLED=1 and no jwt_verifier, requests without
+    """With LIMINAL_AUTH_DISABLED=1 and no jwt_verifier, requests without
     an Authorization header pass through."""
-    monkeypatch.setenv("LIMENAL_AUTH_DISABLED", "1")
+    monkeypatch.setenv("LIMINAL_AUTH_DISABLED", "1")
     app = create_app(registry=fresh_registry)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
@@ -176,7 +176,7 @@ async def test_no_auth_env_unset_still_rejects_unauth(fresh_registry, keyset) ->
     """Default behavior (env unset) is unchanged: auth required."""
     # Explicitly ensure env is clean for this test.
     import os
-    os.environ.pop("LIMENAL_AUTH_DISABLED", None)
+    os.environ.pop("LIMINAL_AUTH_DISABLED", None)
     app = create_app(
         jwt_verifier=StaticKeySetVerifier(key_set=keyset),
         registry=fresh_registry,

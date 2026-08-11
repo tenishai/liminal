@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.protocol import ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import (
+from liminal.protocol import ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import (
     DiscoveryError,
     discover_handlers,
     register_explicit,

@@ -1,6 +1,6 @@
 """Phase NN — per-persona handler allowlists.
 
-cabal_tool_extras["limenal.allowed_handlers"] is the operator-controlled
+cabal_tool_extras["liminal.allowed_handlers"] is the operator-controlled
 list of handlers each persona can see + call. When set:
   - tools/list filters to only handlers in the list
   - tools/call refuses handlers outside the list with -32002
@@ -18,11 +18,11 @@ import httpx
 import pytest
 from joserfc import jwt
 
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.protocol import ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import StaticKeySetVerifier, create_app
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.protocol import ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import StaticKeySetVerifier, create_app
 
 
 class _EchoHandler:
@@ -46,14 +46,14 @@ class _EchoHandler:
 
 
 def _mint_with_allowlist(signing_key, allowlist: list[str] | None) -> str:
-    """Mint a JWT carrying limenal.allowed_handlers in cabal_tool_extras.
+    """Mint a JWT carrying liminal.allowed_handlers in cabal_tool_extras.
     Pass None to omit the allowlist entirely (= unrestricted)."""
     now = int(time.time())
     header = {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"}
     payload: dict[str, Any] = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
@@ -61,7 +61,7 @@ def _mint_with_allowlist(signing_key, allowlist: list[str] | None) -> str:
     }
     if allowlist is not None:
         payload["cabal_tool_extras"] = {
-            "limenal.allowed_handlers": allowlist
+            "liminal.allowed_handlers": allowlist
         }
     return jwt.encode(header, payload, signing_key)
 
@@ -145,12 +145,12 @@ async def test_malformed_allowlist_fails_closed(client, signing_key) -> None:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
         "cabal_scope": ["dispatch"],
-        "cabal_tool_extras": {"limenal.allowed_handlers": "scratchpad"},  # str, not list!
+        "cabal_tool_extras": {"liminal.allowed_handlers": "scratchpad"},  # str, not list!
     }
     token = jwt.encode(header, payload, signing_key)
     async with client as c:

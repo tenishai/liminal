@@ -11,12 +11,12 @@ from typing import Any
 import httpx
 import pytest
 
-from limenal.handlers.web import (
+from liminal.handlers.web import (
     WebConfig,
     WebHandler,
     _host_in_allowlist,
 )
-from limenal.protocol import Context
+from liminal.protocol import Context
 
 
 def _ctx(extra: dict[str, Any] | None = None) -> Context:
@@ -355,7 +355,7 @@ async def test_per_persona_allowlist_via_ctx_extra() -> None:
 
 
 def test_handler_is_registered_in_entry_points() -> None:
-    from limenal.registry import discover_handlers
+    from liminal.registry import discover_handlers
 
     registry = discover_handlers()
     record = registry.get("web")
@@ -366,7 +366,7 @@ def test_handler_is_registered_in_entry_points() -> None:
 
 def test_capability_card_advertises_no_credentials() -> None:
     """Web doesn't need a token to fetch public URLs."""
-    from limenal.handlers.web import get_handler
+    from liminal.handlers.web import get_handler
 
     card = get_handler().capability_card()
     assert card["credential_keys"] == []
@@ -388,7 +388,7 @@ async def test_dns_rebinding_blocked_via_ip_pin(tmp_path) -> None:
     """
     import httpx
 
-    from limenal.handlers.web import WebConfig, WebHandler
+    from liminal.handlers.web import WebConfig, WebHandler
 
     connect_urls: list[str] = []
 
@@ -404,7 +404,7 @@ async def test_dns_rebinding_blocked_via_ip_pin(tmp_path) -> None:
         dns_resolver=lambda host: ["8.8.8.8"],  # returns safe public IP
     )
 
-    from limenal.protocol import Context
+    from liminal.protocol import Context
 
     ctx = Context(identity="test", agent_name="test", credentials={}, extra={})
     result = await handler_obj.dispatch(
@@ -425,8 +425,8 @@ async def test_head_applies_content_type_allowlist(tmp_path) -> None:
     """web.head must enforce the content-type allowlist (parity with web.fetch)."""
     import httpx
 
-    from limenal.handlers.web import WebConfig, WebHandler
-    from limenal.protocol import Context
+    from liminal.handlers.web import WebConfig, WebHandler
+    from liminal.protocol import Context
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "application/octet-stream"})
@@ -449,8 +449,8 @@ async def test_head_caps_large_headers(tmp_path) -> None:
     """web.head must truncate oversized response header sets."""
     import httpx
 
-    from limenal.handlers.web import WebConfig, WebHandler
-    from limenal.protocol import Context
+    from liminal.handlers.web import WebConfig, WebHandler
+    from liminal.protocol import Context
 
     # Generate headers totalling > 16 KB
     big_headers = {f"x-big-{i}": "x" * 200 for i in range(200)}
@@ -471,7 +471,7 @@ async def test_head_caps_large_headers(tmp_path) -> None:
     assert not result.is_error
     # Should have replaced headers with the warning stub
     data = result.content[0]["data"]  # already a dict, not JSON string
-    assert "x-limenal-warning" in data.get("headers", {})
+    assert "x-liminal-warning" in data.get("headers", {})
 
 
 # ---- SSRF deny-list regression: new ranges + v4-mapped IPv6 (#24) ----------

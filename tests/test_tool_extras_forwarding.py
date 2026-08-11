@@ -2,7 +2,7 @@
 on the handler dispatch path.
 
 Cabal embeds per-persona scoping config (web allowlist, files
-allowlist, etc.) in the JWT claim. limenal extracts it during auth
+allowlist, etc.) in the JWT claim. liminal extracts it during auth
 and stuffs it into the Context the handler sees. End-to-end here uses
 a stub handler that just echoes ctx.extra back; the substantive
 "web with persona allowlist" assertion lives in the web-handler
@@ -20,10 +20,10 @@ import httpx
 import pytest
 from joserfc import jwt
 
-from limenal.protocol import Context, ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import StaticKeySetVerifier, create_app
+from liminal.protocol import Context, ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import StaticKeySetVerifier, create_app
 
 
 class _EchoExtraHandler:
@@ -53,7 +53,7 @@ def _mint_with_extras(signing_key, extras: dict | None) -> str:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",

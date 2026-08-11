@@ -56,6 +56,6 @@ data/
 *.db-wal
 secrets/
 
-# limenal runtime
+# liminal runtime
 toolset.local.yaml
-.limenal/
+.liminal/

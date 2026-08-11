@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "limenal"
+name = "liminal"
 version = "0.1.0"
 description = "MCP gateway — one MCP connection per agent, many backend handlers behind it"
 readme = "README.md"
@@ -34,26 +34,26 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
 ]
-# Enables the techne-backed `memory` handler (imported lazily; limenal runs
+# Enables the techne-backed `memory` handler (imported lazily; liminal runs
 # without it). techne is not on a public index, so pair this extra with the
 # git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
 # Dev/CI keep an editable techne instead: `pip install -e ../techne`.
 memory = ["techne>=0.9.0"]
 
 [project.scripts]
-limenal = "limenal.cli:main"
+liminal = "liminal.cli:main"
 
 # Built-in reference handlers register here. Third-party packages can also
 # add to this group to be auto-discovered at startup.
-[project.entry-points."limenal.handlers"]
-scratchpad = "limenal.handlers.scratchpad:get_handler"
-web        = "limenal.handlers.web:get_handler"
-files      = "limenal.handlers.files:get_handler"
-memory     = "limenal.handlers.memory:get_handler"
-notify     = "limenal.handlers.notify:get_handler"
+[project.entry-points."liminal.handlers"]
+scratchpad = "liminal.handlers.scratchpad:get_handler"
+web        = "liminal.handlers.web:get_handler"
+files      = "liminal.handlers.files:get_handler"
+memory     = "liminal.handlers.memory:get_handler"
+notify     = "liminal.handlers.notify:get_handler"
 
 [project.urls]
-Source = "https://github.com/tenishai/limenal"
+Source = "https://github.com/tenishai/liminal"
 
 [tool.setuptools.packages.find]
 where = ["src"]

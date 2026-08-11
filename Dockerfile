@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for limenal MCP gateway.
+# Multi-stage build for liminal MCP gateway.
 
 # ----- Build stage ----------------------------------------------------------
 FROM python:3.12-slim AS build
@@ -29,7 +29,7 @@ COPY --from=techne / /build/techne
 COPY pyproject.toml README.md LICENSE ./
 RUN python3 -m venv /venv \
  && /venv/bin/pip install --no-cache-dir /build/techne \
- && mkdir -p src/limenal && touch src/limenal/__init__.py \
+ && mkdir -p src/liminal && touch src/liminal/__init__.py \
  && /venv/bin/pip install --no-cache-dir . \
  && rm -rf src
 
@@ -51,14 +51,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Non-root user. UID 10002 distinct from cabal's 10001 so both can run on
 # the same host without UID collisions on shared bind-mounts.
-RUN groupadd --gid 10002 limenal && \
-    useradd --uid 10002 --gid limenal --home-dir /home/limenal --create-home limenal
+RUN groupadd --gid 10002 liminal && \
+    useradd --uid 10002 --gid liminal --home-dir /home/liminal --create-home liminal
 
 COPY --from=build /venv /venv
 
 WORKDIR /app
 
-USER limenal
+USER liminal
 
 EXPOSE 9100
 
@@ -66,4 +66,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:9100/healthz || exit 1
 
 # --jwks-url and --cabal-url are injected by docker-compose via `command:`.
-CMD ["limenal", "serve", "--host", "0.0.0.0", "--port", "9100"]
+CMD ["liminal", "serve", "--host", "0.0.0.0", "--port", "9100"]

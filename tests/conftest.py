@@ -13,10 +13,10 @@ from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
 
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import StaticKeySetVerifier, create_app
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import StaticKeySetVerifier, create_app
 
 
 @pytest.fixture(scope="session")
@@ -52,7 +52,7 @@ def mint_token(signing_key):
         payload = {
             "iss": iss,
             "sub": sub,
-            "aud": "limenal",
+            "aud": "liminal",
             "iat": now,
             "exp": now + ttl,
             "cabal_persona": persona,

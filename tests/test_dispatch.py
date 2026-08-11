@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.dispatch import DispatchError, InProcessDispatcher, UnknownTool
-from limenal.protocol import Context, ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
+from liminal.dispatch import DispatchError, InProcessDispatcher, UnknownTool
+from liminal.protocol import Context, ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
 
 
 def _ctx() -> Context:
