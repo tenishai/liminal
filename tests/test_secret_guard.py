@@ -6,7 +6,6 @@ import pytest
 
 from liminal.server.secret_guard import scan_for_secrets, scan_tool_call
 
-
 # ---- real secret shapes are caught ----------------------------------------
 
 
