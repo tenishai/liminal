@@ -25,17 +25,17 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 
-from limenal.dispatch import (
+from liminal.dispatch import (
     DispatchError,
     InProcessDispatcher,
     Multiplexer,
     UnknownTool,
 )
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.protocol import Context, ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import (
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.protocol import Context, ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import (
     MultiIssuerJWKSVerifier,
     SqlitePolicyStore,
     StaticKeySetVerifier,
@@ -194,7 +194,7 @@ async def test_grant_allowed_handlers_filters_list_and_call(
     tools/call — a WIDENING token cannot override it (federation inversion proof).
 
     The proof only bites if the token actively TRIES to widen: the caller mints
-    cabal_tool_extras.limenal.allowed_handlers = ["echo"] (self-granting echo),
+    cabal_tool_extras.liminal.allowed_handlers = ["echo"] (self-granting echo),
     while the server grant lists only {"scratchpad"} (echo excluded). If the
     precedence ever flipped so the token's extras won, echo would leak — this
     test would go red. Pins the pre-#12 contract so restructuring can't break it:
@@ -228,7 +228,7 @@ async def test_grant_allowed_handlers_filters_list_and_call(
     tok = _mint(
         signing_key,
         iss="rd-cabal",
-        cabal_tool_extras={"limenal.allowed_handlers": ["echo"]},
+        cabal_tool_extras={"liminal.allowed_handlers": ["echo"]},
     )
 
     transport = ASGITransport(app=app)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.protocol import (
+from liminal.protocol import (
     ActivationMode,
     CapabilityCard,
     CardValidationError,

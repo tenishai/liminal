@@ -6,19 +6,19 @@
 | **Authors** | Richard DiMartino + Raven (AI) |
 | **Created** | 2026-07-02 |
 | **Follows** | `docs/proposals/multi-issuer-trust-registry.md` (Part 2 referenced this) |
-| **Touches** | new `src/limenal/server/policy.py`, `src/limenal/server/routes.py`, `src/limenal/server/app.py`, new admin router, `cli.py` |
+| **Touches** | new `src/liminal/server/policy.py`, `src/liminal/server/routes.py`, `src/liminal/server/app.py`, new admin router, `cli.py` |
 
 ---
 
 ## Purpose
 
 The multi-issuer verifier authenticates *who* a caller is `(issuer, persona,
-agent)`. This spec is the **authorization** half for a sovereign limenal: a
+agent)`. This spec is the **authorization** half for a sovereign liminal: a
 server-side policy table keyed on the verified `(issuer, persona)` that decides
 *what they may do* — owned by the sovereign service, not by any caller's cabal —
 plus the parent-only admin surface (`cbl federation …`) that manages it.
 
-This introduces limenal's **first local persistent store**. Today limenal is
+This introduces liminal's **first local persistent store**. Today liminal is
 stateless: credentials come from Cabal Core over HTTP
 (`CabalCoreCredentialResolver`), handlers from entry points. A sovereign service
 needs to remember its own grants, so it owns a small SQLite DB.
@@ -27,7 +27,7 @@ needs to remember its own grants, so it owns a small SQLite DB.
 
 ## 1. `PolicyStore`
 
-New module `src/limenal/server/policy.py`, mirroring the resolver-injection pattern
+New module `src/liminal/server/policy.py`, mirroring the resolver-injection pattern
 of `credentials.py` (wired via `create_app`, stashed on `app.state`).
 
 ```python
@@ -161,7 +161,7 @@ server-side `admin:*` grant, never on a separate credential.
 
 `--policy-db` without `--trust-registry` is a config error (server-side policy with
 a single-issuer verifier is nonsensical) — raise at `create_app` time, same style as
-the `LIMENAL_AUTH_DISABLED` + verifier mutual-exclusion guard (`app.py:87`).
+the `LIMINAL_AUTH_DISABLED` + verifier mutual-exclusion guard (`app.py:87`).
 
 ---
 

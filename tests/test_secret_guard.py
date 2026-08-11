@@ -1,11 +1,10 @@
-"""Unit tests for the fail-closed secret guard (limenal#50)."""
+"""Unit tests for the fail-closed secret guard (liminal#50)."""
 
 from __future__ import annotations
 
 import pytest
 
-from limenal.server.secret_guard import scan_for_secrets, scan_tool_call
-
+from liminal.server.secret_guard import scan_for_secrets, scan_tool_call
 
 # ---- real secret shapes are caught ----------------------------------------
 
@@ -18,7 +17,7 @@ from limenal.server.secret_guard import scan_for_secrets, scan_tool_call
         ("token ghp_" + "A" * 36, ["github_token"]),
         ("AKIAIOSFODNN7EXAMPLE", ["aws_access_key_id"]),
         ("xoxb-123456789012-abcdefABCDEF", ["slack_token"]),
-        # sk- keys must contain a digit in the tail (limenal#52); real keys do.
+        # sk- keys must contain a digit in the tail (liminal#52); real keys do.
         ("key sk-" + "a" * 20 + "0042", ["sk_api_key"]),
         # hyphenated modern keys (OpenAI project / Anthropic) — must not split
         ("naked sk-ant-api03-" + "a" * 24, ["sk_api_key"]),
@@ -38,7 +37,7 @@ def test_multiple_distinct_hits_deduped_and_sorted() -> None:
 
 
 def test_kebab_case_slug_is_not_a_false_positive() -> None:
-    # limenal#52: a long digit-free kebab-case slug (e.g. a CSS class name in a
+    # liminal#52: a long digit-free kebab-case slug (e.g. a CSS class name in a
     # files.write payload) must not trip the sk- guard as a fail-closed false
     # positive. Real sk- keys always carry a digit; a prose/slug collision won't.
     assert scan_for_secrets("class sk-skeleton-loader-component-wrapper-xl") == []

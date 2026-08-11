@@ -1,4 +1,4 @@
-"""Authorization inversion + federation admin — federation Part 2 (limenal#20).
+"""Authorization inversion + federation admin — federation Part 2 (liminal#20).
 
 Exercises the sovereign path end-to-end over HTTP: a multi-issuer verifier + a
 SqlitePolicyStore, proving the server-side grant — not the caller's token — is
@@ -17,20 +17,20 @@ from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
 
-from limenal.dispatch import Multiplexer
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.protocol import Context, ToolResult, ToolSpec
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
-from limenal.server import (
+from liminal.dispatch import Multiplexer
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.protocol import Context, ToolResult, ToolSpec
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
+from liminal.server import (
     MultiIssuerJWKSVerifier,
     SqlitePolicyStore,
     StaticKeySetVerifier,
     create_app,
 )
-from limenal.server.mcp_types import ERROR_UNKNOWN_TOOL
-from limenal.target.base import TrustTier
-from limenal.target.inprocess import InProcessTarget
+from liminal.server.mcp_types import ERROR_UNKNOWN_TOOL
+from liminal.target.base import TrustTier
+from liminal.target.inprocess import InProcessTarget
 
 SVC = "archivist@rd"
 
@@ -153,7 +153,7 @@ async def test_token_cannot_selfgrant(sov) -> None:
     # ...but shaz mints a token claiming it can use scratchpad.
     tok = _mint(
         ks, iss="shaz-cabal",
-        tool_extras={"limenal.allowed_handlers": ["scratchpad"]},
+        tool_extras={"liminal.allowed_handlers": ["scratchpad"]},
         cabal_scope=["dispatch"],
     )
     # tools/list: scratchpad hidden despite the token claim.
@@ -316,7 +316,7 @@ async def test_per_tool_scope_split_query_vs_append(tmp_path) -> None:
     — the read/write split enforced per TOOL, with the scope map derived from
     the memory card's per-tool required_scope (no policy_scope_for injected).
     """
-    from limenal.handlers.memory import MemoryHandler
+    from liminal.handlers.memory import MemoryHandler
 
     kp, ks = _key(), _key()
     store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")

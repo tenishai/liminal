@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from limenal.dispatch import InProcessDispatcher
-from limenal.handlers.scratchpad import ScratchpadHandler
-from limenal.protocol import Context
-from limenal.registry import Registry
-from limenal.registry.discover import register_explicit
+from liminal.dispatch import InProcessDispatcher
+from liminal.handlers.scratchpad import ScratchpadHandler
+from liminal.protocol import Context
+from liminal.registry import Registry
+from liminal.registry.discover import register_explicit
 
 
 def _dispatcher() -> InProcessDispatcher:

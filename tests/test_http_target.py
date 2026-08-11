@@ -22,8 +22,8 @@ from typing import Any
 import httpx
 import pytest
 
-from limenal.protocol import Context, ToolSpec
-from limenal.target import (
+from liminal.protocol import Context, ToolSpec
+from liminal.target import (
     HttpTarget,
     TargetConfigError,
     TargetSpec,
@@ -31,8 +31,8 @@ from limenal.target import (
     inspect_catalog,
     scan_tool,
 )
-from limenal.target.base import TrustTier
-from limenal.target.inspect import _NEUTRAL_STUB, _TRUST_WARNING
+from liminal.target.base import TrustTier
+from liminal.target.inspect import _NEUTRAL_STUB, _TRUST_WARNING
 
 # ---- mock upstream --------------------------------------------------------
 
@@ -258,8 +258,8 @@ async def test_identity_forward_sends_persona_and_issuer_headers() -> None:
         )
         await target.dispatch("search", {}, ctx)
         call = next(c for c in captured if b"tools/call" in c["body"])
-        assert call["headers"].get("x-limenal-persona") == "rook"
-        assert call["headers"].get("x-limenal-issuer") == "rd-cabal"
+        assert call["headers"].get("x-liminal-persona") == "rook"
+        assert call["headers"].get("x-liminal-issuer") == "rd-cabal"
     finally:
         await target.shutdown()
 
@@ -274,8 +274,8 @@ async def test_identity_none_omits_persona_headers() -> None:
         ctx = Context(identity="rook", agent_name="rp", credentials={}, issuer="rd")
         await target.dispatch("search", {}, ctx)
         call = next(c for c in captured if b"tools/call" in c["body"])
-        assert "x-limenal-persona" not in call["headers"]
-        assert "x-limenal-issuer" not in call["headers"]
+        assert "x-liminal-persona" not in call["headers"]
+        assert "x-liminal-issuer" not in call["headers"]
     finally:
         await target.shutdown()
 
@@ -325,14 +325,14 @@ async def test_concurrent_personas_never_swap_service_tokens() -> None:
         calls = [c for c in captured if b"tools/call" in c["body"]]
         assert len(calls) == len(personas)
         for c in calls:
-            persona = c["headers"]["x-limenal-persona"]
+            persona = c["headers"]["x-liminal-persona"]
             # The token on this request must belong to THIS persona.
             assert c["headers"].get("authorization") == f"Bearer tok-{persona}", (
                 f"persona {persona} request carried the wrong token: "
                 f"{c['headers'].get('authorization')!r}"
             )
         # And every persona was actually exercised (no dedup / collapse).
-        seen = {c["headers"]["x-limenal-persona"] for c in calls}
+        seen = {c["headers"]["x-liminal-persona"] for c in calls}
         assert seen == set(personas)
     finally:
         await target.shutdown()

@@ -1,4 +1,4 @@
-"""Multi-issuer verifier + list-aware aud — federation Part 1 (limenal#19).
+"""Multi-issuer verifier + list-aware aud — federation Part 1 (liminal#19).
 
 Independent of the FastAPI routing layer; exercises the verifier directly.
 """
@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
 
-from limenal.server.auth import (
+from liminal.server.auth import (
     AuthError,
     IssuerConfig,
     MultiIssuerJWKSVerifier,

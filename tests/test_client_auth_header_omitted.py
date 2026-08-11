@@ -1,6 +1,6 @@
-"""limenal#32 — the MCP client OMITS the Authorization header entirely when the
+"""liminal#32 — the MCP client OMITS the Authorization header entirely when the
 token_provider returns an empty string (the natural thing in a no-auth
-deployment, ``LIMENAL_AUTH_DISABLED=1``), instead of emitting ``Bearer `` — an
+deployment, ``LIMINAL_AUTH_DISABLED=1``), instead of emitting ``Bearer `` — an
 empty value httpx rejects as an illegal header before the request leaves the
 client.
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from limenal.client.mcp import AsyncMCPClient, MCPClient, _auth_header
+from liminal.client.mcp import AsyncMCPClient, MCPClient, _auth_header
 
 _OK = {"jsonrpc": "2.0", "id": 1, "result": {}}
 
@@ -44,7 +44,7 @@ async def test_async_client_omits_auth_header_when_token_empty() -> None:
     (_notify) must omit the header for an empty token."""
     seen, handler = _capture()
     hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = AsyncMCPClient("http://limenal", token_provider=lambda: "", http_client=hc)
+    client = AsyncMCPClient("http://liminal", token_provider=lambda: "", http_client=hc)
     await client._rpc("tools/list", {}, auth=True)
     await client._notify("x/notify", {})
     await hc.aclose()
@@ -57,7 +57,7 @@ async def test_async_client_omits_auth_header_when_token_empty() -> None:
 async def test_async_client_sends_auth_header_when_token_present() -> None:
     seen, handler = _capture()
     hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = AsyncMCPClient("http://limenal", token_provider=lambda: "tok-123", http_client=hc)
+    client = AsyncMCPClient("http://liminal", token_provider=lambda: "tok-123", http_client=hc)
     await client._rpc("tools/list", {}, auth=True)
     await hc.aclose()
 
@@ -67,7 +67,7 @@ async def test_async_client_sends_auth_header_when_token_present() -> None:
 def test_sync_client_omits_auth_header_when_token_empty() -> None:
     seen, handler = _capture()
     hc = httpx.Client(transport=httpx.MockTransport(handler))
-    client = MCPClient("http://limenal", token_provider=lambda: "", http_client=hc)
+    client = MCPClient("http://liminal", token_provider=lambda: "", http_client=hc)
     client._rpc("tools/list", {}, auth=True)
     client._notify("x/notify", {})
     hc.close()
@@ -79,7 +79,7 @@ def test_sync_client_omits_auth_header_when_token_empty() -> None:
 def test_sync_client_sends_auth_header_when_token_present() -> None:
     seen, handler = _capture()
     hc = httpx.Client(transport=httpx.MockTransport(handler))
-    client = MCPClient("http://limenal", token_provider=lambda: "tok-123", http_client=hc)
+    client = MCPClient("http://liminal", token_provider=lambda: "tok-123", http_client=hc)
     client._rpc("tools/list", {}, auth=True)
     hc.close()
 

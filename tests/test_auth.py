@@ -8,7 +8,7 @@ import pytest
 from joserfc import jwt
 from joserfc.jwk import KeySet
 
-from limenal.server.auth import (
+from liminal.server.auth import (
     AuthError,
     StaticKeySetVerifier,
     URLJWKSVerifier,
@@ -21,7 +21,7 @@ def _mint(signing_key, **overrides) -> str:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "cabal_persona": "rook",
@@ -59,7 +59,7 @@ async def test_static_verifier_falls_back_to_persona_claim(signing_key) -> None:
     payload = {
         "iss": "cabal-core",
         "sub": "rook-primus",
-        "aud": "limenal",
+        "aud": "liminal",
         "iat": now,
         "exp": now + 60,
         "persona": "rook",
@@ -178,9 +178,9 @@ async def test_wrong_aud_rejected(signing_key, keyset) -> None:
 @pytest.mark.asyncio
 async def test_correct_aud_accepted(signing_key, keyset) -> None:
     verifier = StaticKeySetVerifier(key_set=keyset)
-    token = _mint(signing_key, aud="limenal")
+    token = _mint(signing_key, aud="liminal")
     claims = await verifier.verify(token)
-    assert claims.raw["aud"] == "limenal"
+    assert claims.raw["aud"] == "liminal"
 
 
 @pytest.mark.asyncio

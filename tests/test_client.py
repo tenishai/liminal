@@ -9,7 +9,7 @@ import json
 import httpx
 import pytest
 
-from limenal.client import (
+from liminal.client import (
     AsyncMCPClient,
     MCPClient,
     MCPRemoteError,
@@ -42,7 +42,7 @@ def _sync_mock_handler():
         method = payload.get("method")
         rid = payload.get("id")
         if method == "initialize":
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "serverInfo": {"name": "limenal", "version": "0.1.0"}, "capabilities": {"tools": {}}}})
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "serverInfo": {"name": "liminal", "version": "0.1.0"}, "capabilities": {"tools": {}}}})
         if method == "notifications/initialized":
             return httpx.Response(202)
         if method == "ping":
@@ -83,7 +83,7 @@ async def test_async_initialize_returns_server_info(async_http, mint_token) -> N
         http_client=async_http,
     )
     result = await client.initialize()
-    assert result["serverInfo"]["name"] == "limenal"
+    assert result["serverInfo"]["name"] == "liminal"
     assert client.server_capabilities  # populated
     await client.aclose()
 
@@ -221,7 +221,7 @@ def test_sync_context_manager(sync_http, mint_token) -> None:
 
 def test_tool_outcome_text_property() -> None:
     """text concatenates text content blocks; non-text blocks are skipped."""
-    from limenal.client import ToolCallOutcome
+    from liminal.client import ToolCallOutcome
 
     o = ToolCallOutcome(
         content=[
@@ -234,7 +234,7 @@ def test_tool_outcome_text_property() -> None:
 
 
 def test_tool_outcome_text_property_empty_when_no_text() -> None:
-    from limenal.client import ToolCallOutcome
+    from liminal.client import ToolCallOutcome
 
     o = ToolCallOutcome(content=[{"type": "json", "data": {}}])
     assert o.text == ""

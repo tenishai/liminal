@@ -6,21 +6,21 @@
 | **Authors** | Richard DiMartino + Raven (AI) |
 | **Created** | 2026-07-02 |
 | **Implements** | `cabal/docs/proposals/federated-singletons.md` "What's new #1" |
-| **Touches** | `src/limenal/server/auth.py`, `src/limenal/server/routes.py`, `src/limenal/cli.py` |
+| **Touches** | `src/liminal/server/auth.py`, `src/liminal/server/routes.py`, `src/liminal/cli.py` |
 
 ---
 
 ## Purpose
 
-Let a **sovereign** limenal deployment (a graduated singleton persona — e.g. a
+Let a **sovereign** liminal deployment (a graduated singleton persona — e.g. a
 federated Archivist) accept callers from **multiple cabals**, each its own IdP,
 while keeping authorization owned by the sovereign service rather than by any
 caller's cabal.
 
-Today limenal trusts exactly one issuer (`URLJWKSVerifier` with a single
+Today liminal trusts exactly one issuer (`URLJWKSVerifier` with a single
 `jwks_url`/`expected_issuer`, `auth.py:87`) and derives authorization from claims
 the token itself carries — `scope` (`routes.py:70`) and
-`tool_extras.limenal.allowed_handlers` (`routes.py:221`). That is correct only
+`tool_extras.liminal.allowed_handlers` (`routes.py:221`). That is correct only
 because, in the single-cabal case, **the token's issuer is also the policy
 authority**. Federation breaks that assumption: shaz's Cabal Core would happily
 mint shaz's agents any scope they ask for. So this spec has two halves:

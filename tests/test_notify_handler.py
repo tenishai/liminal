@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from limenal.handlers.notify import (
+from liminal.handlers.notify import (
     LEVELS,
     NotifyError,
     NotifyHandler,
@@ -16,7 +16,7 @@ from limenal.handlers.notify import (
     Transport,
     WebhookTransport,
 )
-from limenal.protocol import Context
+from liminal.protocol import Context
 
 
 def _ctx(
@@ -398,7 +398,7 @@ async def test_transport_notify_error_becomes_tool_failure() -> None:
 
 
 def test_handler_registered_in_entry_points() -> None:
-    from limenal.registry import discover_handlers
+    from liminal.registry import discover_handlers
 
     registry = discover_handlers()
     record = registry.get("notify")

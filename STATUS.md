@@ -1,27 +1,27 @@
-# limenal Status — 2026-06-11
+# liminal Status — 2026-06-11
 
 First commits laying the foundation. Working from `docs/design.md` (the
 proposal carried over from the Cabal workspace).
 
 ## Headline
 
-- **GitHub**: https://github.com/dimartin/limenal — private, MCP server landing.
+- **GitHub**: https://github.com/dimartin/liminal — private, MCP server landing.
 - **Tests**: 176 passing, ~1.1s.
 - **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense), `memory` (techne-backed knowledge recall + commit), `notify` (transport-agnostic notifications; webhook in v1).
 - **Credential plumbing complete**: `cabal_tool_extras` JWT claim → Context.extra; `CabalCoreCredentialResolver` fetches per-(persona, handler) secrets from Cabal Core with TTL caching.
-- **CLI works**: `limenal version`, `limenal list-handlers --cards`, `limenal serve` round-trip.
+- **CLI works**: `liminal version`, `liminal list-handlers --cards`, `liminal serve` round-trip.
 - **MCP server works end-to-end**: handshake, JWT auth, tools/list, tools/call, per-(persona, agent) isolation.
-- **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `limenal.client` for a typed surface.
+- **MCP client lib ships**: sync `MCPClient` + async `AsyncMCPClient` — any consumer (Cabal, third-party) imports `liminal.client` for a typed surface.
 
 ## What landed in this commit (Phase Z)
 
 | Layer | File(s) | What it ships |
 |---|---|---|
-| protocol | `src/limenal/protocol/{handler,context,tool,card}.py` | Handler Protocol, Context dataclass, ToolSpec / ToolResult pydantic models, CapabilityCard schema + validator |
-| registry | `src/limenal/registry/discover.py` | Entry-point group discovery (`limenal.handlers`), per-handler fail-open error handling, name-keyed Registry, explicit-register escape hatch for tests |
-| dispatch | `src/limenal/dispatch/local.py` | InProcessDispatcher; list_tools prefixes with handler name; handler exceptions become ToolResult.failure not propagating raises |
-| handlers | `src/limenal/handlers/scratchpad.py` | Reference handler — per-(identity, agent) ephemeral notes, no credentials, full set / get / list / clear |
-| cli | `src/limenal/cli.py` | `limenal version` + `limenal list-handlers [--cards]` + `limenal serve` |
+| protocol | `src/liminal/protocol/{handler,context,tool,card}.py` | Handler Protocol, Context dataclass, ToolSpec / ToolResult pydantic models, CapabilityCard schema + validator |
+| registry | `src/liminal/registry/discover.py` | Entry-point group discovery (`liminal.handlers`), per-handler fail-open error handling, name-keyed Registry, explicit-register escape hatch for tests |
+| dispatch | `src/liminal/dispatch/local.py` | InProcessDispatcher; list_tools prefixes with handler name; handler exceptions become ToolResult.failure not propagating raises |
+| handlers | `src/liminal/handlers/scratchpad.py` | Reference handler — per-(identity, agent) ephemeral notes, no credentials, full set / get / list / clear |
+| cli | `src/liminal/cli.py` | `liminal version` + `liminal list-handlers [--cards]` + `liminal serve` |
 | docs | `docs/design.md` | The original proposal, vendored from cabal workspace |
 
 ## What landed in Phase AA — MCP HTTP server
@@ -42,10 +42,10 @@ proposal carried over from the Cabal workspace).
 
 ## What works end-to-end now
 
-- A package declares `[project.entry-points."limenal.handlers"]` with a
+- A package declares `[project.entry-points."liminal.handlers"]` with a
   `name = "module:get_handler"` line.
 - `pip install`-ing the package registers it.
-- `limenal list-handlers` shows it.
+- `liminal list-handlers` shows it.
 - `InProcessDispatcher.dispatch(tool_name="<handler>.<tool>", payload, ctx)`
   invokes it with the right Context (identity, agent, credentials).
 - Failures inside the handler don't propagate; they come back as
@@ -57,7 +57,7 @@ proposal carried over from the Cabal workspace).
 | Layer | File(s) | What it ships |
 |---|---|---|
 | handlers/memory | `memory.py` | `memory.recall(query, limit?)` + `memory.commit(content, type?, tags?, confidence?)`. Lazy techne import — handler usable even when techne isn't installed (every dispatch returns a structured "techne not available" error rather than crashing). Query sanitizer mirrors Cabal's TechneMemoryStore (strip FTS5 specials, drop stopwords, OR-join) so personas using this handler and Archivist's direct path see identical recall semantics. `type` enum validated against techne's VALID_TYPES (fact/decision/pattern/evaluation/procedure); `confidence` against low/medium/high; missing DB on first commit gets bootstrapped via `techne.init_db`. Per-persona `ctx.extra["memory.db_path"]` override. |
-| entry-points | pyproject.toml | `memory = "limenal.handlers.memory:get_handler"` |
+| entry-points | pyproject.toml | `memory = "liminal.handlers.memory:get_handler"` |
 | deps | (dev) | sibling-installed `techne` for tests (`pip install -e ../techne`) |
 
 18 new tests across query sanitizer (4 cases), pre-flight refusals
@@ -71,8 +71,8 @@ discovery + card shape.
 
 | Layer | File(s) | What it ships |
 |---|---|---|
-| handlers/files | `files.py` | `files.read` / `files.write` / `files.list` / `files.exists`. Allowlist of operator-resolved absolute path prefixes; every request: (1) must be an absolute path, (2) rejects `..` segments, (3) `expanduser().resolve()` then check the resolved path is under one of the allowlist prefixes. Symlinks that escape the allowlist are caught at resolve(). Read size cap with truncate, write size cap with refuse-before-touch, list entry cap. Per-persona `ctx.extra["files.allowed_paths"]` swaps the default for that dispatch. Empty default allowlist refuses everything — safe default for a freshly-installed limenal. |
-| entry-points | pyproject.toml | `files = "limenal.handlers.files:get_handler"` |
+| handlers/files | `files.py` | `files.read` / `files.write` / `files.list` / `files.exists`. Allowlist of operator-resolved absolute path prefixes; every request: (1) must be an absolute path, (2) rejects `..` segments, (3) `expanduser().resolve()` then check the resolved path is under one of the allowlist prefixes. Symlinks that escape the allowlist are caught at resolve(). Read size cap with truncate, write size cap with refuse-before-touch, list entry cap. Per-persona `ctx.extra["files.allowed_paths"]` swaps the default for that dispatch. Empty default allowlist refuses everything — safe default for a freshly-installed liminal. |
+| entry-points | pyproject.toml | `files = "liminal.handlers.files:get_handler"` |
 
 26 new tests across safety (empty allowlist, relative path, `..`
 segment, outside allowlist, symlink escape, empty path), read (text,
@@ -86,7 +86,7 @@ truncate, missing, on-file), exists, per-persona override, entry-point.
 | Layer | File(s) | What it ships |
 |---|---|---|
 | handlers/web | `web.py` | `web.fetch` + `web.head` with: hostname allowlist (wildcards, exact, glob, suffix; case-insensitive), private-IP denylist enforced via DNS resolution + IP-family check (catches DNS rebinding + metadata-service pivots), response-size cap with stream-and-truncate, content-type allowlist (text/json/html by default), follow_redirects=False so a 302 can't dump us into a denied host. Per-persona `ctx.extra["web.allowed_hosts"]` overrides the handler default — Cabal forwards it when wired. |
-| entry-points | pyproject.toml | `web = "limenal.handlers.web:get_handler"` |
+| entry-points | pyproject.toml | `web = "liminal.handlers.web:get_handler"` |
 
 21 new tests across allowlist matcher (4 cases), pre-flight refusals
 (scheme / empty URL / not-in-allowlist), SSRF defense (loopback,
@@ -110,10 +110,10 @@ Matches Cabal D-008. Operators clone all three repos as siblings:
 ```
 parent/
 ├── cabal/
-├── limenal/
+├── liminal/
 └── techne/
 ```
 
-Cabal integration (when it lands) will use `pip install -e ../limenal` the
+Cabal integration (when it lands) will use `pip install -e ../liminal` the
 same way it currently does `pip install -e ../techne`. PyPI publish gates
 public release of all three (see Cabal's STATUS.md checklist).

@@ -1,5 +1,5 @@
-"""Phase II — limenal CLI `serve` builds the CabalCoreCredentialResolver
-when --cabal-url + (LIMENAL_CABAL_TOKEN or --cabal-token-env) are set.
+"""Phase II — liminal CLI `serve` builds the CabalCoreCredentialResolver
+when --cabal-url + (LIMINAL_CABAL_TOKEN or --cabal-token-env) are set.
 
 The real serve loop calls uvicorn.run which blocks; we exercise just the
 app-construction path by reaching into create_app via the same import
@@ -7,7 +7,7 @@ the CLI uses.
 
 Also covers Item 3 of Phase-0 pre-#12 hardening: [scope_map] / [tool_extras]
 wiring from the trust-registry TOML through the CLI-config helper into
-create_app (limenal #26 partial).
+create_app (liminal #26 partial).
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 
-from limenal.server import (
+from liminal.server import (
     CabalCoreCredentialResolver,
     create_app,
 )
 
 
 def test_resolver_class_can_be_imported_via_public_surface() -> None:
-    """The CLI imports `CabalCoreCredentialResolver` from `limenal.server`;
+    """The CLI imports `CabalCoreCredentialResolver` from `liminal.server`;
     keep that import path stable."""
     assert CabalCoreCredentialResolver is not None
 
@@ -33,7 +33,7 @@ def test_resolver_class_can_be_imported_via_public_surface() -> None:
 def test_create_app_accepts_async_resolver_callable(keyset, registry) -> None:
     """Wire a resolver into create_app the same way the CLI does after
     parsing --cabal-url. App should build without error."""
-    from limenal.server import StaticKeySetVerifier
+    from liminal.server import StaticKeySetVerifier
 
     resolver = CabalCoreCredentialResolver(
         cabal_url="http://test",
@@ -49,9 +49,9 @@ def test_create_app_accepts_async_resolver_callable(keyset, registry) -> None:
 
 
 def test_default_token_env_name() -> None:
-    """The CLI default is LIMENAL_CABAL_TOKEN; lock that in so the
+    """The CLI default is LIMINAL_CABAL_TOKEN; lock that in so the
     operator's docs + Cabal's docs + tests can't drift."""
-    from limenal import cli as cli_module
+    from liminal import cli as cli_module
 
     # Smoke that the entry exists; the actual default string is asserted
     # by the help-text presence (operator-facing surface).
@@ -68,7 +68,7 @@ def test_default_token_env_name() -> None:
             cli_module.main(["serve", "--help"])
     except SystemExit:
         pass  # argparse exits 0 after --help
-    assert "LIMENAL_CABAL_TOKEN" in buf.getvalue()
+    assert "LIMINAL_CABAL_TOKEN" in buf.getvalue()
 
 
 def test_resolver_token_provider_re_reads_env_each_call(monkeypatch) -> None:
@@ -76,13 +76,13 @@ def test_resolver_token_provider_re_reads_env_each_call(monkeypatch) -> None:
     propagates without a daemon restart. Spot-check the pattern."""
     import os
 
-    monkeypatch.setenv("TEST_LIMENAL_TOKEN", "v1")
+    monkeypatch.setenv("TEST_LIMINAL_TOKEN", "v1")
 
     def provider() -> str:
-        return os.environ.get("TEST_LIMENAL_TOKEN", "")
+        return os.environ.get("TEST_LIMINAL_TOKEN", "")
 
     assert provider() == "v1"
-    monkeypatch.setenv("TEST_LIMENAL_TOKEN", "v2")
+    monkeypatch.setenv("TEST_LIMINAL_TOKEN", "v2")
     assert provider() == "v2"
 
 
@@ -92,7 +92,7 @@ def test_resolver_token_provider_re_reads_env_each_call(monkeypatch) -> None:
 def test_parse_trust_registry_extra_absent_sections_returns_none() -> None:
     """Both outputs are None when [scope_map] and [tool_extras] are absent.
     This preserves the current default behaviour (no scope enforcement)."""
-    from limenal.cli import _parse_trust_registry_extra
+    from liminal.cli import _parse_trust_registry_extra
 
     policy_tool_extras, policy_scope_for = _parse_trust_registry_extra({})
     assert policy_tool_extras is None
@@ -100,10 +100,10 @@ def test_parse_trust_registry_extra_absent_sections_returns_none() -> None:
 
 
 def test_parse_trust_registry_extra_scope_map_deprecated_and_ignored(capsys) -> None:
-    """[scope_map] is DEPRECATED (limenal#26): scopes are derived from handler
+    """[scope_map] is DEPRECATED (liminal#26): scopes are derived from handler
     capability cards now, so a present [scope_map] is ignored (resolver stays
     None) with a warning — not honoured, and not raised on."""
-    from limenal.cli import _parse_trust_registry_extra
+    from liminal.cli import _parse_trust_registry_extra
 
     _tool_extras, policy_scope_for = _parse_trust_registry_extra(
         {"scope_map": {"scratchpad": "mem:append"}}
@@ -116,7 +116,7 @@ def test_parse_trust_registry_extra_scope_map_deprecated_and_ignored(capsys) -> 
 
 def test_parse_trust_registry_extra_malformed_tool_extras_raises() -> None:
     """A non-table [tool_extras] must raise ValueError with a clear message."""
-    from limenal.cli import _parse_trust_registry_extra
+    from liminal.cli import _parse_trust_registry_extra
 
     with pytest.raises(ValueError, match="tool_extras"):
         _parse_trust_registry_extra({"tool_extras": ["list", "not", "dict"]})
@@ -125,11 +125,11 @@ def test_parse_trust_registry_extra_malformed_tool_extras_raises() -> None:
 def test_scope_for_from_registry_derives_from_cards() -> None:
     """scope_for_from_registry builds the handler->scope map from each card's
     required_scope; a None-scope handler (scratchpad) is absent from the map."""
-    from limenal.handlers.scratchpad import ScratchpadHandler
-    from limenal.handlers.web import WebHandler
-    from limenal.registry import Registry
-    from limenal.registry.discover import register_explicit
-    from limenal.server.app import scope_for_from_registry
+    from liminal.handlers.scratchpad import ScratchpadHandler
+    from liminal.handlers.web import WebHandler
+    from liminal.registry import Registry
+    from liminal.registry.discover import register_explicit
+    from liminal.server.app import scope_for_from_registry
 
     reg = Registry()
     register_explicit(reg, "web", WebHandler())
@@ -144,12 +144,12 @@ def test_scope_for_from_registry_derives_from_cards() -> None:
 def test_scope_for_from_registry_per_tool() -> None:
     """#42: per-tool scopes resolve for the full "<handler>.<tool>" name, with
     the handler-level scope as fallback and unscoped tools/handlers open."""
-    from limenal.handlers.files import FilesHandler
-    from limenal.handlers.memory import MemoryHandler
-    from limenal.handlers.web import WebHandler
-    from limenal.registry import Registry
-    from limenal.registry.discover import register_explicit
-    from limenal.server.app import scope_for_from_registry
+    from liminal.handlers.files import FilesHandler
+    from liminal.handlers.memory import MemoryHandler
+    from liminal.handlers.web import WebHandler
+    from liminal.registry import Registry
+    from liminal.registry.discover import register_explicit
+    from liminal.server.app import scope_for_from_registry
 
     reg = Registry()
     register_explicit(reg, "memory", MemoryHandler())
@@ -172,15 +172,15 @@ def test_scope_for_from_registry_per_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_handler_derived_scope_gates_tools_call(tmp_path, signing_key, keyset) -> None:
-    """Part 3 of limenal#26: a granted-but-under-scoped caller is refused at a
+    """Part 3 of liminal#26: a granted-but-under-scoped caller is refused at a
     scope-gated handler, with the scope map DERIVED FROM THE HANDLER CARDS —
     no policy_scope_for is injected. `web` declares required_scope='web:fetch';
     the scope gate refuses a grant that lacks it and records a deny audit entry.
     """
-    from limenal.handlers.web import WebHandler
-    from limenal.registry import Registry
-    from limenal.registry.discover import register_explicit
-    from limenal.server import (
+    from liminal.handlers.web import WebHandler
+    from liminal.registry import Registry
+    from liminal.registry.discover import register_explicit
+    from liminal.server import (
         MultiIssuerJWKSVerifier,
         SqlitePolicyStore,
         StaticKeySetVerifier,
