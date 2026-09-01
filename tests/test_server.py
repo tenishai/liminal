@@ -523,3 +523,37 @@ async def test_secret_guard_off_switch_lets_secret_through(
     body = r.json()
     assert body["error"]["code"] == -32002  # reached dispatch, not guard-blocked
     assert "secret" not in body["error"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_call_carries_the_reason_in_content(
+    client, mint_token
+) -> None:
+    """A failure must tell the agent why (liminal#66).
+
+    Before the fix this returned ``{"content": [], "isError": true}`` — the
+    handler's message was recorded on ``ToolResult.error`` and dropped at the
+    wire boundary, so every handler refusal and every upstream transport
+    error reached the agent as an unactionable empty failure.
+    """
+    token = mint_token(persona="rook", sub="rook-primus")
+    r = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "scratchpad.set",
+                "arguments": {"key": "", "value": "blue"},
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("error") is None, body
+    assert body["result"]["isError"] is True
+    content = body["result"]["content"]
+    assert content, "a failed call must not return empty content"
+    assert "'key' must be a non-empty string" in content[0]["text"]
