@@ -40,7 +40,7 @@ from liminal.server.mcp_types import (
 )
 from liminal.server.policy import PolicyStore, ScopeGrant
 from liminal.server.secret_guard import scan_tool_call
-from liminal.wire import to_spec_content as _to_spec_content
+from liminal.wire import to_spec_result_content as _to_spec_result_content
 
 log = structlog.get_logger(__name__)
 
@@ -435,7 +435,11 @@ async def _handle_tools_call(
         )
 
     result = ToolCallResult(
-        content=_to_spec_content(tool_result.content),
+        content=_to_spec_result_content(
+            tool_result.content,
+            is_error=tool_result.is_error,
+            error=tool_result.error,
+        ),
         isError=tool_result.is_error,
     )
     return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))
