@@ -427,9 +427,15 @@ and the JSON-RPC result carries the same fact out of band:
   rest of its output read as trusted.
 - A `trusted` target's results are **not** framed and carry no `_meta` flag. Framing is
   gated on the same `trust` tier that gates catalog inspection.
-- Errors liminal itself generates (transport failure, target not started) are never
-  framed — the envelope means "an upstream wrote this", and diluting it would make it
-  useless.
+- **Error text is framed too.** Since liminal#66 a failed result's reason is appended to
+  the content the agent sees, so an error string is an injection surface exactly like a
+  result is — and `MCPRemoteError.message` is the upstream's own JSON-RPC error text,
+  while `MCPTransportError` embeds `resp.text` for a 5xx. On an untrusted target the
+  upstream half goes inside the envelope and `.error` keeps only liminal's own
+  description.
+- A message liminal produces **without ever touching upstream output** is not framed —
+  `"target not started"` is that case, since no request was made. The envelope means "an
+  upstream wrote this", and diluting it would make it useless.
 
 `json` and `image` blocks pass through structurally unchanged; they sit inside the
 envelope and are covered by the `_meta` flag, which is why a runtime that inspects blocks
