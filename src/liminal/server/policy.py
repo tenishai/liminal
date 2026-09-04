@@ -7,11 +7,18 @@ own cabal minted — a foreign cabal would just mint itself generous
 **verified** `(issuer, persona)` that this service owns.
 
 Resolution precedence: exact `(issuer, persona)` → issuer-wide `(issuer, "*")` →
-`None` (deny). Fail-closed.
+`None` (deny). Fail-closed. Parent rows never resolve on this data-plane path
+(liminal#73): guardianship is admin standing, not tool access, and a topology
+where the parent issuer also signs agent tokens (a cabal serving its own
+graduated persona) must not hand `admin:*` to every ungranted agent through
+the wildcard fallback. The admin surface resolves parents through
+`resolve_parent` instead.
 
 The **parent** — the cabal that graduated this persona — is seeded as an immutable
 `is_parent` row with `admin:*`. No `grant`/`revoke` can touch it: "graduation does
-not orphan." `admin:*` implies every scope.
+not orphan." `admin:*` implies every scope. Parent rows are seeded per persona:
+`parent_personas=("*",)` (the default) keeps the historical any-persona
+guardianship; naming personas narrows admin standing to exactly those.
 
 This is liminal's first local persistent store: a small SQLite DB. All access is
 serialized through an asyncio lock and run off the event loop via `to_thread`, so
@@ -70,6 +77,7 @@ class ParentImmutable(RuntimeError):
 
 class PolicyStore(Protocol):
     async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None: ...
+    async def resolve_parent(self, issuer: str, persona: str) -> ScopeGrant | None: ...
     async def grant(
         self,
         issuer: str,
@@ -140,6 +148,7 @@ class SqlitePolicyStore:
         *,
         parent_issuer: str | None = None,
         parent_scopes: tuple[str, ...] = (ADMIN_SCOPE,),
+        parent_personas: tuple[str, ...] = ("*",),
         audit_max_rows: int | None = 50_000,
         audit_prune_interval: int = 500,
     ) -> None:
@@ -156,7 +165,7 @@ class SqlitePolicyStore:
         self._audit_prune_interval = max(1, audit_prune_interval)
         self._audit_writes = 0
         if parent_issuer is not None:
-            self._seed_parent(parent_issuer, set(parent_scopes))
+            self._seed_parent(parent_issuer, set(parent_scopes), parent_personas)
         # Parent set is immutable after seeding; cache it for the sync parents().
         self._parents = frozenset(
             r["issuer"]
@@ -165,19 +174,28 @@ class SqlitePolicyStore:
             ).fetchall()
         )
 
-    def _seed_parent(self, issuer: str, scopes: set[str]) -> None:
-        existing = self._conn.execute(
-            "SELECT 1 FROM policy_grants WHERE issuer = ? AND is_parent = 1", (issuer,)
-        ).fetchone()
-        if existing is not None:
-            return
+    def _seed_parent(
+        self, issuer: str, scopes: set[str], personas: tuple[str, ...]
+    ) -> None:
+        """Seed one immutable parent row per persona. A store seeded before
+        this issuer/persona pair existed keeps its rows (idempotent per pair);
+        narrowing an existing wildcard deployment means a new policy DB, a
+        deliberate operator act rather than a silent migration."""
         now = _now_iso()
-        self._conn.execute(
-            "INSERT INTO policy_grants"
-            "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
-            "VALUES (?, '*', ?, NULL, 1, ?, ?)",
-            (issuer, json.dumps(sorted(scopes | {ADMIN_SCOPE})), now, now),
-        )
+        for persona in personas or ("*",):
+            existing = self._conn.execute(
+                "SELECT 1 FROM policy_grants "
+                "WHERE issuer = ? AND persona = ? AND is_parent = 1",
+                (issuer, persona),
+            ).fetchone()
+            if existing is not None:
+                continue
+            self._conn.execute(
+                "INSERT INTO policy_grants"
+                "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
+                "VALUES (?, ?, ?, NULL, 1, ?, ?)",
+                (issuer, persona, json.dumps(sorted(scopes | {ADMIN_SCOPE})), now, now),
+            )
         self._conn.commit()
 
     def parents(self) -> frozenset[str]:
@@ -188,11 +206,35 @@ class SqlitePolicyStore:
             return await asyncio.to_thread(fn)
 
     async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None:
+        """Data-plane resolution. Parent rows are excluded on BOTH legs
+        (liminal#73): when the parent issuer also signs agent tokens, the
+        wildcard fallback would otherwise hand `admin:*` to every ungranted
+        agent -- and a caller whose verified identity is literally "*" must
+        not hit the parent row on the exact leg either."""
+
         def _q() -> ScopeGrant | None:
             for who in (persona, "*"):
                 row = self._conn.execute(
                     "SELECT scopes, allowed_handlers FROM policy_grants "
-                    "WHERE issuer = ? AND persona = ?",
+                    "WHERE issuer = ? AND persona = ? AND is_parent = 0",
+                    (issuer, who),
+                ).fetchone()
+                if row is not None:
+                    return _row_to_grant(row)
+            return None
+
+        return await self._run(_q)
+
+    async def resolve_parent(self, issuer: str, persona: str) -> ScopeGrant | None:
+        """Admin-plane resolution: ONLY parent rows, exact persona first,
+        then the wildcard parent row when one was seeded. The admin surface
+        is the sole caller (liminal#73)."""
+
+        def _q() -> ScopeGrant | None:
+            for who in (persona, "*"):
+                row = self._conn.execute(
+                    "SELECT scopes, allowed_handlers FROM policy_grants "
+                    "WHERE issuer = ? AND persona = ? AND is_parent = 1",
                     (issuer, who),
                 ).fetchone()
                 if row is not None:

@@ -144,6 +144,17 @@ def main(argv: list[str] | None = None) -> int:
         "--issuer", default="cabal-core", help="Expected `iss` claim (single-issuer mode)."
     )
     serve_p.add_argument(
+        "--audience",
+        default="liminal",
+        help=(
+            "Expected `aud` claim (single-issuer mode). Tokens minted for a "
+            "different audience are rejected; this knob is what lets a "
+            "deployment demand a liminal-specific audience instead of the "
+            "hardcoded default. Sovereign mode takes its audience from the "
+            "trust registry's `service_audience` instead."
+        ),
+    )
+    serve_p.add_argument(
         "--trust-registry",
         default=None,
         help=(
@@ -161,6 +172,23 @@ def main(argv: list[str] | None = None) -> int:
             "Path to the SQLite policy store backing sovereign authorization. "
             "Required with --trust-registry; nonsensical without it."
         ),
+    )
+    serve_p.add_argument(
+        "--admin-port",
+        type=int,
+        default=None,
+        help=(
+            "Serve the federation admin surface (/admin/*) on its OWN "
+            "listener at this port, and keep it entirely off the data-plane "
+            "port -- so a network policy can restrict admin to the governing "
+            "service alone. Requires --trust-registry. Unset: admin rides "
+            "the data-plane port (with a loud warning)."
+        ),
+    )
+    serve_p.add_argument(
+        "--admin-host",
+        default="127.0.0.1",
+        help="Bind host for --admin-port (default 127.0.0.1).",
     )
     serve_p.add_argument(
         "--cabal-url",
@@ -302,7 +330,42 @@ def main(argv: list[str] | None = None) -> int:
                 issuers, service_audience=service_audience
             )
             parent_issuer = next(i.id for i in issuers if i.parent)
-            policy_store = SqlitePolicyStore(args.policy_db, parent_issuer=parent_issuer)
+            # Admin standing is per-persona (liminal#73): the parent's
+            # [[issuer]] table may name `admin_personas`; each named persona
+            # gets its own immutable parent row, and ONLY those personas pass
+            # the guardian gate. Absent, the historical wildcard row is
+            # seeded -- every persona the parent issuer mints holds admin --
+            # which is refused outright when the parent is the only trusted
+            # issuer (that is precisely the topology where every data-plane
+            # token would double as an admin token), and warned about loudly
+            # otherwise.
+            parent_cfg = next(
+                i for i in cfg.get("issuer", []) if i.get("parent", False)
+            )
+            admin_personas = tuple(parent_cfg.get("admin_personas", ()) or ())
+            if not admin_personas:
+                if len(issuers) == 1:
+                    print(
+                        "error: the trust registry's only issuer is the parent "
+                        "and names no `admin_personas` -- every token this "
+                        "deployment accepts would hold admin:* on the admin "
+                        "surface. Name the persona(s) allowed to administer "
+                        "policy, e.g. admin_personas = [\"room-operator\"].",
+                        file=sys.stderr,
+                    )
+                    return 2
+                print(
+                    f"warning: parent issuer {parent_issuer!r} names no "
+                    "`admin_personas` -- EVERY persona it mints holds admin "
+                    "standing on /admin/*. Narrow it with admin_personas in "
+                    "the trust registry.",
+                    file=sys.stderr,
+                )
+            policy_store = SqlitePolicyStore(
+                args.policy_db,
+                parent_issuer=parent_issuer,
+                parent_personas=admin_personas or ("*",),
+            )
             # Print the derived handler->scope map so an operator can reconcile
             # grants on upgrade (scope enforcement is now real — a non-admin
             # grant must hold each listed scope, or admin:*). See liminal#26.
@@ -338,7 +401,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.jwks_url:
             verifier = URLJWKSVerifier(
-                jwks_url=args.jwks_url, expected_issuer=args.issuer
+                jwks_url=args.jwks_url,
+                expected_issuer=args.issuer,
+                expected_audience=args.audience,
             )
         else:
             print(
@@ -397,6 +462,22 @@ def main(argv: list[str] | None = None) -> int:
         # `--targets` exit-2 path so it's a clean diagnostic, not a traceback.
         from liminal.target.config import TargetConfigError
 
+        if args.admin_port is not None and policy_store is None:
+            print(
+                "error: --admin-port requires --trust-registry (there is no "
+                "admin surface without a policy store).",
+                file=sys.stderr,
+            )
+            return 2
+        if policy_store is not None and args.admin_port is None:
+            print(
+                "warning: the federation admin surface (/admin/*) is riding "
+                "the data-plane port. Give it its own listener with "
+                "--admin-port so the network layer can restrict who reaches "
+                "it.",
+                file=sys.stderr,
+            )
+
         try:
             app = create_app(
                 jwt_verifier=verifier,
@@ -406,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
                 policy_scope_for=policy_scope_for,
                 policy_tool_extras=policy_tool_extras,
                 targets=targets,
+                mount_admin=args.admin_port is None,
             )
         except TargetConfigError as exc:
             print(f"error: --targets: {exc}", file=sys.stderr)
@@ -416,6 +498,45 @@ def main(argv: list[str] | None = None) -> int:
             # (liminal#31).
             print(f"error: {exc}", file=sys.stderr)
             return 2
+
+        if args.admin_port is not None:
+            # Two listeners, one process (liminal#74): the data plane binds
+            # --host/--port with no /admin/* routes at all; the admin surface
+            # binds --admin-host/--admin-port so deployments can fence it off
+            # at the network layer.
+            import asyncio
+
+            from liminal.server import create_admin_app
+
+            admin_app = create_admin_app(
+                jwt_verifier=verifier, policy_store=policy_store
+            )
+            print(
+                f"admin surface: own listener on "
+                f"{args.admin_host}:{args.admin_port} (data plane carries no "
+                "/admin/* routes)",
+                file=sys.stderr,
+            )
+
+            async def _serve_both() -> None:
+                data_plane = uvicorn.Server(
+                    uvicorn.Config(
+                        app, host=args.host, port=args.port, log_level="info"
+                    )
+                )
+                admin_plane = uvicorn.Server(
+                    uvicorn.Config(
+                        admin_app,
+                        host=args.admin_host,
+                        port=args.admin_port,
+                        log_level="info",
+                    )
+                )
+                await asyncio.gather(data_plane.serve(), admin_plane.serve())
+
+            asyncio.run(_serve_both())
+            return 0
+
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 
