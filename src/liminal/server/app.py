@@ -15,7 +15,7 @@ configuration error and raises at create_app time.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -70,18 +70,44 @@ class ConfigError(RuntimeError):
     """
 
 
-def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
-    """Derive the required-scope resolver from the registered capability cards
-    (liminal#26 handler-level, liminal#42 per-tool).
+# A scope no grant can hold. Returned for a tool on a deny-by-default target
+# that no operator rule names (liminal#78). `admin:*` still satisfies it, which
+# is deliberate and consistent with every other gate — see ScopeGrant.has_scope.
+DENY_SCOPE = "liminal:deny"
 
-    Each card declares a handler-level ``required_scope`` and, per tool, an
-    optional ``required_scope``. The map is keyed by both ``<handler>`` and
-    ``<handler>.<tool>``; the resolver, given a full tool name, prefers the
-    per-tool scope and falls back to the handler-level one (``None`` = open at
-    both levels). Deriving from the cards keeps the sovereign scope vocabulary
-    from drifting away from the actual handler/tool surface.
+
+def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
+    """Back-compat wrapper: the handler-only resolver (no federated targets)."""
+    return scope_for(reg, ())
+
+
+def scope_for(
+    reg: Registry, targets: Sequence[TargetSpec] = ()
+) -> Callable[[str], str | None]:
+    """Derive the required-scope resolver for the whole tool surface.
+
+    Two sources, keyed identically as ``<target>`` and ``<target>.<tool>``,
+    because the Multiplexer already namespaces in-process handlers and
+    federated upstreams the same way:
+
+    - **In-process handlers** — from each ``CapabilityCard`` (liminal#26
+      handler-level, #42 per-tool). Trusted because handler code is
+      server-side.
+    - **Federated targets** — from ``TargetSpec.required_scope`` /
+      ``TargetSpec.tool_scopes`` (liminal#78). OPERATOR-authored, never read
+      from the fetched catalog: an untrusted upstream that could declare its
+      own required scopes would simply declare that it needs none.
+
+    Resolution order for a full tool name: exact ``<target>.<tool>`` rule,
+    then the target-level rule, then ``DENY_SCOPE`` if that target is
+    deny-by-default (it declared ``tool_scopes``), else ``None`` (open).
+
+    Target names cannot collide with handler names — ``create_app`` rejects
+    that at build time — so one flat map is unambiguous.
     """
     scope_map: dict[str, str] = {}
+    strict_targets: set[str] = set()
+
     for record in reg:
         card = record.card
         if card.required_scope:
@@ -91,12 +117,33 @@ def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
             if tool_scope:
                 scope_map[f"{record.name}.{tool.name}"] = tool_scope
 
-    def _scope_for(name: str, _sm: dict[str, str] = scope_map) -> str | None:
-        # `name` is a full tool name "<handler>.<tool>" (the tools/call path)
-        # or a bare handler. Per-tool scope wins; else the handler-level scope.
+    for spec in targets:
+        if spec.required_scope:
+            scope_map[spec.name] = spec.required_scope
+        for tool_name, tool_scope in spec.tool_scopes.items():
+            scope_map[f"{spec.name}.{tool_name}"] = tool_scope
+        # Naming ANY per-tool rule opts this target into deny-by-default, so a
+        # tool that appears in a refreshed upstream catalog cannot arrive
+        # pre-authorized.
+        if spec.tool_scopes:
+            strict_targets.add(spec.name)
+
+    def _scope_for(
+        name: str,
+        _sm: dict[str, str] = scope_map,
+        _strict: set[str] = strict_targets,
+    ) -> str | None:
+        # `name` is a full tool name "<target>.<tool>" (the tools/call path)
+        # or a bare target/handler. Per-tool rule wins; else the target-level
+        # rule; else deny when the target is deny-by-default.
         if name in _sm:
             return _sm[name]
-        return _sm.get(name.split(".", 1)[0])
+        prefix = name.split(".", 1)[0]
+        if prefix in _sm:
+            return _sm[prefix]
+        if prefix in _strict:
+            return DENY_SCOPE
+        return None
 
     return _scope_for
 
@@ -213,15 +260,17 @@ def create_app(
     app.state.auth_disabled = auth_disabled
     app.state.secret_guard_enabled = _secret_guard_enabled_from_env()
     app.state.policy_store = policy_store
-    # Scope map is handler-derived (liminal#26): each CapabilityCard declares
-    # its required_scope, and the server builds the handler->scope map from the
-    # registered cards. An explicit policy_scope_for (tests) still overrides.
+    # Scope map has two sources, both server-side: each CapabilityCard's
+    # required_scope for in-process handlers (liminal#26/#42), and each
+    # TargetSpec's required_scope/tool_scopes for federated targets
+    # (liminal#78 — operator-authored, never read from the fetched catalog).
+    # An explicit policy_scope_for (tests) still overrides both.
     # NOTE: this is a populated callable even in single-cabal mode, but it is
     # inert there — the routes.py scope gate only runs when a grant is present,
     # which only sovereign (multi-issuer + policy_store) deployments produce.
     app.state.policy_scope_for = (
         policy_scope_for if policy_scope_for is not None
-        else scope_for_from_registry(reg)
+        else scope_for(reg, targets or ())
     )
     # Server-supplied sandbox config (memory.db_path, files.allowed_paths,
     # egress allowlists) for sovereign mode. Used INSTEAD of the caller's

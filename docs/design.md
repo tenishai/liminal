@@ -347,6 +347,16 @@ bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
 trust       = "trusted"
 on_untrusted = "strip"      # only matters when trust = "untrusted"
 identity    = "forward"     # forward caller persona as x-liminal-persona header
+
+# Scope-gated target — per-tool sovereign scopes (liminal#78)
+[[target]]
+name          = "jira"
+address       = "https://jira-mcp.internal/mcp"
+required_scope = "jira:use"  # a grant must hold this for ANY tool here
+
+[target.tool_scopes]         # per-tool refinement; declaring it turns this
+"search"       = "jira:read" # target DENY-BY-DEFAULT — a tool named in
+"create_issue" = "jira:write" # neither rule is refused
 ```
 
 ### Keys
@@ -367,6 +377,8 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
 | `relevance_signals` | no | `[]` | Routing hints (v2 on-demand activation). |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
+| `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
+| `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. **Declaring it makes the target deny-by-default.** |
 
 ### Version handling
 
@@ -375,6 +387,20 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 - `config_version != 1` — loud error, exit 2 (No Silent Failures).
 
 Unknown keys in a `[[target]]` table are also rejected loudly (a typo like `addres` must not silently no-op).
+
+### Why federated scopes live in config, not in the catalog
+
+An in-process handler's scopes come from its `CapabilityCard`, which is safe because
+handler code is server-side and already trusted. A federated target's catalog is authored
+by the **upstream**, which defaults to `trust = "untrusted"` — so a catalog-derived scope
+map would let an upstream declare that its most dangerous tool requires no scope. The two
+maps are keyed identically (`<target>` and `<target>.<tool>`) and merge into one resolver;
+only the *source of truth* differs.
+
+Deny-by-default is what makes this hold under catalog refresh. A target's tool list is
+re-fetched on a background loop, so a tool that did not exist when the operator wrote the
+config can appear later. On a target that declares `tool_scopes`, such a tool resolves to
+an unsatisfiable scope until an operator names it.
 
 ### Auth modes
 
