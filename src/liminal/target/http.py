@@ -113,12 +113,17 @@ class HttpTarget(Target):
                 tool, payload, extra_headers=headers
             )
         except MCPRemoteError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} returned error [{exc.code}]: {exc.message}"
+            return self._error_result(
+                reason=f"upstream {self.name!r} returned error [{exc.code}]",
+                upstream_text=exc.message,
             )
         except MCPError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} transport error: {exc}"
+            # An MCPTransportError message can embed the upstream's response
+            # body (`server {status}: {resp.text[:200]}`), so this is not
+            # unconditionally our own prose either.
+            return self._error_result(
+                reason=f"upstream {self.name!r} transport error",
+                upstream_text=str(exc),
             )
 
         content = list(outcome.content)
@@ -191,6 +196,34 @@ class HttpTarget(Target):
             self._owned_http = False
 
     # ---- internals --------------------------------------------------------
+
+    def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
+        """A failed dispatch whose message may carry upstream-authored bytes.
+
+        Since liminal#66 a ToolResult's ``.error`` is appended to the content
+        the agent sees, so an error string is now an injection surface exactly
+        like a successful result is. Both upstream error paths can embed
+        upstream output — ``MCPRemoteError.message`` is the upstream's own
+        JSON-RPC error text, and ``MCPTransportError`` embeds ``resp.text`` for
+        a 5xx — so on an UNTRUSTED target the upstream half goes inside the
+        envelope and ``.error`` keeps only liminal's own description.
+
+        The result stays legible per #66: the agent still gets a reason, and
+        still gets the upstream's text — framed rather than dropped.
+        """
+        if self.trust is not TrustTier.UNTRUSTED:
+            return ToolResult.failure(f"{reason}: {upstream_text}")
+        nonce = new_envelope_nonce()
+        return ToolResult(
+            content=frame_untrusted_result(
+                [{"type": "text", "text": upstream_text}], self.name, nonce
+            ),
+            is_error=True,
+            error=reason,
+            liminal_untrusted=True,
+            liminal_untrusted_source=self.name,
+            liminal_untrusted_nonce=nonce,
+        )
 
     def _build_call_headers(self, ctx: Context) -> dict[str, str]:
         """Build fresh per-call headers. NEVER stored on the client (#13)."""

@@ -172,23 +172,78 @@ async def test_upstream_error_results_are_framed_too() -> None:
 
 
 @pytest.mark.asyncio
-async def test_our_own_transport_failures_are_not_framed() -> None:
-    """A liminal-authored failure message is not upstream content and must not
-    be dressed up as one — otherwise the envelope stops meaning anything."""
+async def test_upstream_error_text_is_framed_not_just_result_content() -> None:
+    """Since liminal#66, `.error` is appended to the content the agent sees —
+    so an error string is an injection surface exactly like a result is.
 
-    def boom(request: httpx.Request) -> httpx.Response:
+    `MCPRemoteError.message` is the upstream's own JSON-RPC error text. Before
+    this it reached the agent verbatim, outside the envelope: a hole straight
+    through the #79 contract.
+    """
+    injection_error = f"Tool unavailable. {INJECTION}"
+
+    def erroring(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.read())
         if body.get("method") in ("initialize", "tools/list"):
             return _responder()(request)
-        raise httpx.ConnectError("upstream down")
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0", "id": body.get("id"),
+            "error": {"code": -32000, "message": injection_error},
+        })
 
-    target = HttpTarget(_spec(trust="untrusted"), http_client=_client(boom))
+    target = HttpTarget(_spec(trust="untrusted"), http_client=_client(erroring))
     await target.startup()
     result = await target.dispatch("search", {}, _ctx())
     await target.shutdown()
 
     assert result.is_error is True
-    assert "[BEGIN UNTRUSTED TOOL RESULT" not in (result.error or "")
+    # liminal's own description stays in .error; the upstream's prose does not.
+    assert result.error == "upstream 'evil' returned error [-32000]"
+    assert INJECTION not in (result.error or "")
+    # The upstream's text survives — framed, not dropped (#66 stays satisfied).
+    body = _text(result)
+    assert INJECTION in body
+    assert "[BEGIN UNTRUSTED TOOL RESULT" in body
+    assert result.liminal_untrusted is True
+
+
+@pytest.mark.asyncio
+async def test_a_5xx_body_is_framed_too() -> None:
+    """MCPTransportError embeds `resp.text[:200]` for a 5xx, so the "transport
+    error" path is not unconditionally liminal-authored either."""
+
+    def five_hundred(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.read())
+        if body.get("method") in ("initialize", "tools/list"):
+            return _responder()(request)
+        return httpx.Response(500, text=INJECTION)
+
+    target = HttpTarget(_spec(trust="untrusted"), http_client=_client(five_hundred))
+    await target.startup()
+    result = await target.dispatch("search", {}, _ctx())
+    await target.shutdown()
+
+    assert result.is_error is True
+    assert INJECTION not in (result.error or "")
+    assert INJECTION in _text(result)
+
+
+@pytest.mark.asyncio
+async def test_errors_liminal_raises_alone_are_not_framed() -> None:
+    """The envelope means "an upstream wrote this". A message liminal produces
+    without ever touching upstream output must not be dressed up as one, or
+    the marker stops carrying information.
+
+    "target not started" is that case: no request was made, so no upstream byte
+    is in the string.
+    """
+    target = HttpTarget(_spec(trust="untrusted"), http_client=_client(_responder()))
+    # Deliberately NOT started.
+    result = await target.dispatch("search", {}, _ctx())
+
+    assert result.is_error is True
+    assert "not started" in (result.error or "")
+    assert "[BEGIN UNTRUSTED TOOL RESULT" not in _text(result)
     assert getattr(result, "liminal_untrusted", False) is False
 
 
