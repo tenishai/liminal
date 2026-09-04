@@ -4,6 +4,10 @@ Generalizes the retired ``MCPProxyHandler``: it fetches + inspects the
 upstream's tool catalog at ingest, and forwards calls with **per-call**
 identity. It folds in three things the old proxy lacked or did unsafely:
 
+  - **#79 result framing** — an ``UNTRUSTED`` target's tool RESULTS are
+    wrapped in a nonce-tagged envelope at dispatch and flagged in the response
+    ``_meta``, so instruction-shaped text an upstream returns is marked as
+    data rather than flowing to the agent verbatim.
   - **#16 catalog inspection** — an ``UNTRUSTED`` target's catalog is passed
     through ``inspect_catalog`` at ingest (the single chokepoint) before the
     tools ever reach a persona's context.
@@ -40,7 +44,11 @@ from liminal.client.mcp import (
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
 from liminal.target.config import TargetConfigError, TargetSpec
-from liminal.target.inspect import inspect_catalog
+from liminal.target.inspect import (
+    frame_untrusted_result,
+    inspect_catalog,
+    new_envelope_nonce,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -113,7 +121,21 @@ class HttpTarget(Target):
                 f"upstream {self.name!r} transport error: {exc}"
             )
 
-        return ToolResult(content=list(outcome.content), is_error=outcome.is_error)
+        content = list(outcome.content)
+        if self.trust is TrustTier.UNTRUSTED:
+            # #79 — the dispatch-time half of #16. Catalog inspection covers
+            # what the upstream SAYS about its tools; this covers what it
+            # RETURNS. The nonce goes out-of-band in the response `_meta` so a
+            # runtime can verify the delimiters instead of trusting their shape.
+            nonce = new_envelope_nonce()
+            return ToolResult(
+                content=frame_untrusted_result(content, self.name, nonce),
+                is_error=outcome.is_error,
+                liminal_untrusted=True,
+                liminal_untrusted_source=self.name,
+                liminal_untrusted_nonce=nonce,
+            )
+        return ToolResult(content=content, is_error=outcome.is_error)
 
     def protocol_version(self) -> str | None:
         return self._protocol_version

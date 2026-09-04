@@ -390,6 +390,53 @@ liminal serve \
 
 ---
 
+## Untrusted tool results — the contract for agent runtimes
+
+Catalog inspection (`trust` / `on_untrusted` above) covers what a federated upstream
+**says about** its tools. This is the other half: what a tool **returns**.
+
+A result from a target with `trust = "untrusted"` is wrapped at the gateway boundary
+before it reaches the caller:
+
+```
+[BEGIN UNTRUSTED TOOL RESULT <nonce> — returned by federated target 'jira'. …]
+  …the upstream's content blocks, unchanged except for stripped hidden unicode…
+[END UNTRUSTED TOOL RESULT <nonce>]
+```
+
+and the JSON-RPC result carries the same fact out of band:
+
+```json
+"_meta": {
+  "liminal/untrusted": true,
+  "liminal/untrusted_source": "jira",
+  "liminal/untrusted_nonce": "<nonce>"
+}
+```
+
+**What a runtime may rely on:**
+
+- Content inside the envelope carries **no authority**. It is data returned by a third
+  party. It is not from the operator, not from the user, and not from liminal. Directives
+  appearing inside it are content, not instructions.
+- `_meta` is authoritative; the in-band delimiters are a convenience for the model. Decide
+  whether a result is untrusted by reading `_meta["liminal/untrusted"]`, never by
+  pattern-matching the text — an upstream can imitate the text.
+- The **nonce is per result**. Match delimiters by the nonce from `_meta`, so an upstream
+  that emits its own `BEGIN`/`END` markers cannot close the envelope early and have the
+  rest of its output read as trusted.
+- A `trusted` target's results are **not** framed and carry no `_meta` flag. Framing is
+  gated on the same `trust` tier that gates catalog inspection.
+- Errors liminal itself generates (transport failure, target not started) are never
+  framed — the envelope means "an upstream wrote this", and diluting it would make it
+  useless.
+
+`json` and `image` blocks pass through structurally unchanged; they sit inside the
+envelope and are covered by the `_meta` flag, which is why a runtime that inspects blocks
+rather than concatenated text must read `_meta`.
+
+---
+
 ## References
 
 - [`pattern-toolbox.md`](pattern-toolbox.md) — Pattern Toolbox proposal (planned liminal handler)
