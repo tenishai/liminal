@@ -242,3 +242,41 @@ async def test_present_service_token_still_rides_the_call() -> None:
         assert recorder.requests[-1].headers.get("authorization") == "Bearer tok-9"
     finally:
         await target.shutdown()
+
+
+class _FlippableResponder:
+    """Succeeds or fails per the current mode -- for the periodic-refresh
+    path, where the choice (does a refresh failure degrade health?) needs a
+    test pinning it: it DOES, deliberately -- a stale catalog serving an
+    increasingly wrong tool surface behind a green health check is the
+    failure mode liminal#75 exists to kill."""
+
+    def __init__(self):
+        self.failing = False
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if self.failing:
+            return httpx.Response(500, text="refresh exploded")
+        return _rpc_responder(request)
+
+
+@pytest.mark.asyncio
+async def test_periodic_refresh_failure_degrades_and_recovery_resets() -> None:
+    responder = _FlippableResponder()
+    target = HttpTarget(
+        _http_spec(),
+        http_client=httpx.AsyncClient(transport=_Recorder(responder)),
+    )
+    await target.startup()
+    try:
+        assert target.catalog_status == "ready"
+
+        responder.failing = True
+        await target._refresh_tools_once()
+        assert target.catalog_status.startswith("catalog fetch failed")
+
+        responder.failing = False
+        await target._refresh_tools_once()
+        assert target.catalog_status == "ready"
+    finally:
+        await target.shutdown()

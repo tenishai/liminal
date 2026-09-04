@@ -17,12 +17,15 @@ identity. It folds in three things the old proxy lacked or did unsafely:
   - **#27 correlation-id** — carried on ``ctx.extra["correlation_id"]``
     (generated if absent) and forwarded as ``x-correlation-id`` on every call.
 
-Failure modes stay explicit (No Silent Failures): a failed startup catalog
-fetch is LOUD — an error log plus a ``catalog_status`` the health surface
-reports, never a silently-empty tool list (liminal#75); a service-token call
-whose credential did not resolve is REFUSED with a failure naming the missing
-key, never sent upstream unauthenticated (liminal#80); upstream 4xx/5xx or
-transport error mid-call → ``ToolResult.failure`` with the cause.
+Failure modes stay explicit (No Silent Failures): ANY failed catalog fetch
+— startup or periodic refresh — sets a ``catalog_status`` the health surface
+reports as degraded until a fetch succeeds again, never a silently-empty or
+silently-stale tool list (liminal#75); only the log severity differs
+(error at startup, warning on a refresh, where the last good catalog keeps
+serving); a service-token call whose credential did not resolve is REFUSED
+with a failure naming the missing key, never sent upstream unauthenticated
+(liminal#80); upstream 4xx/5xx or transport error mid-call →
+``ToolResult.failure`` with the cause.
 
 Two deployment notes. The owned HTTP client rejects every cookie (a blocking
 cookie policy): upstream ``Set-Cookie`` never persists, so one persona's
@@ -254,12 +257,15 @@ class HttpTarget(Target):
                 self._protocol_version = init_result.get("protocolVersion")
             tools_from_upstream = await self._client.list_tools()
         except Exception as exc:  # noqa: BLE001
+            # ANY fetch failure marks the status, deliberately (liminal#75):
+            # /healthz reads degraded until a fetch succeeds again. A stale
+            # catalog on refresh serves an increasingly wrong tool surface --
+            # a health check that stays green through that is the exact
+            # failure mode this issue exists to kill. Only the log severity
+            # is scoped: startup failure means zero tools (error); a refresh
+            # failure keeps serving the last good catalog (warning).
             self.catalog_status = f"catalog fetch failed: {exc}"
             if initialize:
-                # Startup failure is LOUD (liminal#75): error-level, and the
-                # status stays visible on /healthz -- a target serving zero
-                # tools because its catalog fetch failed must never look like
-                # a healthy target with nothing to offer.
                 log.error(
                     "http_target.catalog_failed",
                     target=self.name,
