@@ -314,10 +314,16 @@ async def _handle_tools_call(
 
     # Sovereign scope gate: when a grant and a scope map are wired, the scope
     # required by the specific TOOL must be held. `policy_scope_for` resolves
-    # the full tool name "<handler>.<tool>" — per-tool scope first, handler-level
-    # fallback (liminal#26 handler-level, #42 per-tool) — so a read/write split
-    # (memory recall vs commit) is enforceable, not collapsed. None = no scope
-    # requirement. admin:* satisfies any scope (see ScopeGrant.has_scope).
+    # the full tool name "<target>.<tool>" — per-tool scope first, target-level
+    # fallback — so a read/write split (memory recall vs commit) is enforceable,
+    # not collapsed. The name covers BOTH in-process handlers, whose scopes come
+    # from their CapabilityCards (liminal#26 handler-level, #42 per-tool), and
+    # federated targets, whose scopes come from operator config (#78); the
+    # Multiplexer namespaces them identically so this gate needs no branch.
+    #
+    # Three return states, not two: a scope string, None (no requirement), or
+    # DENY_SCOPE for a tool on a deny-by-default target that no operator rule
+    # names (#78). admin:* satisfies any of them (see ScopeGrant.has_scope).
     if grant is not None:
         scope_for = getattr(request.app.state, "policy_scope_for", None)
         required = scope_for(params.name) if scope_for is not None else None
