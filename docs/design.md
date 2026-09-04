@@ -348,15 +348,29 @@ trust       = "trusted"
 on_untrusted = "strip"      # only matters when trust = "untrusted"
 identity    = "forward"     # forward caller persona as x-liminal-persona header
 
-# Scope-gated target — per-tool sovereign scopes (liminal#78)
+# Scope-gated target, DENY-BY-DEFAULT (liminal#78).
+# NOTE there is no target-level `required_scope` here. That is deliberate --
+# see the precedence note below; adding one would DISABLE deny-by-default.
 [[target]]
-name          = "jira"
-address       = "https://jira-mcp.internal/mcp"
-required_scope = "jira:use"  # a grant must hold this for ANY tool here
+name    = "jira"
+address = "https://jira-mcp.internal/mcp"
 
-[target.tool_scopes]         # per-tool refinement; declaring it turns this
-"search"       = "jira:read" # target DENY-BY-DEFAULT — a tool named in
-"create_issue" = "jira:write" # neither rule is refused
+[target.tool_scopes]
+"search"       = "jira:read"
+"create_issue" = "jira:write"
+# A tool named in neither rule -- e.g. one that appears in a later catalog
+# refresh -- resolves to an unsatisfiable sentinel and is refused.
+
+# Scope-gated target, NOT deny-by-default: the target-level scope is the
+# fallback for every unnamed tool, so a new upstream tool is CALLABLE by any
+# grant holding `confluence:use`.
+[[target]]
+name           = "confluence"
+address        = "https://confluence-mcp.internal/mcp"
+required_scope = "confluence:use"
+
+[target.tool_scopes]
+"search" = "confluence:read"
 ```
 
 ### Keys
@@ -378,7 +392,7 @@ required_scope = "jira:use"  # a grant must hold this for ANY tool here
 | `relevance_signals` | no | `[]` | Routing hints (v2 on-demand activation). |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
 | `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
-| `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. **Declaring it makes the target deny-by-default.** |
+| `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. Declaring it makes the target deny-by-default **only when no `required_scope` is set** — see precedence below. |
 
 ### Version handling
 
@@ -399,8 +413,24 @@ only the *source of truth* differs.
 
 Deny-by-default is what makes this hold under catalog refresh. A target's tool list is
 re-fetched on a background loop, so a tool that did not exist when the operator wrote the
-config can appear later. On a target that declares `tool_scopes`, such a tool resolves to
-an unsatisfiable scope until an operator names it.
+config can appear later.
+
+**Precedence, and the trap in it.** A tool name resolves in this order:
+
+1. an exact `<target>.<tool>` rule from `tool_scopes`;
+2. the target-level `required_scope`;
+3. the deny sentinel, **only if** the target declares `tool_scopes`;
+4. otherwise open.
+
+So step 2 shadows step 3. **Setting `required_scope` alongside `tool_scopes` turns
+deny-by-default OFF** — an unnamed tool falls back to the target scope, and any grant
+holding it can call a tool that appeared in a refresh. If you want catalog-refresh
+protection, declare `tool_scopes` and leave `required_scope` unset.
+
+The refusal for a sentinel-denied tool deliberately does **not** name the sentinel as a
+scope to grant. `has_scope` is plain membership and the grant path validates nothing, so an
+operator who granted it would silently disable this gate on every strict target,
+permanently.
 
 ### Auth modes
 

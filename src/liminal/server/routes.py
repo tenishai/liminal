@@ -39,6 +39,7 @@ from liminal.server.mcp_types import (
     make_success,
 )
 from liminal.server.policy import PolicyStore, ScopeGrant
+from liminal.server.scopes import DENY_SCOPE
 from liminal.server.secret_guard import scan_tool_call
 from liminal.wire import to_spec_result_content as _to_spec_result_content
 
@@ -335,10 +336,27 @@ async def _handle_tools_call(
                     agent=claims.agent_name, allowed=False,
                     detail={"tool": params.name, "required_scope": required},
                 )
+            # DENY_SCOPE is a sentinel, not a scope an operator should ever
+            # grant. Naming it here would read as instructions: `has_scope` is
+            # plain membership and the grant path validates nothing, so an
+            # operator who "granted the scope the error asked for" would
+            # silently open every unnamed tool on every strict target,
+            # permanently. Say what actually happened instead.
+            if required == DENY_SCOPE:
+                message = (
+                    f"tool {params.name!r} is not named in the scope map for "
+                    f"target {handler_name!r}, which is deny-by-default because "
+                    f"it declares tool_scopes. Add it to that target's "
+                    f"[target.tool_scopes] table, or set a target-level "
+                    f"required_scope. Do NOT grant {DENY_SCOPE!r} — it is a "
+                    f"sentinel, and granting it disables this gate entirely."
+                )
+            else:
+                message = f"scope {required!r} required for tool {params.name!r}"
             return make_error(
                 id=rpc_req.id,
                 code=ERROR_UNAUTHORIZED,
-                message=f"scope {required!r} required for tool {params.name!r}",
+                message=message,
             )
 
     # Fail-closed pre-persist secret guard (liminal#50): scan the content of

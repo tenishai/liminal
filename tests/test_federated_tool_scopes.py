@@ -239,8 +239,10 @@ async def test_federated_tool_is_scope_gated_at_tools_call(
 
         assert "scope 'jira:write' required" in await call("jira.create_issue", 1)
 
-        # Deny-by-default reaches the wire for an unnamed tool.
-        assert f"scope {DENY_SCOPE!r} required" in await call("jira.undeclared", 2)
+        # Deny-by-default reaches the wire for an unnamed tool. The message
+        # names the fix rather than the sentinel — see
+        # test_sentinel_refusal_does_not_tell_the_operator_to_grant_it.
+        assert "not named in the scope map" in await call("jira.undeclared", 2)
 
         # Admission: the read-scoped tool is NOT refused on scope. It fails
         # downstream (the target was never started), which is the point — the
@@ -253,3 +255,77 @@ async def test_federated_tool_is_scope_gated_at_tools_call(
     assert any(d.detail.get("required_scope") == "jira:write" for d in denies), (
         "no access_deny audit row recorded for the federated scope refusal"
     )
+
+
+def test_required_scope_shadows_deny_by_default() -> None:
+    """Prudence, #81 round 1. The documented example was the config where the
+    documented claim is FALSE.
+
+    Precedence is exact -> target-level -> sentinel, so a target-level
+    `required_scope` shadows the sentinel and an unnamed tool falls back to it.
+    Declaring both therefore turns deny-by-default OFF. This test exists so the
+    doc and the code cannot drift apart again.
+    """
+    both = scope_for(
+        Registry(),
+        [_spec("jira", required_scope="jira:use", tool_scopes={"search": "jira:read"})],
+    )
+    assert both("jira.NEW_UPSTREAM_TOOL") == "jira:use"  # NOT the sentinel
+    assert both("jira.NEW_UPSTREAM_TOOL") != DENY_SCOPE
+
+    only_tool_scopes = scope_for(
+        Registry(), [_spec("jira", tool_scopes={"search": "jira:read"})]
+    )
+    assert only_tool_scopes("jira.NEW_UPSTREAM_TOOL") == DENY_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_sentinel_refusal_does_not_tell_the_operator_to_grant_it(
+    tmp_path, signing_key, keyset
+) -> None:
+    """Prudence, #81 round 1. `scope 'liminal:deny' required` read as an
+    instruction — and granting it works, silently disabling the gate on every
+    strict target. The refusal must name the fix, not the sentinel."""
+    _SVC = "sentinel-msg-test"
+    verifier = MultiIssuerJWKSVerifier(
+        registry={
+            "rd-cabal": StaticKeySetVerifier(
+                key_set=keyset, expected_issuer="rd-cabal", expected_audience=_SVC
+            ),
+        },
+        parents=frozenset({"rd-cabal"}),
+    )
+    store = SqlitePolicyStore(str(tmp_path / "msg.db"), parent_issuer="rd-cabal")
+    app = create_app(
+        jwt_verifier=verifier,
+        registry=Registry(),
+        policy_store=store,
+        targets=[_spec("jira", tool_scopes={"search": "jira:read"})],
+    )
+    await store.grant(
+        "rd-cabal", "rook", scopes={"jira:read"}, allowed_handlers={"jira"}
+    )
+    now = int(time.time())
+    tok = jwt.encode(
+        {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"},
+        {"iss": "rd-cabal", "sub": "rook-primus", "aud": _SVC,
+         "iat": now, "exp": now + 60, "cabal_persona": "rook"},
+        signing_key,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                  "params": {"name": "jira.undeclared", "arguments": {}}},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+    store.close()
+    msg = (r.json().get("error") or {}).get("message", "")
+    assert "not named in the scope map" in msg
+    assert "tool_scopes" in msg
+    # It may warn against granting the sentinel, but must never read as
+    # "you need scope X" where X is the sentinel.
+    assert f"scope {DENY_SCOPE!r} required" not in msg
+    assert "Do NOT grant" in msg

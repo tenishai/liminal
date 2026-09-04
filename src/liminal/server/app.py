@@ -29,6 +29,7 @@ from liminal.server.admin import build_admin_router
 from liminal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
 from liminal.server.policy import PolicyStore
 from liminal.server.routes import build_router
+from liminal.server.scopes import DENY_SCOPE
 from liminal.target import (
     InProcessTarget,
     Target,
@@ -68,12 +69,6 @@ class ConfigError(RuntimeError):
     the boundary and render ``error: <cause>`` with exit 2, honouring the
     "config errors never surface as a traceback" contract (liminal#31).
     """
-
-
-# A scope no grant can hold. Returned for a tool on a deny-by-default target
-# that no operator rule names (liminal#78). `admin:*` still satisfies it, which
-# is deliberate and consistent with every other gate — see ScopeGrant.has_scope.
-DENY_SCOPE = "liminal:deny"
 
 
 def scope_for_from_registry(reg: Registry) -> Callable[[str], str | None]:
