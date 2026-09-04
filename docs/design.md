@@ -437,9 +437,30 @@ and the JSON-RPC result carries the same fact out of band:
   `"target not started"` is that case, since no request was made. The envelope means "an
   upstream wrote this", and diluting it would make it useless.
 
-`json` and `image` blocks pass through structurally unchanged; they sit inside the
-envelope and are covered by the `_meta` flag, which is why a runtime that inspects blocks
-rather than concatenated text must read `_meta`.
+Every string in every block is sanitised, at any depth — not only `type: "text"`. Block
+*structure* is preserved: keys, nesting and non-string values are untouched. This matters
+because `resource` blocks carry their own `text` field and a `json` block is converted to
+text by liminal's wire layer one hop later, so a text-only pass left both delivering the
+attack the envelope exists to stop.
+
+**Where the defence actually lives**, in descending order of how much it holds — stated
+plainly because the in-band envelope is the weakest of the four and it is the most visible:
+
+1. **The operator's grant** — `trust`, `allowed_handlers`, per-tool scoping. The only
+   *authority* boundary. Everything below is labelling.
+2. **`_meta`** — the only thing a runtime can act on deterministically, and unforgeable
+   from upstream: the outbound client reads only `content` and `isError` from an upstream
+   result, so an upstream's own `_meta` is discarded before liminal builds its own. An
+   upstream cannot mark itself trusted and cannot supply a nonce.
+3. **Hidden-unicode stripping** — mechanical sanitisation, not persuasion.
+4. **The in-band banner** — a hint whose reliability belongs to the model, not to liminal.
+   A model that would obey an injected instruction may equally ignore the banner.
+
+(4) is not decorative, but its value is *delimitation* rather than persuasion: the content
+array on the wire is genuinely mixed — liminal's own error description is appended after
+the closing marker — so the markers are what separate upstream bytes from liminal's own in
+a flattened concatenation. Do not build a control that depends on the model honouring the
+banner. Build on `_meta`.
 
 ---
 

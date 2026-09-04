@@ -291,3 +291,39 @@ async def test_meta_flag_reaches_the_client(keyset, mint_token) -> None:
     assert meta["liminal/untrusted_source"] == "evil"
     text = "\n".join(b.get("text", "") for b in result["content"])
     assert f"[END UNTRUSTED TOOL RESULT {meta['liminal/untrusted_nonce']}]" in text
+
+
+def test_every_block_type_is_sanitised_not_just_text() -> None:
+    """Prudence, #82 round 1. Sanitising only `type == "text"` was unsound.
+
+    `resource` is a spec-legal MCP content type carrying its own `text` field,
+    and a `json` block is converted to text by liminal's own wire layer one hop
+    later with `ensure_ascii=False` — which preserves the codepoints verbatim.
+    Either shape delivered the exact attack this function exists to stop.
+    """
+    sneaky = "safe\u200b\u202eevil\u2066text"
+    blocks = [
+        {"type": "text", "text": sneaky},
+        {"type": "resource", "resource": {"uri": "x://y", "text": sneaky}},
+        {"type": "json", "data": {"nested": [{"deep": sneaky}]}},
+    ]
+    framed = frame_untrusted_result(blocks, "evil", "n")
+
+    assert framed[1]["text"] == "safeeviltext"
+    assert framed[2]["resource"]["text"] == "safeeviltext"
+    assert framed[3]["data"]["nested"][0]["deep"] == "safeeviltext"
+    # Structure is preserved — only string contents are rewritten.
+    assert framed[2]["resource"]["uri"] == "x://y"
+    assert framed[3]["type"] == "json"
+
+
+def test_deep_sanitisation_does_not_mutate_the_caller_block() -> None:
+    blocks = [{"type": "resource", "resource": {"text": "a\u200bb"}}]
+    frame_untrusted_result(blocks, "evil", "n")
+    assert blocks[0]["resource"]["text"] == "a\u200bb"
+
+
+def test_non_string_values_survive_sanitisation() -> None:
+    blocks = [{"type": "json", "data": {"n": 1, "ok": True, "none": None, "f": 1.5}}]
+    framed = frame_untrusted_result(blocks, "evil", "n")
+    assert framed[1]["data"] == {"n": 1, "ok": True, "none": None, "f": 1.5}

@@ -141,6 +141,21 @@ def _iter_schema_strings(schema: object) -> list[str]:
     return out
 
 
+def _strip_hidden_deep(value: Any) -> Any:
+    """Recursively strip hidden unicode from every string in a structure.
+
+    The transform counterpart to ``_iter_schema_strings``. Rebuilds rather than
+    mutates, so a caller's block is never modified in place.
+    """
+    if isinstance(value, str):
+        return _strip_hidden_unicode(value)
+    if isinstance(value, dict):
+        return {k: _strip_hidden_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_hidden_deep(v) for v in value]
+    return value
+
+
 def scan_tool(tool: ToolSpec) -> list[str]:
     """Return a list of finding reasons for one tool (empty == clean)."""
     findings: list[str] = []
@@ -266,9 +281,15 @@ def frame_untrusted_result(
     the same attack (an instruction hidden from a human reviewing the output
     but visible to the model).
 
-    Non-text blocks (``json``, ``image``, ...) pass through structurally
-    unchanged; they sit inside the envelope, and the ``_meta`` flag covers a
-    runtime that inspects blocks rather than concatenated text.
+    Sanitisation is applied to EVERY string in every block, at any depth — not
+    only to ``type == "text"``. Two spec-legal shapes made a text-only pass
+    unsound: ``resource`` blocks carry their own ``text`` field, and a ``json``
+    block is converted to text by liminal's own wire layer one hop later with
+    ``ensure_ascii=False``, which preserves the codepoints verbatim. Either one
+    delivered the exact attack this function's docstring names.
+
+    Block STRUCTURE is preserved — keys, nesting and non-string values are
+    untouched; only string contents are rewritten.
 
     Returns a NEW list — the input is not mutated.
     """
@@ -276,8 +297,6 @@ def frame_untrusted_result(
         {"type": "text", "text": _RESULT_OPEN.format(nonce=nonce, target=target_name)}
     ]
     for block in content:
-        if isinstance(block, dict) and block.get("type") == "text":
-            block = {**block, "text": _strip_hidden_unicode(str(block.get("text", "")))}
-        framed.append(block)
+        framed.append(_strip_hidden_deep(block))
     framed.append({"type": "text", "text": _RESULT_CLOSE.format(nonce=nonce)})
     return framed
