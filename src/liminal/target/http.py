@@ -137,10 +137,16 @@ class HttpTarget(Target):
             try:
                 framed = frame_untrusted_result(content, self.name, nonce)
             except UnsanitizableResult as exc:
-                # Fail closed and, critically, fail as a ToolResult rather than
-                # letting an exception escape dispatch(): _handle_tools_call
-                # catches only UnknownTool/DispatchError, so anything else
-                # becomes an unhandled 500 instead of a JSON-RPC error.
+                # Fail closed, and fail as a ToolResult rather than letting the
+                # exception propagate. NOT because it would reach Starlette —
+                # Multiplexer.dispatch has a blanket `except Exception` and is
+                # the only dispatcher wired, so it would not. The reason is that
+                # a propagated exception yields "evil.search raised
+                # UnsanitizableResult", while returning here yields a refusal
+                # that names the target, the cause, and the disposition.
+                # (Prudence, liminal#82 rounds 3 and 4 — this was a FOURTH site
+                # of the retracted "unhandled 500" claim, ninety lines below the
+                # correction in inspect.py.)
                 log.warning(
                     "http_target.result_unsanitizable",
                     target=self.name, tool=tool, error=str(exc),
