@@ -280,3 +280,66 @@ async def test_periodic_refresh_failure_degrades_and_recovery_resets() -> None:
         assert target.catalog_status == "ready"
     finally:
         await target.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_healthz_does_not_republish_upstream_bytes() -> None:
+    """Prudence, #84 r1 Critical. `catalog_status` is served VERBATIM on
+    /healthz, which has no auth at all — so interpolating the exception let an
+    UPSTREAM choose what liminal republishes to unauthenticated callers.
+    MCPTransportError embeds `resp.text[:200]` for a 5xx, so a 500 body reached
+    the wire. The status must be coarse; the detail belongs in the log.
+    """
+    marker = "SUPERSECRET-UPSTREAM-BODY-DO-NOT-REPUBLISH"
+    state = {"n": 0}
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.read())
+        if body.get("method") == "tools/list":
+            state["n"] += 1
+            if state["n"] > 1:                     # first fetch succeeds
+                return httpx.Response(500, text=marker)
+        return _rpc_responder(request)
+
+    target = HttpTarget(
+        _http_spec(), http_client=httpx.AsyncClient(transport=_Recorder(boom))
+    )
+    await target.startup()
+    try:
+        await target._refresh_tools_once()
+        assert target.catalog_status.startswith("catalog fetch failed")
+        assert marker not in target.catalog_status, (
+            "the upstream's response body reached catalog_status, and /healthz "
+            "serves that verbatim to unauthenticated callers"
+        )
+    finally:
+        await target.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_credential_is_a_missing_credential() -> None:
+    """Prudence, #84 r1 Important. `if not token` catches "" and None but not
+    "   " — and a trailing newline is the shape a secret read from a file
+    arrives in. #80's guarantee is that a missing credential is a REFUSAL, not
+    an anonymous upstream call.
+    """
+    recorder = _Recorder(_rpc_responder)
+    target = HttpTarget(
+        _http_spec(auth_method="service-token", credential_key="svc"),
+        http_client=httpx.AsyncClient(transport=recorder),
+    )
+    await target.startup()
+    try:
+        for bad in ("   ", "\n", "\t \n"):
+            before = len(recorder.requests)
+            result = await target.dispatch(
+                "search", {}, _ctx(credentials={"svc": bad})
+            )
+            assert result.is_error, f"whitespace credential {bad!r} was accepted"
+            assert "did not resolve" in (result.error or "")
+            assert len(recorder.requests) == before, (
+                f"a request was dialed with credential {bad!r} — #80's "
+                "guarantee is that this never reaches the upstream"
+            )
+    finally:
+        await target.shutdown()

@@ -233,7 +233,13 @@ class HttpTarget(Target):
         # (liminal#80) -- never an unauthenticated upstream attempt.
         if self.spec.auth_method == "service-token":
             key = self.spec.credential_key or ""
-            token = ctx.credentials.get(key) if key else ""
+            # STRIP BEFORE TESTING. `if not token` catches "" and None but
+            # not "   " — and a trailing newline is the shape a secret read
+            # from a file arrives in. Driven: dialed=1, is_error=False,
+            # auth='Bearer    ' (Prudence, liminal#84 r1). A whitespace-only
+            # credential is a missing credential, and #80's guarantee is that
+            # a missing credential is a refusal rather than an anonymous call.
+            token = (ctx.credentials.get(key) or "").strip() if key else ""
             if not token:
                 raise _MissingCredential(key or "(no credential_key configured)")
             headers["Authorization"] = f"Bearer {token}"
@@ -264,7 +270,26 @@ class HttpTarget(Target):
             # failure mode this issue exists to kill. Only the log severity
             # is scoped: startup failure means zero tools (error); a refresh
             # failure keeps serving the last good catalog (warning).
-            self.catalog_status = f"catalog fetch failed: {exc}"
+            # COARSE ON THE WIRE, DETAIL IN THE LOG. `exc` embeds the
+            # upstream's own response body for a 5xx — MCPTransportError is
+            # built as f"server {status}: {resp.text[:200]}" — and routes.py
+            # serves catalog_status VERBATIM on /healthz, which has no auth at
+            # all. So interpolating it here let an UPSTREAM choose what liminal
+            # republishes to unauthenticated callers, which is precisely what
+            # `trust = "untrusted"` exists to prevent (Prudence, liminal#84 r1;
+            # driven: a 500 upstream and a bare GET /healthz returned 200
+            # characters of upstream body in the JSON).
+            #
+            # The status still discriminates the two cases a health check
+            # actually needs, and the log lines below already carry the cause.
+            # The "catalog fetch failed" prefix is deliberate: it keeps the
+            # existing assertion in test_fail_loud.py green without editing
+            # someone else's test, and the parenthetical still discriminates
+            # the two cases a health check needs to tell apart.
+            self.catalog_status = (
+                "catalog fetch failed (startup)" if initialize
+                else "catalog fetch failed (refresh)"
+            )
             if initialize:
                 log.error(
                     "http_target.catalog_failed",
