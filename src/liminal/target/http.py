@@ -230,10 +230,23 @@ class HttpTarget(Target):
         if self.trust is not TrustTier.UNTRUSTED:
             return ToolResult.failure(f"{reason}: {upstream_text}")
         nonce = new_envelope_nonce()
-        return ToolResult(
-            content=frame_untrusted_result(
+        # GUARDED LIKE THE SUCCESS PATH. This call was unguarded, so an upstream
+        # error message — MCPRemoteError.message is unvalidated — bypassed the
+        # depth bound the success path enforces. The Multiplexer's blanket
+        # except contains it, so this was a message-parity gap rather than a
+        # crash: the caller got "raised UnsanitizableResult" instead of the
+        # refusal prose. (Prudence, liminal#82 round 3, nit 3.)
+        try:
+            framed = frame_untrusted_result(
                 [{"type": "text", "text": upstream_text}], self.name, nonce
-            ),
+            )
+        except UnsanitizableResult as exc:
+            return ToolResult.failure(
+                f"{reason}, and the upstream's error text could not be "
+                f"sanitised ({exc}); it is not forwarded"
+            )
+        return ToolResult(
+            content=framed,
             is_error=True,
             error=reason,
             liminal_untrusted=True,

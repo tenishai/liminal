@@ -331,11 +331,18 @@ def test_non_string_values_survive_sanitisation() -> None:
 
 
 def test_deeply_nested_content_is_refused_not_a_recursion_error() -> None:
-    """Prudence, #82 r2. The walker this PR added was unbounded and reachable:
-    `json.loads` accepts nesting to ~9994 while a plain recursive walk dies near
-    1000, so ~4KB on the wire raised RecursionError out of dispatch(). Since
-    `_handle_tools_call` catches only UnknownTool/DispatchError, that escaped as
-    an unhandled Starlette 500 rather than a JSON-RPC error.
+    """Prudence, #82 r2 (finding) and r3 (its correction).
+
+    The walker this PR added was unbounded and reachable: `json.loads` accepts
+    nesting to ~9994 while a plain recursive walk dies near 1000, so ~4KB on the
+    wire raised RecursionError out of the sanitiser.
+
+    It did NOT reach Starlette as an unhandled 500 — that was the round-2
+    rationale and it was wrong. `Multiplexer.dispatch` has a blanket
+    `except Exception` that converts it to ToolResult.failure, and it is the
+    only dispatcher wired. What bounding actually buys is a DETERMINISTIC
+    failure instead of a stack-depth-dependent one, and a refusal that says why
+    rather than a message naming only the exception type.
     """
     from liminal.target.inspect import MAX_CONTENT_DEPTH, UnsanitizableResult
 
@@ -377,3 +384,42 @@ async def test_unsanitizable_result_fails_closed_as_a_toolresult() -> None:
     assert result.is_error is True
     assert "could not be sanitised" in (result.error or "")
     assert "not forwarded" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_an_unsanitizable_upstream_ERROR_also_fails_closed() -> None:
+    """Prudence, #82 r3 nit 3. `_error_result` called the framing UNGUARDED, so
+    an upstream error message bypassed the depth bound the success path
+    enforces. Contained by the Multiplexer's blanket except, so it was a
+    message-parity gap: the caller got "raised UnsanitizableResult" instead of
+    the refusal prose that names what happened.
+    """
+
+    # An error message is a flat string, so depth alone cannot trigger it —
+    # drive the guard directly by shrinking the bound for this call.
+    import liminal.target.inspect as insp
+
+    original = insp.MAX_CONTENT_DEPTH
+    insp.MAX_CONTENT_DEPTH = 0          # every structure now exceeds the bound
+    try:
+        def erroring(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.read())
+            if body.get("method") in ("initialize", "tools/list"):
+                return _responder()(request)
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0", "id": body.get("id"),
+                "error": {"code": -32000, "message": "upstream prose"},
+            })
+
+        target = HttpTarget(_spec(trust="untrusted"), http_client=_client(erroring))
+        await target.startup()
+        result = await target.dispatch("search", {}, _ctx())
+        await target.shutdown()
+    finally:
+        insp.MAX_CONTENT_DEPTH = original
+
+    assert result.is_error is True
+    assert "could not be " in (result.error or "")
+    assert "UnsanitizableResult" not in (result.error or ""), (
+        "the raw exception name leaked instead of the refusal prose"
+    )

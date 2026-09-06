@@ -145,9 +145,23 @@ def _iter_schema_strings(schema: object) -> list[str]:
 # recursion limit. The walker MUST bound itself: `json.loads` accepts nesting to
 # ~9994 while a plain recursive walk dies near 1000, so an upstream needed only
 # ~4KB on the wire — a `json` block nested 2000 deep — to raise RecursionError
-# out of dispatch(). `_handle_tools_call` catches only UnknownTool and
-# DispatchError, so it escaped as an unhandled Starlette 500 rather than a
-# JSON-RPC error (Prudence, liminal#82 round 2).
+# out of the sanitiser.
+#
+# WHAT THAT ACTUALLY COST, stated correctly. An earlier version of this comment
+# said the exception escaped into Starlette as an unhandled 500 because
+# `_handle_tools_call` catches only UnknownTool/DispatchError. The second half
+# is true (routes.py) but the conclusion is NOT: `Multiplexer.dispatch`
+# (dispatch/multiplexer.py) wraps the target call in a blanket `except
+# Exception` and converts it to ToolResult.failure, and the Multiplexer is the
+# only dispatcher wired (server/app.py). So no HttpTarget exception reaches
+# Starlette on any request path. Measured against the unbounded walker with a
+# 2000-deep payload: is_error=True, error="evil.search raised RecursionError".
+#
+# The real value of bounding it is therefore smaller and more honest: it turns a
+# STACK-DEPTH-DEPENDENT failure into a DETERMINISTIC one, and replaces a message
+# naming only the exception type with a refusal that says why the content was
+# rejected and that it was not forwarded. (Prudence, liminal#82 round 3,
+# correcting her own round-2 finding, which I had propagated verbatim.)
 MAX_CONTENT_DEPTH: int = 64
 
 
