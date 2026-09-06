@@ -12,6 +12,7 @@ real forward path is exercised.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -327,3 +328,52 @@ def test_non_string_values_survive_sanitisation() -> None:
     blocks = [{"type": "json", "data": {"n": 1, "ok": True, "none": None, "f": 1.5}}]
     framed = frame_untrusted_result(blocks, "evil", "n")
     assert framed[1]["data"] == {"n": 1, "ok": True, "none": None, "f": 1.5}
+
+
+def test_deeply_nested_content_is_refused_not_a_recursion_error() -> None:
+    """Prudence, #82 r2. The walker this PR added was unbounded and reachable:
+    `json.loads` accepts nesting to ~9994 while a plain recursive walk dies near
+    1000, so ~4KB on the wire raised RecursionError out of dispatch(). Since
+    `_handle_tools_call` catches only UnknownTool/DispatchError, that escaped as
+    an unhandled Starlette 500 rather than a JSON-RPC error.
+    """
+    from liminal.target.inspect import MAX_CONTENT_DEPTH, UnsanitizableResult
+
+    deep: Any = "x"
+    for _ in range(MAX_CONTENT_DEPTH + 5):
+        deep = {"n": deep}
+
+    with pytest.raises(UnsanitizableResult):
+        frame_untrusted_result([{"type": "json", "data": deep}], "evil", "n")
+
+    # And a legitimately shallow block is unaffected.
+    ok: Any = "y"
+    for _ in range(MAX_CONTENT_DEPTH - 5):
+        ok = {"n": ok}
+    framed = frame_untrusted_result([{"type": "json", "data": ok}], "evil", "n")
+    assert len(framed) == 3
+
+
+@pytest.mark.asyncio
+async def test_unsanitizable_result_fails_closed_as_a_toolresult() -> None:
+    """The refusal must be a ToolResult, not an escaping exception — otherwise
+    it is a 500 instead of a JSON-RPC error, which is the actual defect."""
+    from liminal.target.inspect import MAX_CONTENT_DEPTH
+
+    deep: Any = "x"
+    for _ in range(MAX_CONTENT_DEPTH + 5):
+        deep = {"n": deep}
+
+    target = HttpTarget(
+        _spec(trust="untrusted"),
+        http_client=_client(
+            _responder(on_call={"search": {"content": [{"type": "json", "data": deep}]}})
+        ),
+    )
+    await target.startup()
+    result = await target.dispatch("search", {}, _ctx())
+    await target.shutdown()
+
+    assert result.is_error is True
+    assert "could not be sanitised" in (result.error or "")
+    assert "not forwarded" in (result.error or "")

@@ -141,18 +141,42 @@ def _iter_schema_strings(schema: object) -> list[str]:
     return out
 
 
-def _strip_hidden_deep(value: Any) -> Any:
+# Deeper than any legitimate MCP content block, and far below the interpreter's
+# recursion limit. The walker MUST bound itself: `json.loads` accepts nesting to
+# ~9994 while a plain recursive walk dies near 1000, so an upstream needed only
+# ~4KB on the wire — a `json` block nested 2000 deep — to raise RecursionError
+# out of dispatch(). `_handle_tools_call` catches only UnknownTool and
+# DispatchError, so it escaped as an unhandled Starlette 500 rather than a
+# JSON-RPC error (Prudence, liminal#82 round 2).
+MAX_CONTENT_DEPTH: int = 64
+
+
+class UnsanitizableResult(ValueError):
+    """A result too deeply nested to sanitise within the depth bound.
+
+    Raised rather than returned partially-walked, deliberately: a result that
+    could not be fully sanitised must not reach the agent wearing an envelope
+    that claims it was. Fail closed, like every other gate here.
+    """
+
+
+def _strip_hidden_deep(value: Any, _depth: int = 0) -> Any:
     """Recursively strip hidden unicode from every string in a structure.
 
     The transform counterpart to ``_iter_schema_strings``. Rebuilds rather than
-    mutates, so a caller's block is never modified in place.
+    mutates, so a caller's block is never modified in place. Bounded — see
+    ``MAX_CONTENT_DEPTH``; the input is attacker-supplied by definition.
     """
+    if _depth > MAX_CONTENT_DEPTH:
+        raise UnsanitizableResult(
+            f"content nested deeper than {MAX_CONTENT_DEPTH} levels"
+        )
     if isinstance(value, str):
         return _strip_hidden_unicode(value)
     if isinstance(value, dict):
-        return {k: _strip_hidden_deep(v) for k, v in value.items()}
+        return {k: _strip_hidden_deep(v, _depth + 1) for k, v in value.items()}
     if isinstance(value, list):
-        return [_strip_hidden_deep(v) for v in value]
+        return [_strip_hidden_deep(v, _depth + 1) for v in value]
     return value
 
 

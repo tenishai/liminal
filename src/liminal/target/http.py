@@ -45,6 +45,7 @@ from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
 from liminal.target.config import TargetConfigError, TargetSpec
 from liminal.target.inspect import (
+    UnsanitizableResult,
     frame_untrusted_result,
     inspect_catalog,
     new_envelope_nonce,
@@ -133,8 +134,23 @@ class HttpTarget(Target):
             # RETURNS. The nonce goes out-of-band in the response `_meta` so a
             # runtime can verify the delimiters instead of trusting their shape.
             nonce = new_envelope_nonce()
+            try:
+                framed = frame_untrusted_result(content, self.name, nonce)
+            except UnsanitizableResult as exc:
+                # Fail closed and, critically, fail as a ToolResult rather than
+                # letting an exception escape dispatch(): _handle_tools_call
+                # catches only UnknownTool/DispatchError, so anything else
+                # becomes an unhandled 500 instead of a JSON-RPC error.
+                log.warning(
+                    "http_target.result_unsanitizable",
+                    target=self.name, tool=tool, error=str(exc),
+                )
+                return ToolResult.failure(
+                    f"refused: {self.name!r} returned content that could not be "
+                    f"sanitised ({exc}); it is not forwarded"
+                )
             return ToolResult(
-                content=frame_untrusted_result(content, self.name, nonce),
+                content=framed,
                 is_error=outcome.is_error,
                 liminal_untrusted=True,
                 liminal_untrusted_source=self.name,
