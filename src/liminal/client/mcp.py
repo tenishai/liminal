@@ -260,12 +260,21 @@ class AsyncMCPClient:
             # Coercing here rather than sanitising .error at the wire layer is
             # deliberate: it closes the unvalidated field instead of papering
             # over it, and it makes `reason` what its docstring already claims.
+            # THE WHOLE ACCESS IS GUARDED, not just the int(). A non-dict
+            # `err` raises TypeError at err["code"] — caught — and then trips on
+            # err.get("message") ONE LINE LATER, outside the try. Contained by
+            # the Multiplexer either way, but it made the guard look like it
+            # covered a case it did not. (Prudence, #82 round 5, nit.)
+            if not isinstance(err, dict):
+                err = {}
             try:
                 _code = int(err["code"])
             except (TypeError, ValueError, KeyError):
                 _code = -32603  # JSON-RPC "Internal error"; the upstream's is unusable
+            _msg = err.get("message", "")
             raise MCPRemoteError(
-                code=_code, message=err.get("message", ""), data=err.get("data")
+                code=_code, message=_msg if isinstance(_msg, str) else str(_msg),
+                data=err.get("data"),
             )
         return body.get("result") or {}
 

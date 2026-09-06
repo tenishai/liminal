@@ -12,6 +12,7 @@ real forward path is exercised.
 from __future__ import annotations
 
 import json
+import pathlib
 from typing import Any
 
 import httpx
@@ -363,8 +364,19 @@ def test_deeply_nested_content_is_refused_not_a_recursion_error() -> None:
 
 @pytest.mark.asyncio
 async def test_unsanitizable_result_fails_closed_as_a_toolresult() -> None:
-    """The refusal must be a ToolResult, not an escaping exception — otherwise
-    it is a 500 instead of a JSON-RPC error, which is the actual defect."""
+    """The refusal must be a ToolResult, not an escaping exception.
+
+    NOT because an escape would reach Starlette — see the corrected docstring 25
+    lines above; `Multiplexer.dispatch` catches it. Disproved by execution: an
+    escaping UnsanitizableResult driven through the real Multiplexer yields
+    `ToolResult.failure('evil.search raised UnsanitizableResult')`, not a 500.
+
+    The reason is legibility: an escape gives the caller a bare exception name,
+    while returning here gives a refusal that names the target, the cause and
+    the disposition. (Prudence, #82 round 5 — the FIFTH surviving site of the
+    retracted claim, and the last: found by grepping for it rather than by
+    waiting for the next round to surface one more.)
+    """
     from liminal.target.inspect import MAX_CONTENT_DEPTH
 
     deep: Any = "x"
@@ -459,3 +471,48 @@ async def test_a_hostile_error_code_cannot_escape_the_envelope() -> None:
     # The upstream's own prose is still delivered — framed, not dropped.
     assert "benign upstream prose" in _text(result)
     assert "[BEGIN UNTRUSTED TOOL RESULT" in _text(result)
+
+
+def test_the_retracted_starlette_claim_is_not_stated_as_fact_anywhere() -> None:
+    """Prudence, #82 round 5. The round-2 rationale — that a RecursionError out
+    of the sanitiser reaches Starlette as an unhandled 500 — was retracted in
+    round 3 and then fixed ONE SITE PER ROUND across rounds 3, 4 and 5. Five
+    sites in total; each round reported "the Nth" while sitting in a file
+    containing the next.
+
+    Her verdict on that, which is why this test exists rather than a sixth
+    round: "the right move was one grep and one commit."
+
+    So this is the grep, executable. It permits the two sites that RETRACT the
+    claim (they must quote it to correct it) and fails on any that assert it.
+    """
+    root = pathlib.Path(__file__).resolve().parents[1]
+    # A site is a RETRACTION if its neighbourhood negates the claim. These are
+    # the phrases the three corrections actually use — chosen by reading them,
+    # not guessed, because a marker list that misses a real retraction turns
+    # this guard into a false alarm and a false alarm gets deleted.
+    RETRACTING = (
+        "retracted",
+        "an earlier version",
+        "conclusion is NOT",
+        "did NOT reach",
+        "It did NOT",
+        "NOT because",
+        "was the round-2 rationale",
+    )
+    offenders = []
+    for path in list((root / "src").rglob("*.py")) + list((root / "tests").rglob("*.py")):
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            if "unhandled 500" not in line and "actual defect" not in line:
+                continue
+            window = "\n".join(
+                path.read_text().splitlines()[max(0, i - 6):i + 5]
+            )
+            low = window.lower()
+            if not any(m.lower() in low for m in RETRACTING):
+                offenders.append(f"{path.relative_to(root)}:{i}: {line.strip()}")
+    assert not offenders, (
+        "the retracted 'unhandled 500' claim is stated as fact at:\n  "
+        + "\n  ".join(offenders)
+        + "\nMultiplexer.dispatch catches it; it never reaches Starlette."
+    )

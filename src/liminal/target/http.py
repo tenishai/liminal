@@ -144,9 +144,9 @@ class HttpTarget(Target):
                 # a propagated exception yields "evil.search raised
                 # UnsanitizableResult", while returning here yields a refusal
                 # that names the target, the cause, and the disposition.
-                # (Prudence, liminal#82 rounds 3 and 4 — this was a FOURTH site
-                # of the retracted "unhandled 500" claim, ninety lines below the
-                # correction in inspect.py.)
+                # (Prudence, liminal#82 rounds 3 and 4 — one of five sites of
+                # the retracted "unhandled 500" claim; the correction lives in
+                # inspect.py beside MAX_CONTENT_DEPTH.)
                 log.warning(
                     "http_target.result_unsanitizable",
                     target=self.name, tool=tool, error=str(exc),
