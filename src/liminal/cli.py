@@ -397,8 +397,12 @@ def main(argv: list[str] | None = None) -> int:
                     "admin_personas = [\"*\"] -- EVERY persona it mints holds "
                     "admin:* on /admin/*, which is the state the missing-"
                     "admin_personas error refuses. This is an explicit "
-                    "deployment choice and is permitted; name specific personas "
-                    "to narrow it.",
+                    "deployment choice and is permitted.\n"
+                    "  To narrow it you need a NEW --policy-db as well: this "
+                    "boot seeds the wildcard parent row, and naming specific "
+                    "personas against the same database is then refused as a "
+                    "narrowing (the row is immutable, so the narrowing would "
+                    "be a no-op).",
                     file=sys.stderr,
                 )
             try:
