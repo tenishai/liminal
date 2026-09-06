@@ -266,9 +266,24 @@ def test_sole_parent_registry_without_admin_personas_exits_2(
     assert "admin_personas" in err
 
 
-def test_multi_issuer_registry_without_admin_personas_warns(
+def test_multi_issuer_registry_without_admin_personas_is_REFUSED(
     monkeypatch, tmp_path, capsys
 ) -> None:
+    """DELIBERATE BEHAVIOUR CHANGE (Prudence, #83 round 1, Critical 2).
+
+    This test previously asserted rc == 0 with a warning — it PINNED THE
+    VULNERABLE BEHAVIOUR. The graduated guard keyed on `len(issuers)`, which is
+    not the hazard's axis: adding an unrelated second issuer downgraded refusal
+    to a warning while reducing the parent's own agents' exposure not at all.
+    Driven against the real CLI, an ungranted agent then got 200 on
+    /admin/policy, self-granted admin:*, dispatched, and revoked the partner
+    cabal.
+
+    Every issuer in the registry is a data-plane issuer, so the parent always
+    signs data-plane tokens; without admin_personas every persona it mints
+    holds admin standing, at one issuer and at ten. The multi-issuer case must
+    refuse for the same reason the single-issuer case does.
+    """
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
@@ -286,9 +301,52 @@ def test_multi_issuer_registry_without_admin_personas_warns(
             str(tmp_path / "p.db"),
         ]
     )
-    assert rc == 0
+    assert rc == 2, "a multi-issuer registry without admin_personas must REFUSE"
     err = capsys.readouterr().err
-    assert "admin standing" in err or "admin_personas" in err
+    assert "admin_personas" in err
+    # The message must say the issuer count is irrelevant, since believing
+    # otherwise is exactly what made this a warning.
+    assert "independent of how many other issuers" in err
+
+
+def test_admin_personas_narrowing_an_existing_wildcard_store_is_REFUSED(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Prudence, #83 round 1, Critical 1. Seeding is idempotent per
+    (issuer, persona), so adding admin_personas to a store already carrying a
+    WILDCARD parent row adds the named rows and leaves the wildcard answering
+    for everyone — narrowed in appearance, unchanged in effect.
+
+    The sting is that setting admin_personas ALSO silences the boot warning, so
+    the operator does exactly what the warning asks, gets no warning back, and
+    remains fully exposed. Control and compensating signal fail together.
+    """
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from liminal.cli import main
+
+    db = str(tmp_path / "wild.db")
+
+    # 1. Seed a store the historical way: wildcard parent row.
+    from liminal.server import SqlitePolicyStore
+
+    store = SqlitePolicyStore(db, parent_issuer="rd-cabal")
+    store.close()
+
+    # 2. Now try to narrow it in place, which is the upgrade path an operator
+    #    takes after reading the warning.
+    registry = _registry_toml(
+        tmp_path,
+        issuers=["rd-cabal", "shaz-cabal"],
+        parent="rd-cabal",
+        admin_personas=["room-operator"],
+    )
+    rc = main(["serve", "--trust-registry", registry, "--policy-db", db])
+    assert rc == 2, "narrowing a wildcard-seeded store in place must REFUSE"
+    err = capsys.readouterr().err
+    assert "would not narrow anything" in err
+    assert "new database" in err
 
 
 def test_admin_port_requires_trust_registry(monkeypatch, capsys) -> None:

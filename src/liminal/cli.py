@@ -262,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             ConfigError,
             IssuerConfig,
             JWTVerifier,
+            ParentNarrowingConflict,
             SqlitePolicyStore,
             URLJWKSVerifier,
             build_multi_issuer_verifier,
@@ -343,29 +344,48 @@ def main(argv: list[str] | None = None) -> int:
                 i for i in cfg.get("issuer", []) if i.get("parent", False)
             )
             admin_personas = tuple(parent_cfg.get("admin_personas", ()) or ())
+            # THE HAZARD'S AXIS IS NOT THE ISSUER COUNT (liminal#83 round 1).
+            # This previously refused only when len(issuers) == 1 and warned
+            # otherwise -- so adding an UNRELATED second issuer downgraded the
+            # refusal to a warning while reducing the parent's own agents'
+            # exposure not at all. Driven by the reviewer against the real CLI:
+            # an ungranted agent got 200 on /admin/policy, self-granted admin:*,
+            # dispatched, and revoked the partner cabal.
+            #
+            # Every issuer in the registry is a DATA-PLANE issuer -- its tokens
+            # are accepted on /mcp -- so the parent always signs data-plane
+            # tokens, and without admin_personas every persona it mints holds
+            # admin standing. That is true at one issuer and at ten.
+            #
+            # This does NOT reintroduce the hard parent != issuer refusal that
+            # #73 asked for and this PR rightly declined: the designed
+            # federation, where the parent is legitimately a trusted data-plane
+            # issuer, is served by naming admin_personas and is not refused.
+            # The PR's own `home` fixture is that case.
             if not admin_personas:
-                if len(issuers) == 1:
-                    print(
-                        "error: the trust registry's only issuer is the parent "
-                        "and names no `admin_personas` -- every token this "
-                        "deployment accepts would hold admin:* on the admin "
-                        "surface. Name the persona(s) allowed to administer "
-                        "policy, e.g. admin_personas = [\"room-operator\"].",
-                        file=sys.stderr,
-                    )
-                    return 2
                 print(
-                    f"warning: parent issuer {parent_issuer!r} names no "
-                    "`admin_personas` -- EVERY persona it mints holds admin "
-                    "standing on /admin/*. Narrow it with admin_personas in "
-                    "the trust registry.",
+                    f"error: parent issuer {parent_issuer!r} names no "
+                    "`admin_personas` -- EVERY persona it mints would hold "
+                    "admin:* on /admin/*, so every data-plane token doubles as "
+                    "an admin token. This is independent of how many other "
+                    "issuers the registry trusts. Name the persona(s) allowed "
+                    "to administer policy, e.g. "
+                    "admin_personas = [\"room-operator\"].",
                     file=sys.stderr,
                 )
-            policy_store = SqlitePolicyStore(
-                args.policy_db,
-                parent_issuer=parent_issuer,
-                parent_personas=admin_personas or ("*",),
-            )
+                return 2
+            try:
+                policy_store = SqlitePolicyStore(
+                    args.policy_db,
+                    parent_issuer=parent_issuer,
+                    parent_personas=admin_personas or ("*",),
+                )
+            except ParentNarrowingConflict as exc:
+                # A no-op narrowing must not serve. See the exception's own
+                # docstring: adding admin_personas to a wildcard-seeded store
+                # changes nothing AND silences this guard's warning.
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
             # Print the derived handler->scope map so an operator can reconcile
             # grants on upgrade (scope enforcement is now real — a non-admin
             # grant must hold each listed scope, or admin:*). See liminal#26.

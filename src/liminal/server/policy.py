@@ -71,6 +71,28 @@ class AuditRow:
     detail: dict[str, Any]
 
 
+class ParentNarrowingConflict(ValueError):
+    """Raised when `admin_personas` asks to narrow a store that already holds a
+    WILDCARD parent row.
+
+    Seeding is idempotent per (issuer, persona), so adding named personas to a
+    store seeded under the historical wildcard ADDS rows without removing the
+    wildcard — and `resolve_parent` falls back to that wildcard, so every
+    persona the parent mints still holds admin. The narrowing is a no-op.
+
+    The sting is the interaction: setting `admin_personas` also SILENCES the
+    boot warning, so the operator does exactly what the warning asks, gets no
+    warning back, and remains fully exposed. The control and its compensating
+    signal fail together (Prudence, liminal#83 round 1).
+
+    Refusing is deliberate rather than migrating silently: the docstring on
+    _seed_parent already states that narrowing an existing wildcard deployment
+    means a new policy DB, a deliberate operator act. This makes that stated
+    intent ENFORCED instead of merely documented.
+    """
+
+
+
 class ParentImmutable(RuntimeError):
     """Attempt to modify or remove the parent's guardian grant."""
 
@@ -182,7 +204,28 @@ class SqlitePolicyStore:
         narrowing an existing wildcard deployment means a new policy DB, a
         deliberate operator act rather than a silent migration."""
         now = _now_iso()
-        for persona in personas or ("*",):
+        wanted = personas or ("*",)
+        # DETECT THE NO-OP NARROWING. If the caller named specific admin
+        # personas but this store already carries a wildcard parent row for the
+        # issuer, seeding would add the named rows and leave the wildcard
+        # answering for everyone — narrowed in appearance, unchanged in effect.
+        if "*" not in wanted:
+            wildcard = self._conn.execute(
+                "SELECT 1 FROM policy_grants "
+                "WHERE issuer = ? AND persona = '*' AND is_parent = 1",
+                (issuer,),
+            ).fetchone()
+            if wildcard is not None:
+                raise ParentNarrowingConflict(
+                    f"policy DB already holds a WILDCARD parent row for issuer "
+                    f"{issuer!r}, so admin_personas={list(wanted)!r} would not "
+                    f"narrow anything: resolve_parent falls back to the "
+                    f"wildcard and every persona {issuer!r} mints keeps admin "
+                    f"standing. Seeding is idempotent per (issuer, persona) and "
+                    f"this row is immutable by design. Point --policy-db at a "
+                    f"new database to adopt admin_personas."
+                )
+        for persona in wanted:
             existing = self._conn.execute(
                 "SELECT 1 FROM policy_grants "
                 "WHERE issuer = ? AND persona = ? AND is_parent = 1",
