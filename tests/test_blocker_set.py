@@ -479,6 +479,65 @@ def test_the_guard_comment_does_not_advocate_the_removed_rule() -> None:
     )
 
 
+def test_widening_to_the_wildcard_is_permitted(monkeypatch, tmp_path, capsys) -> None:
+    """Prudence, #83 round 3 Important 1 — a REGRESSION the round-2 fix
+    introduced. Generalising the wildcard-keyed check to a whole-set difference
+    made `admin_personas = ["*"]` a set-REMOVAL, so it was refused one line
+    after the CLI prints that it is permitted.
+
+    It is a semantic WIDENING: the seeded wildcard row resolves for every
+    persona, so nobody can lose standing. Round 2 skipped this case correctly
+    and the generalisation lost it.
+    """
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from liminal.cli import main
+
+    db = str(tmp_path / "widen-star.db")
+    named = _registry_toml(
+        tmp_path, issuers=["rd-cabal", "shaz-cabal"], parent="rd-cabal",
+        admin_personas=["room-operator"],
+    )
+    assert main(["serve", "--trust-registry", named, "--policy-db", db]) == 0
+    capsys.readouterr()
+
+    star = _registry_toml(
+        tmp_path, issuers=["rd-cabal", "shaz-cabal"], parent="rd-cabal",
+        admin_personas=["*"],
+    )
+    rc = main(["serve", "--trust-registry", star, "--policy-db", db])
+    err = capsys.readouterr().err
+    assert rc == 0, (
+        "widening to the wildcard must be permitted — it is a set-removal but "
+        f"a semantic widening. stderr: {err}"
+    )
+    # It still WARNS, because an explicit wildcard is the state the missing-
+    # admin_personas error refuses; permitted is not the same as silent.
+    assert "EVERY persona" in err
+
+
+def test_the_exception_contract_states_ANY_removal(tmp_path) -> None:
+    """Prudence, #83 round 3 Important 2. The first line of an exception's
+    docstring is its contract, and this one said "a store that already holds a
+    WILDCARD parent row" — strictly narrower than the code after round 2.
+
+    The consequence is not cosmetic: a maintainer meeting the over-fire in
+    Important 1 would read that docstring and conclude the repair is "narrow the
+    check back to the wildcard", which is the round-2 Critical reopened with the
+    documentation's blessing.
+    """
+    from liminal.server.policy import ParentNarrowingConflict
+
+    doc = " ".join((ParentNarrowingConflict.__doc__ or "").split())
+    assert doc.startswith("Raised when `admin_personas` DROPS any persona"), (
+        f"the contract line still states a narrower trigger: {doc[:90]!r}"
+    )
+    assert "WILDCARD parent row." not in doc, (
+        "the superseded wildcard-only trigger is still stated as the rule"
+    )
+
+
 def test_admin_port_requires_trust_registry(monkeypatch, capsys) -> None:
     import uvicorn
 

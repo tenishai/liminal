@@ -72,13 +72,23 @@ class AuditRow:
 
 
 class ParentNarrowingConflict(ValueError):
-    """Raised when `admin_personas` asks to narrow a store that already holds a
-    WILDCARD parent row.
+    """Raised when `admin_personas` DROPS any persona a store already holds a
+    parent row for.
 
-    Seeding is idempotent per (issuer, persona), so adding named personas to a
-    store seeded under the historical wildcard ADDS rows without removing the
-    wildcard — and `resolve_parent` falls back to that wildcard, so every
-    persona the parent mints still holds admin. The narrowing is a no-op.
+    THE TRIGGER IS ANY REMOVAL, not the wildcard case. An earlier revision of
+    this docstring said "a store that already holds a WILDCARD parent row",
+    which was the round-2 rule and is now strictly narrower than the code. That
+    matters more than a stale sentence usually does: the first line of an
+    exception's docstring is its contract, so a maintainer meeting a
+    legitimate over-fire would read this and conclude the obvious repair is
+    "narrow the check back to the wildcard" — which is the round-2 Critical,
+    reopened with the documentation's blessing. (Prudence, liminal#83 round 3.)
+
+    Seeding is idempotent per (issuer, persona) while rows are IMMUTABLE, and
+    that pairing is the whole hazard. Adding named personas to a wildcard-seeded
+    store adds rows without removing the wildcard, and `resolve_parent` falls
+    back to it. Dropping a NAMED persona leaves its row answering just the same.
+    Either way the narrowing is a no-op.
 
     The sting is the interaction: setting `admin_personas` also SILENCES the
     boot warning, so the operator does exactly what the warning asks, gets no
@@ -201,8 +211,9 @@ class SqlitePolicyStore:
     ) -> None:
         """Seed one immutable parent row per persona. A store seeded before
         this issuer/persona pair existed keeps its rows (idempotent per pair);
-        narrowing an existing wildcard deployment means a new policy DB, a
-        deliberate operator act rather than a silent migration."""
+        narrowing an existing deployment — dropping ANY persona already seeded,
+        wildcard or named — means a new policy DB, a deliberate operator act
+        rather than a silent migration."""
         now = _now_iso()
         wanted = personas or ("*",)
         # DETECT ANY NO-OP NARROWING, not just the wildcard one.
@@ -235,7 +246,16 @@ class SqlitePolicyStore:
                 (issuer,),
             )
         }
-        dropped = existing - set(wanted)
+        # `"*" IN wanted` MEANS NOTHING CAN BE DROPPED. Widening a named set to
+        # the wildcard is a set-REMOVAL but a semantic WIDENING: the seeded
+        # wildcard row resolves for every persona, so no persona can lose
+        # standing. Round 2's check skipped entirely when "*" was wanted, and
+        # generalising to a whole-set difference lost that — making
+        # admin_personas = ["*"] refused one line after the CLI prints that it
+        # is permitted, with a remedy (a new policy DB) that discards the whole
+        # grant table to reach a state one edit away. (Prudence, liminal#83
+        # round 3, Important 1 — a regression introduced by the round-2 fix.)
+        dropped = set() if "*" in wanted else existing - set(wanted)
         if dropped:
             raise ParentNarrowingConflict(
                 f"policy DB already holds parent row(s) for issuer {issuer!r} "

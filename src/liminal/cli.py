@@ -408,9 +408,11 @@ def main(argv: list[str] | None = None) -> int:
                     parent_personas=admin_personas or ("*",),
                 )
             except ParentNarrowingConflict as exc:
-                # A no-op narrowing must not serve. See the exception's own
-                # docstring: adding admin_personas to a wildcard-seeded store
-                # changes nothing AND silences this guard's warning.
+                # A no-op narrowing must not serve. The trigger is ANY removal
+                # from the set of personas already seeded — wildcard or named —
+                # because seeding is idempotent per (issuer, persona) while rows
+                # are immutable, so a dropped persona keeps answering. Widening
+                # to "*" is exempt: nothing can lose standing under a wildcard.
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             # Print the derived handler->scope map so an operator can reconcile
