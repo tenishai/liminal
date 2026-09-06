@@ -334,7 +334,18 @@ async def _handle_tools_call(
                 await store.record_access(
                     issuer=claims.issuer, persona=claims.identity,
                     agent=claims.agent_name, allowed=False,
-                    detail={"tool": params.name, "required_scope": required},
+                    # The round-2 fix rewrote the WIRE string but left the
+                    # audit row recording required_scope='liminal:deny'. Its own
+                    # rationale -- naming the sentinel reads as an instruction
+                    # to grant it -- applies verbatim to a structured field
+                    # called `required_scope`, and that is the surface an
+                    # operator triaging a denial actually greps.
+                    # (Prudence, liminal#81 round 2.)
+                    detail=(
+                        {"tool": params.name, "deny_reason": "not-in-scope-map"}
+                        if required == DENY_SCOPE
+                        else {"tool": params.name, "required_scope": required}
+                    ),
                 )
             # DENY_SCOPE is a sentinel, not a scope an operator should ever
             # grant. Naming it here would read as instructions: `has_scope` is

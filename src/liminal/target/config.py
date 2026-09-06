@@ -160,7 +160,19 @@ class TargetSpec:
                 "credential_key"
             )
 
-        if self.required_scope is not None and not str(self.required_scope).strip():
+        # `str(...)` COERCION WAS A FAIL-OPEN. It let every non-string through,
+        # and the falsy ones -- 0, False, [], {} -- are all valid TOML. app.py
+        # then gates on `if spec.required_scope:`, so a falsy value is silently
+        # DROPPED from the scope map, leaving a target with no tool_scopes
+        # WHOLLY OPEN. Deny-by-default catches it only when tool_scopes is
+        # present. (Prudence, liminal#81 round 2 — she under-tiered this as a
+        # symmetry nit in round 1 and re-graded it after tracing the drop.)
+        if self.required_scope is not None and not isinstance(self.required_scope, str):
+            raise TargetConfigError(
+                f"target {self.name!r}: required_scope must be a string or "
+                f"omitted, got {type(self.required_scope).__name__!r}"
+            )
+        if self.required_scope is not None and not self.required_scope.strip():
             raise TargetConfigError(
                 f"target {self.name!r}: required_scope must be a non-empty "
                 "string or omitted"

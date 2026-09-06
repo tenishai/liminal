@@ -351,8 +351,13 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 # Scope-gated target, DENY-BY-DEFAULT (liminal#78).
 # NOTE there is no target-level `required_scope` here. That is deliberate --
 # see the precedence note below; adding one would DISABLE deny-by-default.
+#
+# The name differs from the bearer-auth `jira` example above ON PURPOSE: target
+# names are the authz key and must be unique, so a file carrying both verbatim
+# is refused by build_http_targets with `duplicate target name 'jira'`. An
+# earlier revision of this doc shipped exactly that and did not load.
 [[target]]
-name    = "jira"
+name    = "jira-scoped"
 address = "https://jira-mcp.internal/mcp"
 
 [target.tool_scopes]

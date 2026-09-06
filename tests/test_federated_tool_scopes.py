@@ -11,6 +11,7 @@ The scope map is operator-authored ON PURPOSE — see ``TargetSpec.tool_scopes``
 
 from __future__ import annotations
 
+import pathlib
 import time
 
 import pytest
@@ -329,3 +330,111 @@ async def test_sentinel_refusal_does_not_tell_the_operator_to_grant_it(
     # "you need scope X" where X is the sentinel.
     assert f"scope {DENY_SCOPE!r} required" not in msg
     assert "Do NOT grant" in msg
+
+
+def test_required_scope_rejects_non_strings_instead_of_failing_open() -> None:
+    """Prudence, #81 r2. `str(...)` coercion in the validator let every
+    non-string through, and the falsy ones — 0, False, [], {}, all valid TOML —
+    were then silently DROPPED by `if spec.required_scope:` in app.py, leaving a
+    target with no tool_scopes wholly open. A fail-open, not a symmetry nit."""
+    for bad in (0, False, [], {}, 12.5):
+        with pytest.raises(TargetConfigError, match="must be a string"):
+            _spec("jira", required_scope=bad).validate()
+
+
+def test_a_dropped_required_scope_would_leave_the_target_open() -> None:
+    """The consequence the validator now prevents, pinned directly: had a falsy
+    non-string reached the resolver, the target would resolve to None — open —
+    rather than to its intended scope."""
+    good = scope_for(Registry(), [_spec("jira", required_scope="jira:use")])
+    assert good("jira.anything") == "jira:use"
+    # And the config that would have produced the open state is refused above,
+    # so the resolver can never see it.
+    with pytest.raises(TargetConfigError):
+        _spec("jira", required_scope=0).validate()
+
+
+@pytest.mark.asyncio
+async def test_audit_row_does_not_record_the_sentinel_as_a_required_scope(
+    tmp_path, signing_key, keyset
+) -> None:
+    """Prudence, #81 r2. The round-2 fix rewrote the wire message but left the
+    audit row recording required_scope='liminal:deny'. The same rationale —
+    naming the sentinel reads as an instruction to grant it — applies to a
+    structured field an operator greps while triaging a denial."""
+    _SVC = "audit-sentinel-test"
+    verifier = MultiIssuerJWKSVerifier(
+        registry={
+            "rd-cabal": StaticKeySetVerifier(
+                key_set=keyset, expected_issuer="rd-cabal", expected_audience=_SVC
+            ),
+        },
+        parents=frozenset({"rd-cabal"}),
+    )
+    store = SqlitePolicyStore(str(tmp_path / "aud.db"), parent_issuer="rd-cabal")
+    app = create_app(
+        jwt_verifier=verifier, registry=Registry(), policy_store=store,
+        targets=[_spec("jira", tool_scopes={"search": "jira:read"})],
+    )
+    await store.grant(
+        "rd-cabal", "rook", scopes={"jira:read"}, allowed_handlers={"jira"}
+    )
+    now = int(time.time())
+    tok = jwt.encode(
+        {"alg": "RS256", "kid": signing_key.kid, "typ": "JWT"},
+        {"iss": "rd-cabal", "sub": "rook-primus", "aud": _SVC,
+         "iat": now, "exp": now + 60, "cabal_persona": "rook"},
+        signing_key,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                  "params": {"name": "jira.undeclared", "arguments": {}}},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+    denies = [d for d in await store.audit(limit=20) if d.action == "access_deny"]
+    store.close()
+    assert denies, "no deny audit row recorded"
+    row = denies[-1].detail
+    assert row.get("required_scope") != DENY_SCOPE, (
+        "the audit row still names the sentinel as a required scope"
+    )
+    assert row.get("deny_reason") == "not-in-scope-map"
+
+
+def test_the_documented_targets_toml_actually_loads() -> None:
+    """Prudence, #81 r2. The doc example shipped TWO `[[target]]` tables named
+    "jira", so `build_http_targets` refused the documented file with
+    `duplicate target name`. An operator copying design.md got a config that
+    would not start. This parses the fenced TOML out of the doc and loads it,
+    so the example cannot silently rot again.
+    """
+    import tomllib
+
+    from liminal.target import build_http_targets
+    from liminal.target.config import load_target_specs
+
+    doc = (
+        pathlib.Path(__file__).resolve().parents[1] / "docs" / "design.md"
+    ).read_text()
+    # design.md has several ```toml blocks (a pyproject example among them);
+    # take every one that declares targets and load them ALL, since the
+    # collision is BETWEEN blocks a reader would put in one file.
+    blocks = [
+        b.split("```", 1)[0]
+        for b in doc.split("```toml")[1:]
+        if "[[target]]" in b.split("```", 1)[0]
+    ]
+    assert blocks, "no [[target]] example found in docs/design.md"
+    raw: list[dict] = []
+    for b in blocks:
+        raw.extend(tomllib.loads(b).get("target", []))
+    specs = load_target_specs(raw)
+    assert specs, "no [[target]] tables found in the documented example"
+    # The real collision check lives here, not in the loader.
+    build_http_targets(specs, reserved_names=set())
+    names = [s.name for s in specs]
+    assert len(names) == len(set(names)), f"duplicate target names in docs: {names}"
