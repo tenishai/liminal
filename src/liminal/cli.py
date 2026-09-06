@@ -334,12 +334,16 @@ def main(argv: list[str] | None = None) -> int:
             # Admin standing is per-persona (liminal#73): the parent's
             # [[issuer]] table may name `admin_personas`; each named persona
             # gets its own immutable parent row, and ONLY those personas pass
-            # the guardian gate. Absent, the historical wildcard row is
-            # seeded -- every persona the parent issuer mints holds admin --
-            # which is refused outright when the parent is the only trusted
-            # issuer (that is precisely the topology where every data-plane
-            # token would double as an admin token), and warned about loudly
-            # otherwise.
+            # the guardian gate. Absent, the CLI refuses to serve -- see the
+            # guard below for why the issuer count is not the axis.
+            #
+            # This comment previously described the GRADUATED behaviour
+            # (refuse at one issuer, warn otherwise) that round 1 identified as
+            # Critical 2 and this branch removed. It was left standing eight
+            # lines above a comment that said the opposite, and the stale one
+            # is what a reader meets first -- so a maintainer reading top-down
+            # would have learned the removed rule as the design, which is the
+            # path back to reintroducing it. (Prudence, liminal#83 round 2.)
             parent_cfg = next(
                 i for i in cfg.get("issuer", []) if i.get("parent", False)
             )
@@ -374,6 +378,29 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
+            if "*" in admin_personas:
+                # `["*"]` is TRUTHY, so it passes the guard above and then seeds
+                # the historical wildcard row -- reaching exactly the state that
+                # error describes as unacceptable, with LESS signal than before
+                # this branch, since the old graduated code warned in this same
+                # topology and that warning was removed with it.
+                #
+                # Not forbidden: admin.py calls a wildcard parent row "an
+                # explicit deployment choice, not a fallback", and it is. But it
+                # is the choice an operator is most likely to make TO SILENCE
+                # THE ERROR ABOVE when they have no persona name to hand, so it
+                # must not be silent. (Prudence, liminal#83 round 2, Important 1
+                # -- the same "control and compensating signal fail together"
+                # shape this branch fixed for Critical 1.)
+                print(
+                    f"warning: parent issuer {parent_issuer!r} names "
+                    "admin_personas = [\"*\"] -- EVERY persona it mints holds "
+                    "admin:* on /admin/*, which is the state the missing-"
+                    "admin_personas error refuses. This is an explicit "
+                    "deployment choice and is permitted; name specific personas "
+                    "to narrow it.",
+                    file=sys.stderr,
+                )
             try:
                 policy_store = SqlitePolicyStore(
                     args.policy_db,

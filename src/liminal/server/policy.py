@@ -205,26 +205,46 @@ class SqlitePolicyStore:
         deliberate operator act rather than a silent migration."""
         now = _now_iso()
         wanted = personas or ("*",)
-        # DETECT THE NO-OP NARROWING. If the caller named specific admin
-        # personas but this store already carries a wildcard parent row for the
-        # issuer, seeding would add the named rows and leave the wildcard
-        # answering for everyone — narrowed in appearance, unchanged in effect.
-        if "*" not in wanted:
-            wildcard = self._conn.execute(
-                "SELECT 1 FROM policy_grants "
-                "WHERE issuer = ? AND persona = '*' AND is_parent = 1",
+        # DETECT ANY NO-OP NARROWING, not just the wildcard one.
+        #
+        # The first version of this check fired only when the EXISTING row was
+        # the wildcard, and that was closed in one direction only. The hazard is
+        # not a property of the wildcard: it is a property of seeding being
+        # idempotent per (issuer, persona) WHILE ROWS ARE IMMUTABLE, which is
+        # equally true of named rows. So de-listing a named admin — the ordinary
+        # act of rotating someone out — was a silent no-op: the dropped
+        # persona's is_parent row survived, resolve_parent kept answering for
+        # it, and the running server never re-consults the registry. Driven over
+        # the real HTTP surface by the reviewer: a de-listed persona's token got
+        # 200 on GET /admin/policy and successfully granted admin:* to a partner
+        # cabal (Prudence, liminal#83 round 2).
+        #
+        # It was WORSE than the unfixed state in one respect, which is the part
+        # worth remembering: refusing loudly for the wildcard case taught the
+        # operator that liminal enforces narrowing, so silence in the named case
+        # read as "the narrowing took".
+        #
+        # Comparing the whole set subsumes the wildcard case rather than
+        # special-casing it. Widening still passes ({"a"} -> {"a","b"} drops
+        # nothing); first boot passes on an empty existing set.
+        existing = {
+            r["persona"]
+            for r in self._conn.execute(
+                "SELECT persona FROM policy_grants "
+                "WHERE issuer = ? AND is_parent = 1",
                 (issuer,),
-            ).fetchone()
-            if wildcard is not None:
-                raise ParentNarrowingConflict(
-                    f"policy DB already holds a WILDCARD parent row for issuer "
-                    f"{issuer!r}, so admin_personas={list(wanted)!r} would not "
-                    f"narrow anything: resolve_parent falls back to the "
-                    f"wildcard and every persona {issuer!r} mints keeps admin "
-                    f"standing. Seeding is idempotent per (issuer, persona) and "
-                    f"this row is immutable by design. Point --policy-db at a "
-                    f"new database to adopt admin_personas."
-                )
+            )
+        }
+        dropped = existing - set(wanted)
+        if dropped:
+            raise ParentNarrowingConflict(
+                f"policy DB already holds parent row(s) for issuer {issuer!r} "
+                f"covering persona(s) {sorted(dropped)!r}, which "
+                f"admin_personas={sorted(wanted)!r} drops. Those rows are "
+                f"immutable by design and would keep admin standing on "
+                f"/admin/* regardless of the registry. Point --policy-db at a "
+                f"new database to adopt this set."
+            )
         for persona in wanted:
             existing = self._conn.execute(
                 "SELECT 1 FROM policy_grants "

@@ -345,8 +345,138 @@ def test_admin_personas_narrowing_an_existing_wildcard_store_is_REFUSED(
     rc = main(["serve", "--trust-registry", registry, "--policy-db", db])
     assert rc == 2, "narrowing a wildcard-seeded store in place must REFUSE"
     err = capsys.readouterr().err
-    assert "would not narrow anything" in err
+    assert "already holds parent row(s)" in err
+    assert "'*'" in err, "the refusal must name the row it is protecting"
     assert "new database" in err
+
+
+def test_de_listing_a_named_admin_persona_is_REFUSED(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Prudence, #83 round 2 Critical. The first version of the narrowing check
+    fired only when the EXISTING row was the wildcard — closed in one direction
+    only, and the open direction is the one an operator actually travels.
+
+    Rotating someone out of admin is the ordinary case: seed with two named
+    admins, then edit the registry to drop one. Seeding is idempotent per
+    (issuer, persona) and rows are immutable, so the dropped persona's row
+    survived, resolve_parent kept answering for it, and the running server never
+    re-consults the registry. Driven over the real HTTP surface by the reviewer:
+    the de-listed persona's token got 200 on /admin/policy and granted admin:*
+    to a partner cabal.
+    """
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from liminal.cli import main
+
+    db = str(tmp_path / "rotate.db")
+    reg_two = _registry_toml(
+        tmp_path,
+        issuers=["rd-cabal", "shaz-cabal"],
+        parent="rd-cabal",
+        admin_personas=["room-operator", "old-admin"],
+    )
+    assert main(["serve", "--trust-registry", reg_two, "--policy-db", db]) == 0
+    capsys.readouterr()
+
+    # Now rotate `old-admin` out — an explicit revocation. _registry_toml
+    # rewrites the same path, so this is the operator editing their registry.
+    reg_one = _registry_toml(
+        tmp_path,
+        issuers=["rd-cabal", "shaz-cabal"],
+        parent="rd-cabal",
+        admin_personas=["room-operator"],
+    )
+    rc = main(["serve", "--trust-registry", reg_one, "--policy-db", db])
+    assert rc == 2, "de-listing a named admin persona must REFUSE, not no-op"
+    err = capsys.readouterr().err
+    assert "old-admin" in err, "the refusal must name the persona being dropped"
+    assert "new database" in err
+
+
+def test_widening_the_admin_set_is_permitted(monkeypatch, tmp_path, capsys) -> None:
+    """The counterpart: refusing on ANY removal must not refuse an ADDITION.
+    {"a"} -> {"a","b"} drops nothing, so it is permitted — otherwise the fix
+    would block the one narrowing-adjacent edit that is always safe."""
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from liminal.cli import main
+
+    db = str(tmp_path / "widen.db")
+    one = _registry_toml(
+        tmp_path, issuers=["rd-cabal", "shaz-cabal"], parent="rd-cabal",
+        admin_personas=["room-operator"],
+    )
+    assert main(["serve", "--trust-registry", one, "--policy-db", db]) == 0
+    capsys.readouterr()
+
+    two = _registry_toml(
+        tmp_path, issuers=["rd-cabal", "shaz-cabal"], parent="rd-cabal",
+        admin_personas=["room-operator", "second-admin"],
+    )
+    assert main(["serve", "--trust-registry", two, "--policy-db", db]) == 0, (
+        "widening the admin set drops nothing and must be permitted"
+    )
+
+
+def test_explicit_wildcard_admin_personas_warns(monkeypatch, tmp_path, capsys) -> None:
+    """Prudence, #83 round 2 Important 1. `admin_personas = ["*"]` is TRUTHY, so
+    it passes the missing-admin_personas guard and then seeds the historical
+    wildcard row — reaching exactly the state that error calls unacceptable,
+    with LESS signal than before this branch, since the old graduated code
+    warned in this topology and that warning went away with it.
+
+    It stays PERMITTED (admin.py calls a wildcard parent row an explicit
+    deployment choice) but it must not be silent, because it is the choice an
+    operator makes to silence the error when they have no persona name to hand.
+    """
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    from liminal.cli import main
+
+    registry = _registry_toml(
+        tmp_path, issuers=["rd-cabal", "shaz-cabal"], parent="rd-cabal",
+        admin_personas=["*"],
+    )
+    rc = main(
+        ["serve", "--trust-registry", registry, "--policy-db", str(tmp_path / "w.db")]
+    )
+    assert rc == 0, "an explicit wildcard is permitted, not refused"
+    err = capsys.readouterr().err
+    assert "admin_personas" in err and "EVERY persona" in err, (
+        "an explicit wildcard must warn — it is the state the error refuses"
+    )
+
+
+def test_the_guard_comment_does_not_advocate_the_removed_rule() -> None:
+    """Prudence, #83 round 2 Important 2. The comment above the guard still
+    described the GRADUATED behaviour that round 1 called Critical 2 and this
+    branch removed — eight lines above a comment saying the opposite, with the
+    stale one met first. A maintainer reading top-down would learn the removed
+    rule as the design, which is the path back to reintroducing it.
+
+    Asserted on the source because the defect is a comment, and nothing else
+    can see it.
+    """
+    import pathlib as _pl
+
+    cli = (_pl.Path(__file__).resolve().parents[1] / "src" / "liminal" / "cli.py").read_text()
+    # Normalise: the guard's message is split across adjacent string literals,
+    # so the rendered phrase never appears contiguously in the source.
+    flat = " ".join(cli.split())
+    assert "warned about loudly" not in flat, (
+        "the guard comment still advocates the graduated behaviour that "
+        "round-1 Critical 2 identified as the defect"
+    )
+    assert "refused when the parent is the only trusted" not in flat, (
+        "the guard comment still describes refusal as scoped to a single issuer"
+    )
+    assert "independent of how many other " in flat, (
+        "the guard's actual rule should be stated where the reader meets it"
+    )
 
 
 def test_admin_port_requires_trust_registry(monkeypatch, capsys) -> None:
