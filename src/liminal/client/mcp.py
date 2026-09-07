@@ -135,7 +135,13 @@ class AsyncMCPClient:
             await self._http.aclose()
 
     async def initialize(self) -> dict[str, Any]:
-        """Explicit handshake. Sets ``server_capabilities`` from the result."""
+        """Explicit handshake. Sets ``server_capabilities`` from the result.
+
+        Authenticated like every other call (liminal#75): an upstream that
+        gates its whole surface behind a bearer would otherwise reject the
+        handshake and the target would degrade to a zero-tool catalog. A
+        no-auth deployment still sends nothing -- ``_auth_header`` omits the
+        header entirely for an empty token (liminal#32)."""
         result = await self._rpc(
             "initialize",
             {
@@ -146,7 +152,7 @@ class AsyncMCPClient:
                 },
                 "capabilities": {},
             },
-            auth=False,
+            auth=True,
         )
         self._server_capabilities = result.get("capabilities", {})
         self._initialized = True
@@ -301,6 +307,7 @@ class MCPClient:
             self._http.close()
 
     def initialize(self) -> dict[str, Any]:
+        # Authenticated like every other call (liminal#75); see the async twin.
         result = self._rpc(
             "initialize",
             {
@@ -311,7 +318,7 @@ class MCPClient:
                 },
                 "capabilities": {},
             },
-            auth=False,
+            auth=True,
         )
         self._server_capabilities = result.get("capabilities", {})
         self._initialized = True
