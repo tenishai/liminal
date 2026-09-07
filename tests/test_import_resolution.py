@@ -7,20 +7,28 @@ PR head tests **main**, not the PR — and it looks like a normal green run. Tha
 produced a false "their PRs are broken" report (#83/#84 were green in CI
 throughout), and Prudence hit it reviewing #81.
 
-WHY THE OBVIOUS TESTS DO NOT WORK, since both were written and thrown away:
+TWO GUARDS SHIP HERE, AND THEY COVER DIFFERENT THINGS. Say which is which,
+because an earlier draft of this docstring did not and Constance caught it: it
+claimed both behavioural assertions had been "thrown away" while the file went
+on to ship one of them.
 
-Asserting `liminal.__file__` is inside this checkout, and asserting this
-checkout's `src` is on `sys.path`, BOTH pass with the setting deleted whenever
-you run from the canonical checkout — the editable install points at that same
-tree and adds that same path, so the correct and incorrect configurations are
-indistinguishable from here. Teeth-checked: both stayed green with `pythonpath`
-removed. They fail only inside a worktree, which is the one place nobody runs
-the suite deliberately.
+  test_pyproject_still_sets_pythonpath   — a CONFIG assertion. Catches deletion
+      of the ini setting, from anywhere. This is the one that actually fires in
+      normal use, and it is the realistic regression.
 
-So the guard below is a CONFIG assertion, not a behavioural one, and it is
-labelled as such rather than dressed up as more. It catches deletion of the
-setting, which is the realistic regression. Proving the behaviour needs a real
-worktree; that lives in the PR body as a manual check.
+  test_liminal_imports_from_this_checkout — the BEHAVIOURAL assertion. It is
+      the property that matters, and it is HOLLOW WHEN RUN FROM THE CANONICAL
+      CHECKOUT: the editable install points at that same tree and adds that same
+      path, so correct and incorrect configurations are indistinguishable from
+      here. Teeth-checked — it stays green with `pythonpath` removed. It has
+      teeth only inside a worktree, which is where the bug bit us and the one
+      place nobody runs the suite deliberately.
+
+What was actually discarded was not either assertion but the BELIEF that the
+behavioural one alone is sufficient. It is kept because it costs nothing and is
+the only thing that would catch this in a worktree; it is documented as
+conditional rather than presented as proof. Proving the behaviour deliberately
+needs a real worktree, and that reproduction lives in the PR body.
 """
 
 from __future__ import annotations
