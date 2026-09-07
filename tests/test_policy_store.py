@@ -20,10 +20,63 @@ def store(tmp_path):
 @pytest.mark.asyncio
 async def test_parent_seeded_admin_implies_all(store) -> None:
     assert store.parents() == frozenset({"rd-cabal"})
-    g = await store.resolve("rd-cabal", "any-persona")  # issuer-wide parent row
+    # Parent standing answers ONLY on the admin plane (liminal#73)...
+    g = await store.resolve_parent("rd-cabal", "any-persona")
     assert g is not None
     assert g.has_scope("admin:*")
     assert g.has_scope("mem:append")  # admin:* implies every scope
+    # ...and never on the data plane: an ungranted persona of the parent
+    # issuer resolves to nothing, even though the wildcard parent row exists.
+    assert await store.resolve("rd-cabal", "any-persona") is None
+
+
+@pytest.mark.asyncio
+async def test_fail_open_regression_parent_is_also_the_agent_issuer(tmp_path) -> None:
+    """liminal#73: the parent issuer is ALSO the issuer of every agent token
+    (a cabal serving its own graduated persona). An ungranted agent must
+    resolve to NOTHING on the data plane -- before the fix, the (issuer, "*")
+    fallback handed it the parent's admin:* row."""
+    s = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="home-cabal")
+    try:
+        assert await s.resolve("home-cabal", "ungranted-agent") is None
+        # An explicit data-plane grant still works alongside the parent row.
+        await s.grant("home-cabal", "worker", scopes={"mem:query"}, allowed_handlers=None)
+        g = await s.resolve("home-cabal", "worker")
+        assert g is not None and g.has_scope("mem:query") and not g.has_scope("admin:*")
+    finally:
+        s.close()
+
+
+@pytest.mark.asyncio
+async def test_identity_literally_star_never_hits_the_parent_row(store) -> None:
+    """A caller whose verified identity is the literal string "*" must not
+    reach the parent row through the exact-persona leg (liminal#73)."""
+    assert await store.resolve("rd-cabal", "*") is None
+
+
+@pytest.mark.asyncio
+async def test_parent_personas_narrow_admin_standing(tmp_path) -> None:
+    """Per-persona parent rows (liminal#73): only the named personas hold
+    admin standing; everyone else from the parent issuer holds none."""
+    s = SqlitePolicyStore(
+        str(tmp_path / "p.db"),
+        parent_issuer="home-cabal",
+        parent_personas=("room-operator",),
+    )
+    try:
+        ok = await s.resolve_parent("home-cabal", "room-operator")
+        assert ok is not None and ok.has_scope("admin:*")
+        assert await s.resolve_parent("home-cabal", "some-agent") is None
+        # And nothing about parenthood leaks onto the data plane.
+        assert await s.resolve("home-cabal", "room-operator") is None
+    finally:
+        s.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_parent_ignores_non_parent_rows(store) -> None:
+    await store.grant("shaz", "rook", scopes={"admin:*"}, allowed_handlers=None)
+    assert await store.resolve_parent("shaz", "rook") is None
 
 
 @pytest.mark.asyncio
@@ -49,8 +102,8 @@ async def test_parent_row_immutable(store) -> None:
         await store.grant("rd-cabal", "*", scopes={"mem:query"}, allowed_handlers=None)
     with pytest.raises(ParentImmutable):
         await store.revoke("rd-cabal", "*")
-    # Parent still intact + admin.
-    assert (await store.resolve("rd-cabal", "x")).has_scope("admin:*")
+    # Parent still intact + admin (on the admin plane, where it lives).
+    assert (await store.resolve_parent("rd-cabal", "x")).has_scope("admin:*")
 
 
 @pytest.mark.asyncio

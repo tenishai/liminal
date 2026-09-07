@@ -13,7 +13,10 @@ import pytest
 async def test_healthz_returns_ok(client) -> None:
     r = await client.get("/healthz")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    body = r.json()
+    assert body["status"] == "ok"
+    # Per-target status (liminal#75): in-process targets always read ready.
+    assert body["targets"] and all(s == "ready" for s in body["targets"].values())
 
 
 # ---- initialize -----------------------------------------------------------

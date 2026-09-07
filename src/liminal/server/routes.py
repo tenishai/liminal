@@ -96,8 +96,21 @@ def build_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/healthz")
-    async def healthz() -> dict:
-        return {"status": "ok"}
+    async def healthz(request: Request) -> dict:
+        # Per-target catalog status (liminal#75): a federated target whose
+        # catalog fetch failed serves zero tools -- that must read as
+        # "degraded" here, never as a healthy gateway with a quiet surface.
+        # In-process targets carry no catalog_status and report "ready".
+        dispatcher = getattr(request.app.state, "dispatcher", None)
+        targets = {
+            name: getattr(target, "catalog_status", "ready")
+            for name, target in (dispatcher.targets if dispatcher else {}).items()
+        }
+        degraded = [n for n, s in targets.items() if s != "ready"]
+        return {
+            "status": "degraded" if degraded else "ok",
+            "targets": targets,
+        }
 
     @router.post("/mcp", response_model=None)
     async def mcp(

@@ -111,6 +111,7 @@ def create_app(
     policy_store: PolicyStore | None = None,
     policy_scope_for: Callable[[str], str | None] | None = None,
     policy_tool_extras: dict[str, Any] | None = None,
+    mount_admin: bool = True,
 ) -> FastAPI:
     """Build a FastAPI MCP server.
 
@@ -243,6 +244,29 @@ def create_app(
 
     app.include_router(build_router())
     # Federation admin surface is only reachable when a policy store backs it.
-    if policy_store is not None:
+    # `mount_admin=False` keeps it OFF this app so a deployment can serve it
+    # on a separate listener via `create_admin_app` (liminal#74) and restrict
+    # that listener at the network layer.
+    if policy_store is not None and mount_admin:
         app.include_router(build_admin_router())
+    return app
+
+
+def create_admin_app(
+    *,
+    jwt_verifier: JWTVerifier,
+    policy_store: PolicyStore,
+) -> FastAPI:
+    """A FastAPI app carrying ONLY the federation admin surface (liminal#74).
+
+    Pair with ``create_app(..., mount_admin=False)`` and bind this app to its
+    own listener (``liminal serve --admin-port``): the data-plane port then
+    carries no ``/admin/*`` routes at all, so a network policy can scope the
+    admin listener to the governing service alone. Auth semantics are the
+    same guardian gate the mounted router enforces -- a parent-issuer token
+    whose persona holds a parent row with ``admin:*``."""
+    app = FastAPI(title="liminal federation admin", version=__version__)
+    app.state.jwt_verifier = jwt_verifier
+    app.state.policy_store = policy_store
+    app.include_router(build_admin_router())
     return app
