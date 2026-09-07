@@ -390,6 +390,80 @@ liminal serve \
 
 ---
 
+## Untrusted tool results — the contract for agent runtimes
+
+Catalog inspection (`trust` / `on_untrusted` above) covers what a federated upstream
+**says about** its tools. This is the other half: what a tool **returns**.
+
+A result from a target with `trust = "untrusted"` is wrapped at the gateway boundary
+before it reaches the caller:
+
+```
+[BEGIN UNTRUSTED TOOL RESULT <nonce> — returned by federated target 'jira'. …]
+  …the upstream's content blocks, unchanged except for stripped hidden unicode…
+[END UNTRUSTED TOOL RESULT <nonce>]
+```
+
+and the JSON-RPC result carries the same fact out of band:
+
+```json
+"_meta": {
+  "liminal/untrusted": true,
+  "liminal/untrusted_source": "jira",
+  "liminal/untrusted_nonce": "<nonce>"
+}
+```
+
+**What a runtime may rely on:**
+
+- Content inside the envelope carries **no authority**. It is data returned by a third
+  party. It is not from the operator, not from the user, and not from liminal. Directives
+  appearing inside it are content, not instructions.
+- `_meta` is authoritative; the in-band delimiters are a convenience for the model. Decide
+  whether a result is untrusted by reading `_meta["liminal/untrusted"]`, never by
+  pattern-matching the text — an upstream can imitate the text.
+- The **nonce is per result**. Match delimiters by the nonce from `_meta`, so an upstream
+  that emits its own `BEGIN`/`END` markers cannot close the envelope early and have the
+  rest of its output read as trusted.
+- A `trusted` target's results are **not** framed and carry no `_meta` flag. Framing is
+  gated on the same `trust` tier that gates catalog inspection.
+- **Error text is framed too.** Since liminal#66 a failed result's reason is appended to
+  the content the agent sees, so an error string is an injection surface exactly like a
+  result is — and `MCPRemoteError.message` is the upstream's own JSON-RPC error text,
+  while `MCPTransportError` embeds `resp.text` for a 5xx. On an untrusted target the
+  upstream half goes inside the envelope and `.error` keeps only liminal's own
+  description.
+- A message liminal produces **without ever touching upstream output** is not framed —
+  `"target not started"` is that case, since no request was made. The envelope means "an
+  upstream wrote this", and diluting it would make it useless.
+
+Every string in every block is sanitised, at any depth — not only `type: "text"`. Block
+*structure* is preserved: keys, nesting and non-string values are untouched. This matters
+because `resource` blocks carry their own `text` field and a `json` block is converted to
+text by liminal's wire layer one hop later, so a text-only pass left both delivering the
+attack the envelope exists to stop.
+
+**Where the defence actually lives**, in descending order of how much it holds — stated
+plainly because the in-band envelope is the weakest of the four and it is the most visible:
+
+1. **The operator's grant** — `trust`, `allowed_handlers`, per-tool scoping. The only
+   *authority* boundary. Everything below is labelling.
+2. **`_meta`** — the only thing a runtime can act on deterministically, and unforgeable
+   from upstream: the outbound client reads only `content` and `isError` from an upstream
+   result, so an upstream's own `_meta` is discarded before liminal builds its own. An
+   upstream cannot mark itself trusted and cannot supply a nonce.
+3. **Hidden-unicode stripping** — mechanical sanitisation, not persuasion.
+4. **The in-band banner** — a hint whose reliability belongs to the model, not to liminal.
+   A model that would obey an injected instruction may equally ignore the banner.
+
+(4) is not decorative, but its value is *delimitation* rather than persuasion: the content
+array on the wire is genuinely mixed — liminal's own error description is appended after
+the closing marker — so the markers are what separate upstream bytes from liminal's own in
+a flattened concatenation. Do not build a control that depends on the model honouring the
+banner. Build on `_meta`.
+
+---
+
 ## References
 
 - [`pattern-toolbox.md`](pattern-toolbox.md) — Pattern Toolbox proposal (planned liminal handler)

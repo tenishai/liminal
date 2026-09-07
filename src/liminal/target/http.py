@@ -4,6 +4,10 @@ Generalizes the retired ``MCPProxyHandler``: it fetches + inspects the
 upstream's tool catalog at ingest, and forwards calls with **per-call**
 identity. It folds in three things the old proxy lacked or did unsafely:
 
+  - **#79 result framing** — an ``UNTRUSTED`` target's tool RESULTS are
+    wrapped in a nonce-tagged envelope at dispatch and flagged in the response
+    ``_meta``, so instruction-shaped text an upstream returns is marked as
+    data rather than flowing to the agent verbatim.
   - **#16 catalog inspection** — an ``UNTRUSTED`` target's catalog is passed
     through ``inspect_catalog`` at ingest (the single chokepoint) before the
     tools ever reach a persona's context.
@@ -54,7 +58,12 @@ from liminal.client.mcp import (
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
 from liminal.target.config import TargetConfigError, TargetSpec
-from liminal.target.inspect import inspect_catalog
+from liminal.target.inspect import (
+    UnsanitizableResult,
+    frame_untrusted_result,
+    inspect_catalog,
+    new_envelope_nonce,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -140,15 +149,55 @@ class HttpTarget(Target):
                 tool, payload, extra_headers=headers
             )
         except MCPRemoteError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} returned error [{exc.code}]: {exc.message}"
+            return self._error_result(
+                reason=f"upstream {self.name!r} returned error [{exc.code}]",
+                upstream_text=exc.message,
             )
         except MCPError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} transport error: {exc}"
+            # An MCPTransportError message can embed the upstream's response
+            # body (`server {status}: {resp.text[:200]}`), so this is not
+            # unconditionally our own prose either.
+            return self._error_result(
+                reason=f"upstream {self.name!r} transport error",
+                upstream_text=str(exc),
             )
 
-        return ToolResult(content=list(outcome.content), is_error=outcome.is_error)
+        content = list(outcome.content)
+        if self.trust is TrustTier.UNTRUSTED:
+            # #79 — the dispatch-time half of #16. Catalog inspection covers
+            # what the upstream SAYS about its tools; this covers what it
+            # RETURNS. The nonce goes out-of-band in the response `_meta` so a
+            # runtime can verify the delimiters instead of trusting their shape.
+            nonce = new_envelope_nonce()
+            try:
+                framed = frame_untrusted_result(content, self.name, nonce)
+            except UnsanitizableResult as exc:
+                # Fail closed, and fail as a ToolResult rather than letting the
+                # exception propagate. NOT because it would reach Starlette —
+                # Multiplexer.dispatch has a blanket `except Exception` and is
+                # the only dispatcher wired, so it would not. The reason is that
+                # a propagated exception yields "evil.search raised
+                # UnsanitizableResult", while returning here yields a refusal
+                # that names the target, the cause, and the disposition.
+                # (Prudence, liminal#82 rounds 3 and 4 — one of five sites of
+                # the retracted "unhandled 500" claim; the correction lives in
+                # inspect.py beside MAX_CONTENT_DEPTH.)
+                log.warning(
+                    "http_target.result_unsanitizable",
+                    target=self.name, tool=tool, error=str(exc),
+                )
+                return ToolResult.failure(
+                    f"refused: {self.name!r} returned content that could not be "
+                    f"sanitised ({exc}); it is not forwarded"
+                )
+            return ToolResult(
+                content=framed,
+                is_error=outcome.is_error,
+                liminal_untrusted=True,
+                liminal_untrusted_source=self.name,
+                liminal_untrusted_nonce=nonce,
+            )
+        return ToolResult(content=content, is_error=outcome.is_error)
 
     def protocol_version(self) -> str | None:
         return self._protocol_version
@@ -215,6 +264,47 @@ class HttpTarget(Target):
             self._owned_http = False
 
     # ---- internals --------------------------------------------------------
+
+    def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
+        """A failed dispatch whose message may carry upstream-authored bytes.
+
+        Since liminal#66 a ToolResult's ``.error`` is appended to the content
+        the agent sees, so an error string is now an injection surface exactly
+        like a successful result is. Both upstream error paths can embed
+        upstream output — ``MCPRemoteError.message`` is the upstream's own
+        JSON-RPC error text, and ``MCPTransportError`` embeds ``resp.text`` for
+        a 5xx — so on an UNTRUSTED target the upstream half goes inside the
+        envelope and ``.error`` keeps only liminal's own description.
+
+        The result stays legible per #66: the agent still gets a reason, and
+        still gets the upstream's text — framed rather than dropped.
+        """
+        if self.trust is not TrustTier.UNTRUSTED:
+            return ToolResult.failure(f"{reason}: {upstream_text}")
+        nonce = new_envelope_nonce()
+        # GUARDED LIKE THE SUCCESS PATH. This call was unguarded, so an upstream
+        # error message — MCPRemoteError.message is unvalidated — bypassed the
+        # depth bound the success path enforces. The Multiplexer's blanket
+        # except contains it, so this was a message-parity gap rather than a
+        # crash: the caller got "raised UnsanitizableResult" instead of the
+        # refusal prose. (Prudence, liminal#82 round 3, nit 3.)
+        try:
+            framed = frame_untrusted_result(
+                [{"type": "text", "text": upstream_text}], self.name, nonce
+            )
+        except UnsanitizableResult as exc:
+            return ToolResult.failure(
+                f"{reason}, and the upstream's error text could not be "
+                f"sanitised ({exc}); it is not forwarded"
+            )
+        return ToolResult(
+            content=framed,
+            is_error=True,
+            error=reason,
+            liminal_untrusted=True,
+            liminal_untrusted_source=self.name,
+            liminal_untrusted_nonce=nonce,
+        )
 
     def _build_call_headers(self, ctx: Context) -> dict[str, str]:
         """Build fresh per-call headers. NEVER stored on the client (#13)."""
