@@ -24,6 +24,13 @@ on to ship one of them.
       teeth only inside a worktree, which is where the bug bit us and the one
       place nobody runs the suite deliberately.
 
+A third assertion — that this checkout's `src` is literally in `sys.path` —
+was removed in review (#88). It compared an unresolved pytest rootdir against a
+resolved path, so it FAILED on a symlinked invocation while imports were
+perfectly correct — a false "your imports are shadowed" report in a review
+worktree, which is the same shape as the bug this file exists to prevent. It
+was also redundant: the check below already proves the property.
+
 What was actually discarded was not either assertion but the BELIEF that the
 behavioural one alone is sufficient. It is kept because it costs nothing and is
 the only thing that would catch this in a worktree; it is documented as
@@ -33,7 +40,6 @@ needs a real worktree, and that reproduction lives in the PR body.
 
 from __future__ import annotations
 
-import sys
 import tomllib
 from pathlib import Path
 
@@ -64,4 +70,3 @@ def test_liminal_imports_from_this_checkout() -> None:
         f"checkout ({here}). An editable install is shadowing the tree under "
         "test — see liminal#85."
     )
-    assert str(here / "src") in [p for p in sys.path if p]
