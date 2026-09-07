@@ -39,6 +39,7 @@ from liminal.server.mcp_types import (
     make_success,
 )
 from liminal.server.policy import PolicyStore, ScopeGrant
+from liminal.server.scopes import DENY_SCOPE
 from liminal.server.secret_guard import scan_tool_call
 from liminal.wire import to_spec_result_content as _to_spec_result_content
 
@@ -327,10 +328,16 @@ async def _handle_tools_call(
 
     # Sovereign scope gate: when a grant and a scope map are wired, the scope
     # required by the specific TOOL must be held. `policy_scope_for` resolves
-    # the full tool name "<handler>.<tool>" — per-tool scope first, handler-level
-    # fallback (liminal#26 handler-level, #42 per-tool) — so a read/write split
-    # (memory recall vs commit) is enforceable, not collapsed. None = no scope
-    # requirement. admin:* satisfies any scope (see ScopeGrant.has_scope).
+    # the full tool name "<target>.<tool>" — per-tool scope first, target-level
+    # fallback — so a read/write split (memory recall vs commit) is enforceable,
+    # not collapsed. The name covers BOTH in-process handlers, whose scopes come
+    # from their CapabilityCards (liminal#26 handler-level, #42 per-tool), and
+    # federated targets, whose scopes come from operator config (#78); the
+    # Multiplexer namespaces them identically so this gate needs no branch.
+    #
+    # Three return states, not two: a scope string, None (no requirement), or
+    # DENY_SCOPE for a tool on a deny-by-default target that no operator rule
+    # names (#78). admin:* satisfies any of them (see ScopeGrant.has_scope).
     if grant is not None:
         scope_for = getattr(request.app.state, "policy_scope_for", None)
         required = scope_for(params.name) if scope_for is not None else None
@@ -340,12 +347,40 @@ async def _handle_tools_call(
                 await store.record_access(
                     issuer=claims.issuer, persona=claims.identity,
                     agent=claims.agent_name, allowed=False,
-                    detail={"tool": params.name, "required_scope": required},
+                    # The round-2 fix rewrote the WIRE string but left the
+                    # audit row recording required_scope='liminal:deny'. Its own
+                    # rationale -- naming the sentinel reads as an instruction
+                    # to grant it -- applies verbatim to a structured field
+                    # called `required_scope`, and that is the surface an
+                    # operator triaging a denial actually greps.
+                    # (Prudence, liminal#81 round 2.)
+                    detail=(
+                        {"tool": params.name, "deny_reason": "not-in-scope-map"}
+                        if required == DENY_SCOPE
+                        else {"tool": params.name, "required_scope": required}
+                    ),
                 )
+            # DENY_SCOPE is a sentinel, not a scope an operator should ever
+            # grant. Naming it here would read as instructions: `has_scope` is
+            # plain membership and the grant path validates nothing, so an
+            # operator who "granted the scope the error asked for" would
+            # silently open every unnamed tool on every strict target,
+            # permanently. Say what actually happened instead.
+            if required == DENY_SCOPE:
+                message = (
+                    f"tool {params.name!r} is not named in the scope map for "
+                    f"target {handler_name!r}, which is deny-by-default because "
+                    f"it declares tool_scopes. Add it to that target's "
+                    f"[target.tool_scopes] table, or set a target-level "
+                    f"required_scope. Do NOT grant {DENY_SCOPE!r} — it is a "
+                    f"sentinel, and granting it disables this gate entirely."
+                )
+            else:
+                message = f"scope {required!r} required for tool {params.name!r}"
             return make_error(
                 id=rpc_req.id,
                 code=ERROR_UNAUTHORIZED,
-                message=f"scope {required!r} required for tool {params.name!r}",
+                message=message,
             )
 
     # Fail-closed pre-persist secret guard (liminal#50): scan the content of

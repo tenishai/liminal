@@ -347,6 +347,35 @@ bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
 trust       = "trusted"
 on_untrusted = "strip"      # only matters when trust = "untrusted"
 identity    = "forward"     # forward caller persona as x-liminal-persona header
+
+# Scope-gated target, DENY-BY-DEFAULT (liminal#78).
+# NOTE there is no target-level `required_scope` here. That is deliberate --
+# see the precedence note below; adding one would DISABLE deny-by-default.
+#
+# The name differs from the bearer-auth `jira` example above ON PURPOSE: target
+# names are the authz key and must be unique, so a file carrying both verbatim
+# is refused by build_http_targets with `duplicate target name 'jira'`. An
+# earlier revision of this doc shipped exactly that and did not load.
+[[target]]
+name    = "jira-scoped"
+address = "https://jira-mcp.internal/mcp"
+
+[target.tool_scopes]
+"search"       = "jira:read"
+"create_issue" = "jira:write"
+# A tool named in neither rule -- e.g. one that appears in a later catalog
+# refresh -- resolves to an unsatisfiable sentinel and is refused.
+
+# Scope-gated target, NOT deny-by-default: the target-level scope is the
+# fallback for every unnamed tool, so a new upstream tool is CALLABLE by any
+# grant holding `confluence:use`.
+[[target]]
+name           = "confluence"
+address        = "https://confluence-mcp.internal/mcp"
+required_scope = "confluence:use"
+
+[target.tool_scopes]
+"search" = "confluence:read"
 ```
 
 ### Keys
@@ -367,6 +396,8 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
 | `relevance_signals` | no | `[]` | Routing hints (v2 on-demand activation). |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
+| `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
+| `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. Declaring it makes the target deny-by-default **only when no `required_scope` is set** — see precedence below. |
 
 ### Version handling
 
@@ -375,6 +406,36 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 - `config_version != 1` — loud error, exit 2 (No Silent Failures).
 
 Unknown keys in a `[[target]]` table are also rejected loudly (a typo like `addres` must not silently no-op).
+
+### Why federated scopes live in config, not in the catalog
+
+An in-process handler's scopes come from its `CapabilityCard`, which is safe because
+handler code is server-side and already trusted. A federated target's catalog is authored
+by the **upstream**, which defaults to `trust = "untrusted"` — so a catalog-derived scope
+map would let an upstream declare that its most dangerous tool requires no scope. The two
+maps are keyed identically (`<target>` and `<target>.<tool>`) and merge into one resolver;
+only the *source of truth* differs.
+
+Deny-by-default is what makes this hold under catalog refresh. A target's tool list is
+re-fetched on a background loop, so a tool that did not exist when the operator wrote the
+config can appear later.
+
+**Precedence, and the trap in it.** A tool name resolves in this order:
+
+1. an exact `<target>.<tool>` rule from `tool_scopes`;
+2. the target-level `required_scope`;
+3. the deny sentinel, **only if** the target declares `tool_scopes`;
+4. otherwise open.
+
+So step 2 shadows step 3. **Setting `required_scope` alongside `tool_scopes` turns
+deny-by-default OFF** — an unnamed tool falls back to the target scope, and any grant
+holding it can call a tool that appeared in a refresh. If you want catalog-refresh
+protection, declare `tool_scopes` and leave `required_scope` unset.
+
+The refusal for a sentinel-denied tool deliberately does **not** name the sentinel as a
+scope to grant. `has_scope` is plain membership and the grant path validates nothing, so an
+operator who granted it would silently disable this gate on every strict target,
+permanently.
 
 ### Auth modes
 

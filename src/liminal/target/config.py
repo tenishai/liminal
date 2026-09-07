@@ -14,6 +14,11 @@ One ``TargetSpec`` describes one federated target:
     trust = "untrusted"         # trusted | untrusted (default untrusted for http/stdio)
     on_untrusted = "flag"       # flag | strip | block
     identity = "forward"        # forward | none  (http only)
+    required_scope = "jira:use"  # scope a grant must hold for ANY tool here
+
+    [target.tool_scopes]         # per-tool refinement (liminal#78)
+    "create_issue" = "jira:write"
+    "search" = "jira:read"
 
 Validation is loud (``TargetConfigError``, a ``ValueError``) — No Silent
 Failures. In particular a ``stdio`` target that asks for per-request identity
@@ -24,7 +29,7 @@ hard constraint from the agentgateway eval / fold-in #13).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
 Transport = Literal["http", "stdio"]
@@ -72,6 +77,28 @@ class TargetSpec:
             ``0`` disables periodic refresh (still fetched once at startup).
         relevance_signals: Free-form routing hints for the capability surface.
         client_name: Advertised in the upstream ``initialize`` handshake.
+        required_scope: The sovereign scope a grant must hold to invoke ANY
+            tool on this target. ``None`` = no target-level gate. This is the
+            federated analogue of ``CapabilityCard.required_scope``, but it is
+            OPERATOR-authored rather than derived from the upstream catalog —
+            see ``tool_scopes`` for why.
+        tool_scopes: Per-tool scope refinement, keyed by the UNprefixed
+            upstream tool name (``"create_issue"``, not ``"jira.create_issue"``).
+            Overrides ``required_scope`` for that tool.
+
+            **Declaring this turns the target deny-by-default** (liminal#78): a
+            tool on this target that appears in neither ``tool_scopes`` nor
+            ``required_scope`` resolves to an unsatisfiable scope, so a new tool
+            appearing in a refreshed upstream catalog is denied until an
+            operator names it. Leave empty to keep the target open (subject to
+            ``required_scope`` and the operator's ``allowed_handlers`` grant).
+
+            These live in operator config and NOT in the fetched catalog on
+            purpose. An ``untrusted`` upstream authors its own catalog, so a
+            catalog-derived scope map would let the upstream declare that its
+            most dangerous tool needs no scope. ``CapabilityCard`` can be
+            trusted for this because handler code is server-side; a federated
+            catalog cannot.
     """
 
     name: str
@@ -88,6 +115,8 @@ class TargetSpec:
     refresh_tools_interval_seconds: int = 300
     relevance_signals: tuple[str, ...] = ()
     client_name: str = "liminal-target"
+    required_scope: str | None = None
+    tool_scopes: dict[str, str] = field(default_factory=dict)
 
     def validate(self) -> None:
         """Raise ``TargetConfigError`` on any invalid combination."""
@@ -130,6 +159,40 @@ class TargetSpec:
                 f"target {self.name!r}: auth_method='service-token' requires "
                 "credential_key"
             )
+
+        # `str(...)` COERCION WAS A FAIL-OPEN. It let every non-string through,
+        # and the falsy ones -- 0, False, [], {} -- are all valid TOML. app.py
+        # then gates on `if spec.required_scope:`, so a falsy value is silently
+        # DROPPED from the scope map, leaving a target with no tool_scopes
+        # WHOLLY OPEN. Deny-by-default catches it only when tool_scopes is
+        # present. (Prudence, liminal#81 round 2 — she under-tiered this as a
+        # symmetry nit in round 1 and re-graded it after tracing the drop.)
+        if self.required_scope is not None and not isinstance(self.required_scope, str):
+            raise TargetConfigError(
+                f"target {self.name!r}: required_scope must be a string or "
+                f"omitted, got {type(self.required_scope).__name__!r}"
+            )
+        if self.required_scope is not None and not self.required_scope.strip():
+            raise TargetConfigError(
+                f"target {self.name!r}: required_scope must be a non-empty "
+                "string or omitted"
+            )
+        if not isinstance(self.tool_scopes, dict):
+            raise TargetConfigError(
+                f"target {self.name!r}: tool_scopes must be a table mapping "
+                f"tool name -> scope, got {type(self.tool_scopes).__name__!r}"
+            )
+        for tool, scope in self.tool_scopes.items():
+            if not isinstance(tool, str) or not tool.strip():
+                raise TargetConfigError(
+                    f"target {self.name!r}: tool_scopes has an empty/non-string "
+                    f"tool name ({tool!r})"
+                )
+            if not isinstance(scope, str) or not scope.strip():
+                raise TargetConfigError(
+                    f"target {self.name!r}: tool_scopes[{tool!r}] must be a "
+                    f"non-empty scope string, got {scope!r}"
+                )
 
         if self.transport == "http":
             if not self.address:
