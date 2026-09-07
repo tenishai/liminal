@@ -4,6 +4,10 @@ Generalizes the retired ``MCPProxyHandler``: it fetches + inspects the
 upstream's tool catalog at ingest, and forwards calls with **per-call**
 identity. It folds in three things the old proxy lacked or did unsafely:
 
+  - **#79 result framing** — an ``UNTRUSTED`` target's tool RESULTS are
+    wrapped in a nonce-tagged envelope at dispatch and flagged in the response
+    ``_meta``, so instruction-shaped text an upstream returns is marked as
+    data rather than flowing to the agent verbatim.
   - **#16 catalog inspection** — an ``UNTRUSTED`` target's catalog is passed
     through ``inspect_catalog`` at ingest (the single chokepoint) before the
     tools ever reach a persona's context.
@@ -17,14 +21,28 @@ identity. It folds in three things the old proxy lacked or did unsafely:
   - **#27 correlation-id** — carried on ``ctx.extra["correlation_id"]``
     (generated if absent) and forwarded as ``x-correlation-id`` on every call.
 
-Failure modes stay explicit (No Silent Failures): upstream unreachable →
-empty catalog + a clear dispatch failure; upstream 4xx/5xx or transport error
-mid-call → ``ToolResult.failure`` with the cause.
+Failure modes stay explicit (No Silent Failures): ANY failed catalog fetch
+— startup or periodic refresh — sets a ``catalog_status`` the health surface
+reports as degraded until a fetch succeeds again, never a silently-empty or
+silently-stale tool list (liminal#75); only the log severity differs
+(error at startup, warning on a refresh, where the last good catalog keeps
+serving); a service-token call whose credential did not resolve is REFUSED
+with a failure naming the missing key, never sent upstream unauthenticated
+(liminal#80); upstream 4xx/5xx or transport error mid-call →
+``ToolResult.failure`` with the cause.
+
+Two deployment notes. The owned HTTP client rejects every cookie (a blocking
+cookie policy): upstream ``Set-Cookie`` never persists, so one persona's
+upstream session can never ride another persona's call (liminal#76) — an
+injected ``http_client`` is the injector's responsibility. And because this
+gateway holds credentials for its targets, its pod's egress should be
+allowlisted to exactly the declared target addresses (liminal#80).
 """
 
 from __future__ import annotations
 
 import asyncio
+import http.cookiejar
 import uuid
 from typing import Any
 
@@ -40,7 +58,12 @@ from liminal.client.mcp import (
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
 from liminal.target.config import TargetConfigError, TargetSpec
-from liminal.target.inspect import inspect_catalog
+from liminal.target.inspect import (
+    UnsanitizableResult,
+    frame_untrusted_result,
+    inspect_catalog,
+    new_envelope_nonce,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -49,6 +72,11 @@ HEADER_PERSONA = "x-liminal-persona"
 HEADER_ISSUER = "x-liminal-issuer"
 HEADER_CORRELATION_ID = "x-correlation-id"
 CORRELATION_ID_KEY = "correlation_id"
+
+
+class _MissingCredential(Exception):
+    """A service-token dispatch whose credential did not resolve; str() is
+    the credential key. Rendered by dispatch() as a refusal (liminal#80)."""
 
 
 class HttpTarget(Target):
@@ -76,6 +104,10 @@ class HttpTarget(Target):
         self._tools: list[ToolSpec] = []
         self._refresh_task: asyncio.Task[None] | None = None
         self._protocol_version: str | None = None
+        # Surfaced by /healthz (liminal#75): "not started" -> "ready" on a
+        # successful catalog fetch, or "catalog fetch failed: ..." -- a failed
+        # target is visible, never a silently-empty tool list.
+        self.catalog_status: str = "not started"
 
     # ---- Target protocol --------------------------------------------------
 
@@ -92,7 +124,19 @@ class HttpTarget(Target):
                 f"target {self.name!r} not started (call startup() first)"
             )
 
-        headers = self._build_call_headers(ctx)
+        try:
+            headers = self._build_call_headers(ctx)
+        except _MissingCredential as exc:
+            log.warning(
+                "http_target.credential_missing",
+                target=self.name,
+                persona=ctx.identity,
+                credential_key=str(exc),
+            )
+            return ToolResult.failure(
+                f"credential {exc} for persona {ctx.identity!r} did not "
+                f"resolve; refusing to call {self.name!r} unauthenticated"
+            )
         log.debug(
             "http_target.dispatch",
             target=self.name,
@@ -105,15 +149,55 @@ class HttpTarget(Target):
                 tool, payload, extra_headers=headers
             )
         except MCPRemoteError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} returned error [{exc.code}]: {exc.message}"
+            return self._error_result(
+                reason=f"upstream {self.name!r} returned error [{exc.code}]",
+                upstream_text=exc.message,
             )
         except MCPError as exc:
-            return ToolResult.failure(
-                f"upstream {self.name!r} transport error: {exc}"
+            # An MCPTransportError message can embed the upstream's response
+            # body (`server {status}: {resp.text[:200]}`), so this is not
+            # unconditionally our own prose either.
+            return self._error_result(
+                reason=f"upstream {self.name!r} transport error",
+                upstream_text=str(exc),
             )
 
-        return ToolResult(content=list(outcome.content), is_error=outcome.is_error)
+        content = list(outcome.content)
+        if self.trust is TrustTier.UNTRUSTED:
+            # #79 — the dispatch-time half of #16. Catalog inspection covers
+            # what the upstream SAYS about its tools; this covers what it
+            # RETURNS. The nonce goes out-of-band in the response `_meta` so a
+            # runtime can verify the delimiters instead of trusting their shape.
+            nonce = new_envelope_nonce()
+            try:
+                framed = frame_untrusted_result(content, self.name, nonce)
+            except UnsanitizableResult as exc:
+                # Fail closed, and fail as a ToolResult rather than letting the
+                # exception propagate. NOT because it would reach Starlette —
+                # Multiplexer.dispatch has a blanket `except Exception` and is
+                # the only dispatcher wired, so it would not. The reason is that
+                # a propagated exception yields "evil.search raised
+                # UnsanitizableResult", while returning here yields a refusal
+                # that names the target, the cause, and the disposition.
+                # (Prudence, liminal#82 rounds 3 and 4 — one of five sites of
+                # the retracted "unhandled 500" claim; the correction lives in
+                # inspect.py beside MAX_CONTENT_DEPTH.)
+                log.warning(
+                    "http_target.result_unsanitizable",
+                    target=self.name, tool=tool, error=str(exc),
+                )
+                return ToolResult.failure(
+                    f"refused: {self.name!r} returned content that could not be "
+                    f"sanitised ({exc}); it is not forwarded"
+                )
+            return ToolResult(
+                content=framed,
+                is_error=outcome.is_error,
+                liminal_untrusted=True,
+                liminal_untrusted_source=self.name,
+                liminal_untrusted_nonce=nonce,
+            )
+        return ToolResult(content=content, is_error=outcome.is_error)
 
     def protocol_version(self) -> str | None:
         return self._protocol_version
@@ -123,15 +207,26 @@ class HttpTarget(Target):
     async def startup(self) -> None:
         """Connect, initialize, fetch + inspect the catalog, schedule refresh."""
         if self._http_client is None:
+            # The owned client REJECTS every cookie (liminal#76): dispatches
+            # for different personas share this one client, and an upstream
+            # session cookie set on persona A's authenticated call must never
+            # replay on persona B's. Stateless bearer-per-call is the model;
+            # a blocking cookie policy makes it structural.
+            no_cookies = http.cookiejar.CookieJar(
+                policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
+            )
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.spec.timeout_seconds)
+                timeout=httpx.Timeout(self.spec.timeout_seconds),
+                cookies=no_cookies,
             )
             self._owned_http = True
 
-        # The base client carries NO persona-specific secret. For bearer auth we
-        # pin the static token here so the catalog fetch is authenticated; for
-        # service-token / none the base token stays empty and the per-call
-        # Authorization is built fresh in dispatch (#13).
+        # The base client carries NO persona-specific secret. For bearer auth
+        # the static target token rides every base call -- the handshake AND
+        # the catalog fetch (initialize authenticates like everything else
+        # since liminal#75); for service-token / none the base token stays
+        # empty, those base calls go out unauthenticated by design, and the
+        # per-call Authorization is built fresh in dispatch (#13).
         if self.spec.auth_method == "bearer" and self.spec.bearer_token:
             base_token = self.spec.bearer_token
         else:
@@ -170,6 +265,47 @@ class HttpTarget(Target):
 
     # ---- internals --------------------------------------------------------
 
+    def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
+        """A failed dispatch whose message may carry upstream-authored bytes.
+
+        Since liminal#66 a ToolResult's ``.error`` is appended to the content
+        the agent sees, so an error string is now an injection surface exactly
+        like a successful result is. Both upstream error paths can embed
+        upstream output — ``MCPRemoteError.message`` is the upstream's own
+        JSON-RPC error text, and ``MCPTransportError`` embeds ``resp.text`` for
+        a 5xx — so on an UNTRUSTED target the upstream half goes inside the
+        envelope and ``.error`` keeps only liminal's own description.
+
+        The result stays legible per #66: the agent still gets a reason, and
+        still gets the upstream's text — framed rather than dropped.
+        """
+        if self.trust is not TrustTier.UNTRUSTED:
+            return ToolResult.failure(f"{reason}: {upstream_text}")
+        nonce = new_envelope_nonce()
+        # GUARDED LIKE THE SUCCESS PATH. This call was unguarded, so an upstream
+        # error message — MCPRemoteError.message is unvalidated — bypassed the
+        # depth bound the success path enforces. The Multiplexer's blanket
+        # except contains it, so this was a message-parity gap rather than a
+        # crash: the caller got "raised UnsanitizableResult" instead of the
+        # refusal prose. (Prudence, liminal#82 round 3, nit 3.)
+        try:
+            framed = frame_untrusted_result(
+                [{"type": "text", "text": upstream_text}], self.name, nonce
+            )
+        except UnsanitizableResult as exc:
+            return ToolResult.failure(
+                f"{reason}, and the upstream's error text could not be "
+                f"sanitised ({exc}); it is not forwarded"
+            )
+        return ToolResult(
+            content=framed,
+            is_error=True,
+            error=reason,
+            liminal_untrusted=True,
+            liminal_untrusted_source=self.name,
+            liminal_untrusted_nonce=nonce,
+        )
+
     def _build_call_headers(self, ctx: Context) -> dict[str, str]:
         """Build fresh per-call headers. NEVER stored on the client (#13)."""
         headers: dict[str, str] = {}
@@ -182,12 +318,21 @@ class HttpTarget(Target):
 
         # service-token auth — resolve the per-call credential into a per-call
         # Authorization header. Not present on the shared client, so persona
-        # A's token can never ride persona B's concurrent request.
+        # A's token can never ride persona B's concurrent request. A missing
+        # or empty credential is a REFUSAL, raised for dispatch() to render
+        # (liminal#80) -- never an unauthenticated upstream attempt.
         if self.spec.auth_method == "service-token":
             key = self.spec.credential_key or ""
-            token = ctx.credentials.get(key)
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
+            # STRIP BEFORE TESTING. `if not token` catches "" and None but
+            # not "   " — and a trailing newline is the shape a secret read
+            # from a file arrives in. Driven: dialed=1, is_error=False,
+            # auth='Bearer    ' (Prudence, liminal#84 r1). A whitespace-only
+            # credential is a missing credential, and #80's guarantee is that
+            # a missing credential is a refusal rather than an anonymous call.
+            token = (ctx.credentials.get(key) or "").strip() if key else ""
+            if not token:
+                raise _MissingCredential(key or "(no credential_key configured)")
+            headers["Authorization"] = f"Bearer {token}"
 
         # #27 correlation-id — carry an inbound one or generate, persist on the
         # context, and forward on every call for end-to-end traceability.
@@ -208,11 +353,45 @@ class HttpTarget(Target):
                 self._protocol_version = init_result.get("protocolVersion")
             tools_from_upstream = await self._client.list_tools()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "http_target.refresh_failed",
-                target=self.name,
-                error=str(exc),
+            # ANY fetch failure marks the status, deliberately (liminal#75):
+            # /healthz reads degraded until a fetch succeeds again. A stale
+            # catalog on refresh serves an increasingly wrong tool surface --
+            # a health check that stays green through that is the exact
+            # failure mode this issue exists to kill. Only the log severity
+            # is scoped: startup failure means zero tools (error); a refresh
+            # failure keeps serving the last good catalog (warning).
+            # COARSE ON THE WIRE, DETAIL IN THE LOG. `exc` embeds the
+            # upstream's own response body for a 5xx — MCPTransportError is
+            # built as f"server {status}: {resp.text[:200]}" — and routes.py
+            # serves catalog_status VERBATIM on /healthz, which has no auth at
+            # all. So interpolating it here let an UPSTREAM choose what liminal
+            # republishes to unauthenticated callers, which is precisely what
+            # `trust = "untrusted"` exists to prevent (Prudence, liminal#84 r1;
+            # driven: a 500 upstream and a bare GET /healthz returned 200
+            # characters of upstream body in the JSON).
+            #
+            # The status still discriminates the two cases a health check
+            # actually needs, and the log lines below already carry the cause.
+            # The "catalog fetch failed" prefix is deliberate: it keeps the
+            # existing assertion in test_fail_loud.py green without editing
+            # someone else's test, and the parenthetical still discriminates
+            # the two cases a health check needs to tell apart.
+            self.catalog_status = (
+                "catalog fetch failed (startup)" if initialize
+                else "catalog fetch failed (refresh)"
             )
+            if initialize:
+                log.error(
+                    "http_target.catalog_failed",
+                    target=self.name,
+                    error=str(exc),
+                )
+            else:
+                log.warning(
+                    "http_target.refresh_failed",
+                    target=self.name,
+                    error=str(exc),
+                )
             return
 
         raw_specs = [
@@ -228,6 +407,7 @@ class HttpTarget(Target):
         self._tools = inspect_catalog(
             raw_specs, self.trust, self.spec.on_untrusted
         )
+        self.catalog_status = "ready"
         log.info(
             "http_target.tools_refreshed",
             target=self.name,

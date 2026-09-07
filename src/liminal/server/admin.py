@@ -47,11 +47,15 @@ async def _admin_auth(
         claims = await verifier.verify(token)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    # Parent guardian gate: issuer must be a parent AND hold admin:*. The
-    # parents() check short-circuits before the store hit.
+    # Parent guardian gate: issuer must be a parent AND this persona must hold
+    # a parent row with admin:*. Resolution goes through resolve_parent --
+    # never the data-plane resolve(), which excludes parent rows (liminal#73):
+    # when the parent issuer also signs agent tokens, an agent's data-plane
+    # grant must never add up to admin standing, and a wildcard parent row is
+    # an explicit deployment choice, not a fallback.
     if claims.issuer not in store.parents():
         raise HTTPException(status_code=403, detail="admin requires a parent issuer")
-    grant = await store.resolve(claims.issuer, claims.identity)
+    grant = await store.resolve_parent(claims.issuer, claims.identity)
     if grant is None or not grant.has_scope(ADMIN_SCOPE):
         raise HTTPException(status_code=403, detail="admin:* scope required")
     return claims, store

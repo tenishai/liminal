@@ -7,11 +7,18 @@ own cabal minted — a foreign cabal would just mint itself generous
 **verified** `(issuer, persona)` that this service owns.
 
 Resolution precedence: exact `(issuer, persona)` → issuer-wide `(issuer, "*")` →
-`None` (deny). Fail-closed.
+`None` (deny). Fail-closed. Parent rows never resolve on this data-plane path
+(liminal#73): guardianship is admin standing, not tool access, and a topology
+where the parent issuer also signs agent tokens (a cabal serving its own
+graduated persona) must not hand `admin:*` to every ungranted agent through
+the wildcard fallback. The admin surface resolves parents through
+`resolve_parent` instead.
 
 The **parent** — the cabal that graduated this persona — is seeded as an immutable
 `is_parent` row with `admin:*`. No `grant`/`revoke` can touch it: "graduation does
-not orphan." `admin:*` implies every scope.
+not orphan." `admin:*` implies every scope. Parent rows are seeded per persona:
+`parent_personas=("*",)` (the default) keeps the historical any-persona
+guardianship; naming personas narrows admin standing to exactly those.
 
 This is liminal's first local persistent store: a small SQLite DB. All access is
 serialized through an asyncio lock and run off the event loop via `to_thread`, so
@@ -64,12 +71,45 @@ class AuditRow:
     detail: dict[str, Any]
 
 
+class ParentNarrowingConflict(ValueError):
+    """Raised when `admin_personas` DROPS any persona a store already holds a
+    parent row for.
+
+    THE TRIGGER IS ANY REMOVAL, not the wildcard case. An earlier revision of
+    this docstring said "a store that already holds a WILDCARD parent row",
+    which was the round-2 rule and is now strictly narrower than the code. That
+    matters more than a stale sentence usually does: the first line of an
+    exception's docstring is its contract, so a maintainer meeting a
+    legitimate over-fire would read this and conclude the obvious repair is
+    "narrow the check back to the wildcard" — which is the round-2 Critical,
+    reopened with the documentation's blessing. (Prudence, liminal#83 round 3.)
+
+    Seeding is idempotent per (issuer, persona) while rows are IMMUTABLE, and
+    that pairing is the whole hazard. Adding named personas to a wildcard-seeded
+    store adds rows without removing the wildcard, and `resolve_parent` falls
+    back to it. Dropping a NAMED persona leaves its row answering just the same.
+    Either way the narrowing is a no-op.
+
+    The sting is the interaction: setting `admin_personas` also SILENCES the
+    boot warning, so the operator does exactly what the warning asks, gets no
+    warning back, and remains fully exposed. The control and its compensating
+    signal fail together (Prudence, liminal#83 round 1).
+
+    Refusing is deliberate rather than migrating silently: the docstring on
+    _seed_parent already states that narrowing an existing wildcard deployment
+    means a new policy DB, a deliberate operator act. This makes that stated
+    intent ENFORCED instead of merely documented.
+    """
+
+
+
 class ParentImmutable(RuntimeError):
     """Attempt to modify or remove the parent's guardian grant."""
 
 
 class PolicyStore(Protocol):
     async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None: ...
+    async def resolve_parent(self, issuer: str, persona: str) -> ScopeGrant | None: ...
     async def grant(
         self,
         issuer: str,
@@ -140,6 +180,7 @@ class SqlitePolicyStore:
         *,
         parent_issuer: str | None = None,
         parent_scopes: tuple[str, ...] = (ADMIN_SCOPE,),
+        parent_personas: tuple[str, ...] = ("*",),
         audit_max_rows: int | None = 50_000,
         audit_prune_interval: int = 500,
     ) -> None:
@@ -156,7 +197,7 @@ class SqlitePolicyStore:
         self._audit_prune_interval = max(1, audit_prune_interval)
         self._audit_writes = 0
         if parent_issuer is not None:
-            self._seed_parent(parent_issuer, set(parent_scopes))
+            self._seed_parent(parent_issuer, set(parent_scopes), parent_personas)
         # Parent set is immutable after seeding; cache it for the sync parents().
         self._parents = frozenset(
             r["issuer"]
@@ -165,19 +206,79 @@ class SqlitePolicyStore:
             ).fetchall()
         )
 
-    def _seed_parent(self, issuer: str, scopes: set[str]) -> None:
-        existing = self._conn.execute(
-            "SELECT 1 FROM policy_grants WHERE issuer = ? AND is_parent = 1", (issuer,)
-        ).fetchone()
-        if existing is not None:
-            return
+    def _seed_parent(
+        self, issuer: str, scopes: set[str], personas: tuple[str, ...]
+    ) -> None:
+        """Seed one immutable parent row per persona. A store seeded before
+        this issuer/persona pair existed keeps its rows (idempotent per pair);
+        narrowing an existing deployment — dropping ANY persona already seeded,
+        wildcard or named — means a new policy DB, a deliberate operator act
+        rather than a silent migration."""
         now = _now_iso()
-        self._conn.execute(
-            "INSERT INTO policy_grants"
-            "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
-            "VALUES (?, '*', ?, NULL, 1, ?, ?)",
-            (issuer, json.dumps(sorted(scopes | {ADMIN_SCOPE})), now, now),
-        )
+        wanted = personas or ("*",)
+        # DETECT ANY NO-OP NARROWING, not just the wildcard one.
+        #
+        # The first version of this check fired only when the EXISTING row was
+        # the wildcard, and that was closed in one direction only. The hazard is
+        # not a property of the wildcard: it is a property of seeding being
+        # idempotent per (issuer, persona) WHILE ROWS ARE IMMUTABLE, which is
+        # equally true of named rows. So de-listing a named admin — the ordinary
+        # act of rotating someone out — was a silent no-op: the dropped
+        # persona's is_parent row survived, resolve_parent kept answering for
+        # it, and the running server never re-consults the registry. Driven over
+        # the real HTTP surface by the reviewer: a de-listed persona's token got
+        # 200 on GET /admin/policy and successfully granted admin:* to a partner
+        # cabal (Prudence, liminal#83 round 2).
+        #
+        # It was WORSE than the unfixed state in one respect, which is the part
+        # worth remembering: refusing loudly for the wildcard case taught the
+        # operator that liminal enforces narrowing, so silence in the named case
+        # read as "the narrowing took".
+        #
+        # Comparing the whole set subsumes the wildcard case rather than
+        # special-casing it. Widening still passes ({"a"} -> {"a","b"} drops
+        # nothing); first boot passes on an empty existing set.
+        existing = {
+            r["persona"]
+            for r in self._conn.execute(
+                "SELECT persona FROM policy_grants "
+                "WHERE issuer = ? AND is_parent = 1",
+                (issuer,),
+            )
+        }
+        # `"*" IN wanted` MEANS NOTHING CAN BE DROPPED. Widening a named set to
+        # the wildcard is a set-REMOVAL but a semantic WIDENING: the seeded
+        # wildcard row resolves for every persona, so no persona can lose
+        # standing. Round 2's check skipped entirely when "*" was wanted, and
+        # generalising to a whole-set difference lost that — making
+        # admin_personas = ["*"] refused one line after the CLI prints that it
+        # is permitted, with a remedy (a new policy DB) that discards the whole
+        # grant table to reach a state one edit away. (Prudence, liminal#83
+        # round 3, Important 1 — a regression introduced by the round-2 fix.)
+        dropped = set() if "*" in wanted else existing - set(wanted)
+        if dropped:
+            raise ParentNarrowingConflict(
+                f"policy DB already holds parent row(s) for issuer {issuer!r} "
+                f"covering persona(s) {sorted(dropped)!r}, which "
+                f"admin_personas={sorted(wanted)!r} drops. Those rows are "
+                f"immutable by design and would keep admin standing on "
+                f"/admin/* regardless of the registry. Point --policy-db at a "
+                f"new database to adopt this set."
+            )
+        for persona in wanted:
+            existing = self._conn.execute(
+                "SELECT 1 FROM policy_grants "
+                "WHERE issuer = ? AND persona = ? AND is_parent = 1",
+                (issuer, persona),
+            ).fetchone()
+            if existing is not None:
+                continue
+            self._conn.execute(
+                "INSERT INTO policy_grants"
+                "(issuer, persona, scopes, allowed_handlers, is_parent, created_at, updated_at) "
+                "VALUES (?, ?, ?, NULL, 1, ?, ?)",
+                (issuer, persona, json.dumps(sorted(scopes | {ADMIN_SCOPE})), now, now),
+            )
         self._conn.commit()
 
     def parents(self) -> frozenset[str]:
@@ -188,11 +289,35 @@ class SqlitePolicyStore:
             return await asyncio.to_thread(fn)
 
     async def resolve(self, issuer: str, persona: str) -> ScopeGrant | None:
+        """Data-plane resolution. Parent rows are excluded on BOTH legs
+        (liminal#73): when the parent issuer also signs agent tokens, the
+        wildcard fallback would otherwise hand `admin:*` to every ungranted
+        agent -- and a caller whose verified identity is literally "*" must
+        not hit the parent row on the exact leg either."""
+
         def _q() -> ScopeGrant | None:
             for who in (persona, "*"):
                 row = self._conn.execute(
                     "SELECT scopes, allowed_handlers FROM policy_grants "
-                    "WHERE issuer = ? AND persona = ?",
+                    "WHERE issuer = ? AND persona = ? AND is_parent = 0",
+                    (issuer, who),
+                ).fetchone()
+                if row is not None:
+                    return _row_to_grant(row)
+            return None
+
+        return await self._run(_q)
+
+    async def resolve_parent(self, issuer: str, persona: str) -> ScopeGrant | None:
+        """Admin-plane resolution: ONLY parent rows, exact persona first,
+        then the wildcard parent row when one was seeded. The admin surface
+        is the sole caller (liminal#73)."""
+
+        def _q() -> ScopeGrant | None:
+            for who in (persona, "*"):
+                row = self._conn.execute(
+                    "SELECT scopes, allowed_handlers FROM policy_grants "
+                    "WHERE issuer = ? AND persona = ? AND is_parent = 1",
                     (issuer, who),
                 ).fetchone()
                 if row is not None:

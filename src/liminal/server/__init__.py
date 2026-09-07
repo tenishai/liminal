@@ -9,7 +9,7 @@ KeySet (tests) or a remote JWKS URL (production, e.g. Cabal Core).
 """
 
 from liminal.server.admin import build_admin_router
-from liminal.server.app import ConfigError, create_app
+from liminal.server.app import ConfigError, create_admin_app, create_app
 from liminal.server.auth import (
     AuthError,
     IssuerConfig,
@@ -38,6 +38,7 @@ from liminal.server.policy import (
     AuditRow,
     GrantRow,
     ParentImmutable,
+    ParentNarrowingConflict,
     PolicyStore,
     ScopeGrant,
     SqlitePolicyStore,
@@ -59,6 +60,7 @@ __all__ = [
     "JWTVerifier",
     "MultiIssuerJWKSVerifier",
     "ParentImmutable",
+    "ParentNarrowingConflict",
     "PolicyStore",
     "ScopeGrant",
     "SqlitePolicyStore",
@@ -70,5 +72,6 @@ __all__ = [
     "VerifiedClaims",
     "build_admin_router",
     "build_multi_issuer_verifier",
+    "create_admin_app",
     "create_app",
 ]

@@ -97,8 +97,21 @@ def build_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/healthz")
-    async def healthz() -> dict:
-        return {"status": "ok"}
+    async def healthz(request: Request) -> dict:
+        # Per-target catalog status (liminal#75): a federated target whose
+        # catalog fetch failed serves zero tools -- that must read as
+        # "degraded" here, never as a healthy gateway with a quiet surface.
+        # In-process targets carry no catalog_status and report "ready".
+        dispatcher = getattr(request.app.state, "dispatcher", None)
+        targets = {
+            name: getattr(target, "catalog_status", "ready")
+            for name, target in (dispatcher.targets if dispatcher else {}).items()
+        }
+        degraded = [n for n, s in targets.items() if s != "ready"]
+        return {
+            "status": "degraded" if degraded else "ok",
+            "targets": targets,
+        }
 
     @router.post("/mcp", response_model=None)
     async def mcp(
@@ -477,4 +490,20 @@ async def _handle_tools_call(
         ),
         isError=tool_result.is_error,
     )
-    return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True))
+    payload = result.model_dump(by_alias=True)
+    # #79 — an untrusted target flags its own results at the boundary that
+    # knows the trust tier; the route only forwards that out-of-band. `_meta`
+    # is the MCP-sanctioned place for it, and it carries the envelope nonce so
+    # a runtime can verify the in-band delimiters rather than pattern-matching
+    # text an upstream could imitate.
+    if getattr(tool_result, "liminal_untrusted", False):
+        payload["_meta"] = {
+            "liminal/untrusted": True,
+            "liminal/untrusted_source": getattr(
+                tool_result, "liminal_untrusted_source", None
+            ),
+            "liminal/untrusted_nonce": getattr(
+                tool_result, "liminal_untrusted_nonce", None
+            ),
+        }
+    return make_success(id=rpc_req.id, result=payload)
