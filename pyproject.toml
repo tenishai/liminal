@@ -61,6 +61,22 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# liminal#85. WITHOUT THIS, `import liminal` resolves through whatever is
+# INSTALLED -- and the dev venv has liminal installed editable against the
+# canonical checkout. So `pytest` run from a git worktree at a PR head tests
+# MAIN, not the PR, and it looks like a normal green run.
+#
+# It has already produced a false "their PRs are broken" report (#83/#84 were
+# green in CI the whole time) and Prudence hit it during the #81 review. The
+# dangerous half is the other one: when the shadowed tree happens to be
+# COMPATIBLE, the wrong tree passes silently and nothing disagrees.
+#
+# `pythonpath` puts these on sys.path ahead of the .pth the editable install
+# adds, so the checkout you are standing in is the one you test. Do not remove
+# it in favour of the PYTHONPATH= workaround: that is per-invocation, invisible
+# to anyone reading the repo, and the review sandbox refuses env-prefixed
+# commands outright.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
