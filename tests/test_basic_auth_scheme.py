@@ -94,3 +94,70 @@ def test_startup_reads_the_env_and_refuses_an_empty_var(monkeypatch):
     target = HttpTarget(spec)
     with pytest.raises(RuntimeError, match="ATLASSIAN_BASIC"):
         asyncio.run(target.startup())
+
+
+# --- streamable-HTTP strictness (found live against Atlassian) ----------------
+
+
+def test_parse_rpc_body_handles_sse_framed_responses():
+    from liminal.client.mcp import _parse_rpc_body
+
+    class _Resp:
+        headers = {"content-type": "text/event-stream; charset=utf-8"}
+        text = (
+            "event: message\n"
+            'data: {"jsonrpc":"2.0","method":"notifications/foo","params":{}}\n'
+            "\n"
+            "event: message\n"
+            'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n'
+        )
+
+    assert _parse_rpc_body(_Resp())["result"] == {"ok": True}
+
+
+def test_parse_rpc_body_plain_json_untouched():
+    from liminal.client.mcp import _parse_rpc_body
+
+    class _Resp:
+        headers = {"content-type": "application/json"}
+
+        @staticmethod
+        def json():
+            return {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+    assert _parse_rpc_body(_Resp()) == {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+
+def test_parse_rpc_body_empty_stream_raises():
+    from liminal.client.mcp import _parse_rpc_body
+
+    class _Resp:
+        headers = {"content-type": "text/event-stream"}
+        text = "event: message\ndata: not-json\n"
+
+    with pytest.raises(ValueError, match="no JSON-RPC response"):
+        _parse_rpc_body(_Resp())
+
+
+async def test_requests_accept_both_forms():
+    import httpx
+
+    from liminal.client.mcp import AsyncMCPClient
+
+    seen = {}
+
+    async def handler(request):
+        seen["accept"] = request.headers.get("accept")
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"protocolVersion": "2025-03-26", "capabilities": {},
+                       "serverInfo": {"name": "t", "version": "0"}},
+        })
+
+    transport = httpx.MockTransport(handler)
+    client = AsyncMCPClient(
+        "http://gw", token_provider=lambda: "",
+        http_client=httpx.AsyncClient(transport=transport),
+    )
+    await client.initialize()
+    assert seen["accept"] == "application/json, text/event-stream"

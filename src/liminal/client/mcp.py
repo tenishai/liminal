@@ -99,6 +99,42 @@ def _auth_header(token: str, scheme: str = "bearer") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+_ACCEPT_BOTH = "application/json, text/event-stream"
+
+
+def _parse_rpc_body(resp) -> dict:
+    """The JSON-RPC response object from a streamable-HTTP POST.
+
+    The spec lets a server answer either as plain JSON or as an SSE-framed
+    stream (Atlassian's hosted MCP does the latter for every response). For
+    the SSE form, each `data:` payload is a JSON-RPC message; the response
+    to our request is the last object carrying "result" or "error". Raises
+    ValueError when nothing parseable arrives -- callers wrap it in their
+    transport error, same as a plain-JSON parse failure.
+    """
+    content_type = (resp.headers.get("content-type") or "").lower()
+    if not content_type.startswith("text/event-stream"):
+        return resp.json()
+    import json as _json
+
+    answer: dict | None = None
+    for line in resp.text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:"):].strip()
+        if not payload:
+            continue
+        try:
+            obj = _json.loads(payload)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and ("result" in obj or "error" in obj):
+            answer = obj
+    if answer is None:
+        raise ValueError("event-stream carried no JSON-RPC response")
+    return answer
+
+
 # ---- Async client ---------------------------------------------------------
 
 
@@ -241,7 +277,13 @@ class AsyncMCPClient:
             "method": method,
             "params": params,
         }
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            # The streamable-HTTP spec requires the client to accept BOTH
+            # forms on every POST; strict upstreams (Atlassian) refuse
+            # otherwise with -32000 Not Acceptable. Found live.
+            "Accept": _ACCEPT_BOTH,
+        }
         if auth:
             headers.update(_auth_header(self._token(), self._auth_scheme))
         # Per-call headers win over the base set (e.g. an override Authorization
@@ -259,7 +301,7 @@ class AsyncMCPClient:
                 f"server {resp.status_code}: {resp.text[:200]}"
             )
         try:
-            body = resp.json()
+            body = _parse_rpc_body(resp)
         except Exception as exc:  # noqa: BLE001
             raise MCPTransportError(f"non-JSON response: {exc}") from exc
         if body.get("error"):
@@ -301,7 +343,11 @@ class AsyncMCPClient:
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """One-way notify; no id field, no response body expected."""
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {"Content-Type": "application/json", **_auth_header(self._token(), self._auth_scheme)}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": _ACCEPT_BOTH,
+            **_auth_header(self._token(), self._auth_scheme),
+        }
         try:
             await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -414,7 +460,13 @@ class MCPClient:
             "method": method,
             "params": params,
         }
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            # The streamable-HTTP spec requires the client to accept BOTH
+            # forms on every POST; strict upstreams (Atlassian) refuse
+            # otherwise with -32000 Not Acceptable. Found live.
+            "Accept": _ACCEPT_BOTH,
+        }
         if auth:
             headers.update(_auth_header(self._token(), self._auth_scheme))
         try:
@@ -428,7 +480,7 @@ class MCPClient:
                 f"server {resp.status_code}: {resp.text[:200]}"
             )
         try:
-            body = resp.json()
+            body = _parse_rpc_body(resp)
         except Exception as exc:  # noqa: BLE001
             raise MCPTransportError(f"non-JSON response: {exc}") from exc
         if body.get("error"):
@@ -440,7 +492,11 @@ class MCPClient:
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {"Content-Type": "application/json", **_auth_header(self._token(), self._auth_scheme)}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": _ACCEPT_BOTH,
+            **_auth_header(self._token(), self._auth_scheme),
+        }
         try:
             self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
