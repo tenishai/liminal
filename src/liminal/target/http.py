@@ -74,6 +74,16 @@ HEADER_CORRELATION_ID = "x-correlation-id"
 CORRELATION_ID_KEY = "correlation_id"
 
 
+def _authorization(scheme: str, token: str) -> str:
+    """The per-call Authorization value. Mirrors the client's encoding rule:
+    bearer sends verbatim, basic base64-encodes a ``user:secret`` value."""
+    if scheme == "basic":
+        import base64 as _b64
+
+        return "Basic " + _b64.b64encode(token.encode()).decode()
+    return f"Bearer {token}"
+
+
 class _MissingCredential(Exception):
     """A service-token dispatch whose credential did not resolve; str() is
     the credential key. Rendered by dispatch() as a refusal (liminal#80)."""
@@ -227,8 +237,21 @@ class HttpTarget(Target):
         # since liminal#75); for service-token / none the base token stays
         # empty, those base calls go out unauthenticated by design, and the
         # per-call Authorization is built fresh in dispatch (#13).
-        if self.spec.auth_method == "bearer" and self.spec.bearer_token:
-            base_token = self.spec.bearer_token
+        if self.spec.auth_method == "bearer":
+            if self.spec.bearer_token_env:
+                import os as _os
+
+                base_token = (_os.environ.get(self.spec.bearer_token_env) or "").strip()
+                if not base_token:
+                    # A named-but-empty env var is a wiring error, not a
+                    # no-auth deployment -- fail loudly at connect, in the
+                    # same voice as every other missing-credential refusal.
+                    raise RuntimeError(
+                        f"target {self.spec.name!r}: bearer_token_env "
+                        f"${self.spec.bearer_token_env} is empty"
+                    )
+            else:
+                base_token = self.spec.bearer_token or ""
         else:
             base_token = ""
 
@@ -240,6 +263,7 @@ class HttpTarget(Target):
             token_provider=_base_token_provider,
             http_client=self._http_client,
             client_name=self.spec.client_name,
+            auth_scheme=self.spec.auth_scheme,
         )
 
         await self._refresh_tools_once(initialize=True)
@@ -332,7 +356,7 @@ class HttpTarget(Target):
             token = (ctx.credentials.get(key) or "").strip() if key else ""
             if not token:
                 raise _MissingCredential(key or "(no credential_key configured)")
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = _authorization(self.spec.auth_scheme, token)
 
         # #27 correlation-id — carry an inbound one or generate, persist on the
         # context, and forward on every call for end-to-end traceability.

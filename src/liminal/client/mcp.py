@@ -73,9 +73,15 @@ class ToolCallOutcome:
         return "".join(out)
 
 
-def _auth_header(token: str) -> dict[str, str]:
-    """A ``{"Authorization": "Bearer <token>"}`` header — OMITTED when the token
-    is falsy (liminal#32).
+def _auth_header(token: str, scheme: str = "bearer") -> dict[str, str]:
+    """An ``Authorization`` header — OMITTED when the token is falsy
+    (liminal#32).
+
+    ``scheme="bearer"`` sends the token verbatim as ``Bearer <token>``.
+    ``scheme="basic"`` treats it as ``user:secret`` and base64-encodes it
+    here — upstreams like Atlassian's hosted MCP authenticate service
+    accounts as ``Basic base64(email:api_token)``, and the credential
+    store should hold the readable form, never a pre-encoded blob.
 
     A no-auth deployment (``LIMINAL_AUTH_DISABLED=1``) naturally passes an empty
     token. Emitting ``Authorization: Bearer `` (trailing space, empty value)
@@ -84,7 +90,13 @@ def _auth_header(token: str) -> dict[str, str]:
     in-process tests pass while real-network calls fail. Omitting the header
     keeps no-auth mode symmetric on both ends.
     """
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    if not token:
+        return {}
+    if scheme == "basic":
+        import base64 as _b64
+
+        return {"Authorization": "Basic " + _b64.b64encode(token.encode()).decode()}
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---- Async client ---------------------------------------------------------
@@ -112,9 +124,11 @@ class AsyncMCPClient:
         client_name: str = "liminal-client",
         client_version: str = LIMINAL_VERSION,
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        auth_scheme: str = "bearer",
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
+        self._auth_scheme = auth_scheme
         self._owned_client = http_client is None
         self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(30.0))
         self._client_name = client_name
@@ -229,7 +243,7 @@ class AsyncMCPClient:
         }
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth:
-            headers.update(_auth_header(self._token()))
+            headers.update(_auth_header(self._token(), self._auth_scheme))
         # Per-call headers win over the base set (e.g. an override Authorization
         # carrying a per-persona service token). Applied last, stored nowhere.
         if extra_headers:
@@ -287,7 +301,7 @@ class AsyncMCPClient:
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """One-way notify; no id field, no response body expected."""
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {"Content-Type": "application/json", **_auth_header(self._token())}
+        headers = {"Content-Type": "application/json", **_auth_header(self._token(), self._auth_scheme)}
         try:
             await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -313,9 +327,11 @@ class MCPClient:
         client_name: str = "liminal-client",
         client_version: str = LIMINAL_VERSION,
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+        auth_scheme: str = "bearer",
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
+        self._auth_scheme = auth_scheme
         self._owned_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(30.0))
         self._client_name = client_name
@@ -400,7 +416,7 @@ class MCPClient:
         }
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth:
-            headers.update(_auth_header(self._token()))
+            headers.update(_auth_header(self._token(), self._auth_scheme))
         try:
             resp = self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -424,7 +440,7 @@ class MCPClient:
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = {"Content-Type": "application/json", **_auth_header(self._token())}
+        headers = {"Content-Type": "application/json", **_auth_header(self._token(), self._auth_scheme)}
         try:
             self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers

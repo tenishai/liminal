@@ -37,12 +37,14 @@ Trust = Literal["trusted", "untrusted"]
 OnUntrusted = Literal["flag", "strip", "block"]
 Identity = Literal["forward", "none"]
 AuthMethod = Literal["bearer", "service-token", "none"]
+AuthScheme = Literal["bearer", "basic"]
 
 _TRANSPORTS = frozenset(get_args(Transport))
 _TRUSTS = frozenset(get_args(Trust))
 _ON_UNTRUSTED = frozenset(get_args(OnUntrusted))
 _IDENTITIES = frozenset(get_args(Identity))
 _AUTH_METHODS = frozenset(get_args(AuthMethod))
+_AUTH_SCHEMES = frozenset(get_args(AuthScheme))
 
 
 class TargetConfigError(ValueError):
@@ -110,7 +112,20 @@ class TargetSpec:
     identity: Identity = "none"
     auth_method: AuthMethod = "none"
     bearer_token: str | None = None
+    # Env var holding the static bearer credential -- config files are
+    # reviewed and often baked into images, so a literal secret in
+    # bearer_token is a leak with a commit hash. Exactly one of the two
+    # may be set; the value is read at load time.
+    bearer_token_env: str | None = None
     credential_key: str | None = None
+    # How the resolved credential rides the Authorization header. "bearer"
+    # (the default) sends it verbatim as `Bearer <value>`. "basic" treats
+    # the value as `user:secret` and base64-encodes it here -- the wire
+    # encoding is the target's transport detail, so the credential store
+    # holds the readable form, never a pre-encoded blob (an upstream like
+    # Atlassian's hosted MCP authenticates service accounts exactly this
+    # way: Basic base64(email:api_token)).
+    auth_scheme: AuthScheme = "bearer"
     timeout_seconds: float = 30.0
     refresh_tools_interval_seconds: int = 300
     relevance_signals: tuple[str, ...] = ()
@@ -150,9 +165,25 @@ class TargetSpec:
                 f"target {self.name!r}: auth_method {self.auth_method!r} must be "
                 f"one of {sorted(_AUTH_METHODS)}"
             )
-        if self.auth_method == "bearer" and not self.bearer_token:
+        if self.auth_scheme not in _AUTH_SCHEMES:
             raise TargetConfigError(
-                f"target {self.name!r}: auth_method='bearer' requires bearer_token"
+                f"target {self.name!r}: auth_scheme {self.auth_scheme!r} must "
+                f"be one of {sorted(_AUTH_SCHEMES)}"
+            )
+        if self.auth_scheme == "basic" and self.auth_method == "none":
+            raise TargetConfigError(
+                f"target {self.name!r}: auth_scheme='basic' needs a credential "
+                "(auth_method 'bearer' or 'service-token')"
+            )
+        if self.auth_method == "bearer" and self.bearer_token and self.bearer_token_env:
+            raise TargetConfigError(
+                f"target {self.name!r}: bearer_token and bearer_token_env are "
+                "mutually exclusive -- pick where the credential lives"
+            )
+        if self.auth_method == "bearer" and not (self.bearer_token or self.bearer_token_env):
+            raise TargetConfigError(
+                f"target {self.name!r}: auth_method='bearer' requires "
+                "bearer_token or bearer_token_env"
             )
         if self.auth_method == "service-token" and not self.credential_key:
             raise TargetConfigError(
