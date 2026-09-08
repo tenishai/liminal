@@ -161,3 +161,36 @@ async def test_requests_accept_both_forms():
     )
     await client.initialize()
     assert seen["accept"] == "application/json, text/event-stream"
+
+
+async def test_session_id_captured_and_echoed():
+    import httpx
+
+    from liminal.client.mcp import AsyncMCPClient
+
+    calls = []
+
+    async def handler(request):
+        calls.append({
+            "session": request.headers.get("mcp-session-id"),
+            "body": request.content,
+        })
+        if len(calls) == 1:  # initialize
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0", "id": 1,
+                "result": {"protocolVersion": "2025-03-26", "capabilities": {},
+                           "serverInfo": {"name": "t", "version": "0"}},
+            }, headers={"Mcp-Session-Id": "sess-42"})
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0", "id": 2, "result": {"tools": []}})
+
+    client = AsyncMCPClient(
+        "http://gw", token_provider=lambda: "",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    await client.list_tools()
+    # initialize went out sessionless; everything after echoes the id --
+    # the initialized notification included.
+    assert calls[0]["session"] is None
+    assert all(c["session"] == "sess-42" for c in calls[1:])
+    assert len(calls) >= 3  # initialize, notification, tools/list

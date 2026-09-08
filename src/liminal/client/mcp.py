@@ -165,6 +165,11 @@ class AsyncMCPClient:
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
         self._auth_scheme = auth_scheme
+        # Streamable-HTTP sessions (spec: Mcp-Session-Id): a server may hand
+        # a session id back on initialize and demand it on every later
+        # request. Captured from any response, echoed once held. Stateless
+        # servers never send one and nothing changes.
+        self._session_id: str | None = None
         self._owned_client = http_client is None
         self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(30.0))
         self._client_name = client_name
@@ -286,6 +291,8 @@ class AsyncMCPClient:
         }
         if auth:
             headers.update(_auth_header(self._token(), self._auth_scheme))
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         # Per-call headers win over the base set (e.g. an override Authorization
         # carrying a per-persona service token). Applied last, stored nowhere.
         if extra_headers:
@@ -300,6 +307,9 @@ class AsyncMCPClient:
             raise MCPTransportError(
                 f"server {resp.status_code}: {resp.text[:200]}"
             )
+        session_id = resp.headers.get("mcp-session-id")
+        if session_id:
+            self._session_id = session_id
         try:
             body = _parse_rpc_body(resp)
         except Exception as exc:  # noqa: BLE001
@@ -348,6 +358,8 @@ class AsyncMCPClient:
             "Accept": _ACCEPT_BOTH,
             **_auth_header(self._token(), self._auth_scheme),
         }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         try:
             await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -378,6 +390,11 @@ class MCPClient:
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
         self._auth_scheme = auth_scheme
+        # Streamable-HTTP sessions (spec: Mcp-Session-Id): a server may hand
+        # a session id back on initialize and demand it on every later
+        # request. Captured from any response, echoed once held. Stateless
+        # servers never send one and nothing changes.
+        self._session_id: str | None = None
         self._owned_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(30.0))
         self._client_name = client_name
@@ -469,6 +486,8 @@ class MCPClient:
         }
         if auth:
             headers.update(_auth_header(self._token(), self._auth_scheme))
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         try:
             resp = self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -479,6 +498,9 @@ class MCPClient:
             raise MCPTransportError(
                 f"server {resp.status_code}: {resp.text[:200]}"
             )
+        session_id = resp.headers.get("mcp-session-id")
+        if session_id:
+            self._session_id = session_id
         try:
             body = _parse_rpc_body(resp)
         except Exception as exc:  # noqa: BLE001
@@ -497,6 +519,8 @@ class MCPClient:
             "Accept": _ACCEPT_BOTH,
             **_auth_header(self._token(), self._auth_scheme),
         }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         try:
             self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
