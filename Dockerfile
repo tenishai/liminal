@@ -44,7 +44,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/venv/bin:$PATH" \
     VIRTUAL_ENV="/venv"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The upgrade pass pulls base-image packages (libc6, zlib1g, libpcre2, ...)
+# up to current Debian security revisions even when the builder's cached
+# python:3.12-slim base layer is weeks stale — published CVE fixes
+# otherwise never reach the image no matter how often it is rebuilt.
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         && rm -rf /var/lib/apt/lists/*
