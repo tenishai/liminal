@@ -19,7 +19,7 @@ WORKDIR /build
 
 # techne is brought in via BuildKit `--build-context techne=../techne`
 # (set by docker-compose.yml's additional_contexts). See CABAL-DECISIONS D-008/D-012.
-# When techne lands on PyPI, drop both COPY+install lines and add a `techne>=0.6.0`
+# When techne lands on PyPI, drop both COPY+install lines and add a `techne>=0.17.0`
 # pin to pyproject.toml's dependencies.
 COPY --from=techne / /build/techne
 
