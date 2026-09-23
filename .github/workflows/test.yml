@@ -16,8 +16,13 @@ concurrency:
 
 jobs:
   # ---- unit: no sibling deps, always runs -----------------------------------
+  # SELF-HOSTED on mash1 (2026-09-23): hosted Actions stopped on a billing failure.
+  # The guard keeps FORK pull requests off it (they run `fork-pr` below on a hosted
+  # runner instead), the same trust split as tenishai/techne's test.yml. Stop the
+  # runner at the go-public flip regardless (techne's go-public runbook).
   unit:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, liminal-ci]
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
@@ -53,7 +58,7 @@ jobs:
   # ---- integration: full suite with techne ----------------------------------
   integration:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, liminal-ci]
     strategy:
       matrix:
         python-version: ['3.12']
@@ -87,5 +92,41 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Pytest (full suite)
+        working-directory: liminal
+        run: pytest -q
+
+  # ---- fork-pr: the complement of unit's guard, on a hosted runner -----------
+  fork-pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+      fail-fast: false
+
+    steps:
+      - name: Checkout liminal
+        uses: actions/checkout@v4
+        with:
+          path: liminal
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: liminal/pyproject.toml
+
+      - name: Install (no siblings)
+        working-directory: liminal
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        working-directory: liminal
+        run: ruff check src tests
+
+      - name: Pytest (unit — memory handler tests auto-skip via importorskip)
         working-directory: liminal
         run: pytest -q
