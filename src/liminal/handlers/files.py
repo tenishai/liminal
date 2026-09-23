@@ -24,12 +24,14 @@ Defenses (applied before any disk operation):
      one tool call.
 
 Allowlist source: constructor default (operator-wired at handler
-factory time) PLUS per-persona `ctx.extra["files.allowed_paths"]`.
-Same pattern as the web handler's hostname allowlist.
+factory time, or from LIMINAL_FILES_ALLOWED_PATHS — see `get_handler`)
+PLUS per-persona `ctx.extra["files.allowed_paths"]`. Same pattern as the
+web handler's hostname allowlist.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -376,16 +378,51 @@ def _is_under(candidate: Path, prefix: Path) -> bool:
 _SINGLETON: FilesHandler | None = None
 
 
+ALLOWED_PATHS_ENV = "LIMINAL_FILES_ALLOWED_PATHS"
+
+
+def _paths_from_env(raw: str | None) -> list[Path]:
+    """Parse LIMINAL_FILES_ALLOWED_PATHS into a list of paths.
+
+    os.pathsep-separated, like PATH itself — ':' on POSIX, ';' on Windows.
+    Empty segments are dropped so a trailing separator is harmless; an
+    unset or all-empty value yields [], which is the fail-closed default.
+    """
+    if not raw:
+        return []
+    return [Path(seg) for seg in raw.split(os.pathsep) if seg.strip()]
+
+
 def get_handler() -> Handler:
     """Entry-point factory.
 
-    By default the handler ships with NO allowed paths — any read/write
-    is refused until the operator wires `default_config.allowed_paths`
-    (or a per-persona allowlist arrives in ctx.extra). This is the
-    safe default: a freshly-installed liminal with `files` registered
-    cannot read or write anything until the operator opts in.
+    THE DEFAULT IS STILL EMPTY, AND STILL FAIL-CLOSED: with no allowlist
+    from anywhere, every read and write is refused. What changed is that
+    there is now a supported way to opt in without a JWT.
+
+    Order, widest first:
+
+      1. `LIMINAL_FILES_ALLOWED_PATHS` — os.pathsep-separated paths, read
+         once at factory time. This is the OPERATOR CEILING.
+      2. `ctx.extra["files.allowed_paths"]` — per-persona, and it can only
+         NARROW the ceiling above, never widen it (see `_config_for`).
+
+    Why an env var rather than a `liminal serve --allowed-paths` flag:
+    handlers are constructed by entry point, not by the CLI, so the CLI has
+    no handle on this singleton to inject into. The env var is the seam
+    that already exists — `LIMINAL_AUTH_DISABLED` and `LIMINAL_MEMORY_DB`
+    are read the same way.
+
+    This closes the gap in #68: in the auth-off mode the README recommends
+    for local use, claims carry no `cabal_tool_extras`, so `ctx.extra` is
+    empty and there was NO supported way to supply an allowlist at all. A
+    safe default with no way to opt in is indistinguishable from broken.
     """
     global _SINGLETON
     if _SINGLETON is None:
-        _SINGLETON = FilesHandler()
+        _SINGLETON = FilesHandler(
+            default_config=FilesConfig(
+                allowed_paths=_paths_from_env(os.environ.get(ALLOWED_PATHS_ENV))
+            )
+        )
     return _SINGLETON

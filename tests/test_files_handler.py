@@ -335,6 +335,82 @@ async def test_per_persona_allowlist_via_ctx_extra(tmp_path) -> None:
     assert r2.is_error is True
 
 
+# ---- operator allowlist from the environment (#68) -----------------------
+
+
+def _fresh_handler(monkeypatch, value: str | None):
+    """get_handler() memoises, so reset the singleton before each read."""
+    import liminal.handlers.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_SINGLETON", None)
+    if value is None:
+        monkeypatch.delenv(files_mod.ALLOWED_PATHS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(files_mod.ALLOWED_PATHS_ENV, value)
+    return files_mod.get_handler()
+
+
+def test_unset_env_still_refuses_everything(monkeypatch, tmp_path) -> None:
+    """The fail-closed default is the whole point and must not have moved."""
+    target = tmp_path / "f.txt"
+    target.write_text("x")
+
+    handler = _fresh_handler(monkeypatch, None)
+    assert handler.default_config.allowed_paths == []
+
+
+def test_env_seeds_the_operator_allowlist(monkeypatch, tmp_path) -> None:
+    """LIMINAL_FILES_ALLOWED_PATHS is the supported opt-in without a JWT."""
+    handler = _fresh_handler(monkeypatch, str(tmp_path))
+    assert handler.default_config.allowed_paths == [tmp_path.resolve()]
+
+
+def test_env_accepts_several_paths_and_ignores_empty_segments(monkeypatch, tmp_path) -> None:
+    import os
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    raw = os.pathsep.join([str(a), "", str(b), "  "])
+    handler = _fresh_handler(monkeypatch, raw)
+    assert handler.default_config.allowed_paths == [a.resolve(), b.resolve()]
+
+
+@pytest.mark.anyio
+async def test_env_allowlist_grants_a_read_with_no_jwt_claims(monkeypatch, tmp_path) -> None:
+    """The #68 case end to end: auth-off, ctx.extra empty, read succeeds."""
+    target = tmp_path / "hello.txt"
+    target.write_text("reachable")
+
+    handler = _fresh_handler(monkeypatch, str(tmp_path))
+    result = await handler.dispatch("read", {"path": str(target)}, _ctx(extra={}))
+
+    assert result.is_error is False
+    assert "reachable" in str(result.content)
+
+
+@pytest.mark.anyio
+async def test_env_allowlist_is_a_ceiling_not_a_grant(monkeypatch, tmp_path) -> None:
+    """A path outside the env allowlist stays refused, ctx.extra or not."""
+    inside = tmp_path / "in"
+    inside.mkdir()
+    outside = tmp_path / "out"
+    outside.mkdir()
+    victim = outside / "secret.txt"
+    victim.write_text("nope")
+
+    handler = _fresh_handler(monkeypatch, str(inside))
+
+    r1 = await handler.dispatch("read", {"path": str(victim)}, _ctx(extra={}))
+    assert r1.is_error is True
+
+    # A persona claim cannot widen past the operator ceiling either.
+    r2 = await handler.dispatch(
+        "read", {"path": str(victim)}, _ctx(extra={"files.allowed_paths": [str(outside)]})
+    )
+    assert r2.is_error is True
+
+
 # ---- entry-point + card --------------------------------------------------
 
 

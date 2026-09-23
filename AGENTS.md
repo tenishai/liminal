@@ -48,8 +48,10 @@ Passing both is a hard CLI error. A change to claim handling almost always belon
 mode and not the other; say which in the PR.
 
 `LIMINAL_AUTH_DISABLED=1` is the third state, for local use. It synthesises anonymous
-claims with no `cabal_tool_extras`, so `ctx.extra` is empty — which is why the `files`
-handler refuses every call in that mode (#68). That is a real gap, not a misconfiguration.
+claims with no `cabal_tool_extras`, so `ctx.extra` is empty. The `files` handler therefore
+has no per-persona allowlist in that mode and takes its ceiling from
+`LIMINAL_FILES_ALLOWED_PATHS` instead (#68). Unset, it still refuses everything — that is
+the fail-closed default and it has not moved.
 
 ## Security defaults are load-bearing — do not widen them to make a test pass
 
