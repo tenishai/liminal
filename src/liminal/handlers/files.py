@@ -24,12 +24,14 @@ Defenses (applied before any disk operation):
      one tool call.
 
 Allowlist source: constructor default (operator-wired at handler
-factory time) PLUS per-persona `ctx.extra["files.allowed_paths"]`.
-Same pattern as the web handler's hostname allowlist.
+factory time, or from LIMINAL_FILES_ALLOWED_PATHS — see `get_handler`)
+PLUS per-persona `ctx.extra["files.allowed_paths"]`. Same pattern as the
+web handler's hostname allowlist.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -182,9 +184,23 @@ class FilesHandler:
     # ---- defenses + resolution ---------------------------------------------
 
     def _resolve_config(self, ctx: Context) -> FilesConfig:
-        per_persona = ctx.extra.get("files.allowed_paths")
-        if not per_persona or not isinstance(per_persona, list):
+        # CLAIM ABSENT vs CLAIM EMPTY ARE DIFFERENT ANSWERS, and conflating them
+        # turned the operator ceiling into a grant (#68 review). Before the env
+        # var existed, `default_config` was always empty, so every fallback below
+        # meant REFUSE and the distinction did not matter. Now the default can be
+        # non-empty, and falling back on an empty claim widens a persona that
+        # explicitly said "no paths" to the whole ceiling.
+        #
+        #   no `files.allowed_paths` key   -> operator default (may be the ceiling)
+        #   key present, but unusable      -> REFUSE, never the default
+        if "files.allowed_paths" not in ctx.extra:
             return self.default_config
+
+        per_persona = ctx.extra.get("files.allowed_paths")
+        if not isinstance(per_persona, list) or not per_persona:
+            # Present and empty, or present and not a list: a claim was made and
+            # it grants nothing. Fail closed rather than inheriting the ceiling.
+            return FilesConfig(allowed_paths=[])
 
         # Resolve JWT-supplied paths, skipping malformed entries.
         jwt_paths: list[Path] = []
@@ -196,7 +212,9 @@ class FilesHandler:
                     pass
 
         if not jwt_paths:
-            return self.default_config
+            # Every entry was malformed. The claim still said "these paths", and
+            # none of them parsed — that is not a request for the ceiling.
+            return FilesConfig(allowed_paths=[])
 
         server_ceiling = self.default_config.allowed_paths  # already resolved
 
@@ -376,16 +394,74 @@ def _is_under(candidate: Path, prefix: Path) -> bool:
 _SINGLETON: FilesHandler | None = None
 
 
+ALLOWED_PATHS_ENV = "LIMINAL_FILES_ALLOWED_PATHS"
+
+
+def _paths_from_env(raw: str | None) -> list[Path]:
+    """Parse LIMINAL_FILES_ALLOWED_PATHS into a list of paths.
+
+    os.pathsep-separated, like PATH itself — ':' on POSIX, ';' on Windows.
+    Empty segments are dropped so a trailing separator is harmless; an unset or
+    all-empty value yields [], which is the fail-closed default. Segments are
+    stripped before use, and a RELATIVE segment is refused with a warning rather
+    than resolved against the daemon's cwd.
+    """
+    if not raw:
+        return []
+    out: list[Path] = []
+    for seg in raw.split(os.pathsep):
+        seg = seg.strip()
+        if not seg:
+            continue
+        candidate = Path(seg).expanduser()
+        if not candidate.is_absolute():
+            # A RELATIVE CEILING RESOLVES AGAINST THE DAEMON'S CWD, which is the
+            # same ambiguity defence #1 refuses relative REQUEST paths for. A
+            # ceiling is the worse place for it: `.` would grant wherever the
+            # daemon happened to start.
+            log.warning(
+                "files.allowlist.relative_path_ignored",
+                segment=seg,
+                env=ALLOWED_PATHS_ENV,
+            )
+            continue
+        out.append(candidate)
+    return out
+
+
 def get_handler() -> Handler:
     """Entry-point factory.
 
-    By default the handler ships with NO allowed paths — any read/write
-    is refused until the operator wires `default_config.allowed_paths`
-    (or a per-persona allowlist arrives in ctx.extra). This is the
-    safe default: a freshly-installed liminal with `files` registered
-    cannot read or write anything until the operator opts in.
+    THE DEFAULT IS STILL EMPTY, AND STILL FAIL-CLOSED: with no allowlist
+    from anywhere, every read and write is refused. What changed is that
+    there is now a supported way to opt in without a JWT.
+
+    WHAT THE ENV VALUE IS DEPENDS ON THE CALLER, and both halves matter:
+
+      * a caller WITHOUT a `files.allowed_paths` claim gets it as a GRANT —
+        this is what makes auth-off mode usable, and it means that in a JWT
+        deployment every token lacking the claim receives it too;
+      * a caller WITH a claim gets it as a CEILING — the claim narrows it and
+        can never widen it (`_resolve_config`);
+      * a caller whose claim is present but EMPTY or malformed gets NOTHING.
+        A persona that grants no paths must not inherit the operator's.
+
+    Why an env var rather than a `liminal serve --allowed-paths` flag:
+    handlers are constructed by entry point, not by the CLI, so the CLI has
+    no handle on this singleton to inject into. The env var is the seam
+    that already exists — `LIMINAL_AUTH_DISABLED` and `LIMINAL_MEMORY_DB`
+    are read the same way.
+
+    This closes the gap in #68: in the auth-off mode the README recommends
+    for local use, claims carry no `cabal_tool_extras`, so `ctx.extra` is
+    empty and there was NO supported way to supply an allowlist at all. A
+    safe default with no way to opt in is indistinguishable from broken.
     """
     global _SINGLETON
     if _SINGLETON is None:
-        _SINGLETON = FilesHandler()
+        _SINGLETON = FilesHandler(
+            default_config=FilesConfig(
+                allowed_paths=_paths_from_env(os.environ.get(ALLOWED_PATHS_ENV))
+            )
+        )
     return _SINGLETON

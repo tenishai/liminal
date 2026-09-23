@@ -83,11 +83,23 @@ handlers register automatically next to liminal's own five.
 # local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 #
-# NOTE: in auth-off mode the `files` handler refuses every call. Its allowlist
-# arrives through a JWT claim or the trust registry, and there is no CLI flag
-# for it yet (issue #68) — so `files` is inert here while `web`, `scratchpad`
-# and `notify` work. This is a safe default with no supported way to opt in,
-# which is a gap we are fixing, not a configuration you got wrong.
+# The `files` handler starts with an EMPTY allowlist and refuses every call
+# until you grant it something. In auth-off mode there is no JWT to carry a
+# per-persona allowlist, so grant the operator ceiling by environment:
+#
+#   LIMINAL_FILES_ALLOWED_PATHS=/srv/work:/tmp/sandbox \
+#     LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
+#
+# os.pathsep-separated, read once at startup. Relative segments are refused.
+#
+# WHAT IT MEANS DEPENDS ON THE CALLER:
+#   no files.allowed_paths claim  -> this IS the grant (auth-off is this case)
+#   a claim  -> this is the CEILING; the claim narrows it, never widens it
+#   an empty or malformed claim   -> nothing is granted
+#
+# So on a JWT deployment, setting this grants it to every token WITHOUT the
+# claim — it is not only a ceiling. `web`, `scratchpad` and `notify` need no
+# such grant.
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
 liminal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
