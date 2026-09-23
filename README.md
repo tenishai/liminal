@@ -9,8 +9,8 @@ to one liminal and liminal dispatches.
 
 ## Status
 
-**198 tests passing.** All handlers shipped, credential flow complete, MCP spec
-compliant, async-clean, SSRF-hardened, CI active on push/PR.
+All handlers shipped, credential flow complete, MCP spec compliant, async-clean,
+SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 
 ## What works
 
@@ -53,7 +53,9 @@ compliant, async-clean, SSRF-hardened, CI active on push/PR.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install -e ../techne        # sibling install for the memory handler
+pip install -e ../techne        # OPTIONAL: only the memory handler needs techne,
+                                # and techne is not public yet. Everything else,
+                                # including the test suite, runs without it.
 
 pytest -q
 ```
@@ -80,6 +82,12 @@ handlers register automatically next to liminal's own five.
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
+#
+# NOTE: in auth-off mode the `files` handler refuses every call. Its allowlist
+# arrives through a JWT claim or the trust registry, and there is no CLI flag
+# for it yet (issue #68) — so `files` is inert here while `web`, `scratchpad`
+# and `notify` work. This is a safe default with no supported way to opt in,
+# which is a gap we are fixing, not a configuration you got wrong.
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
 liminal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
@@ -104,12 +112,16 @@ src/liminal/
   protocol/        Handler Protocol, Context, ToolSpec, ToolResult, CapabilityCard
   registry/        Entry-point discovery + handler registration
   dispatch/        In-process dispatcher
-  server/          MCP HTTP server (POST /mcp), JWT verifiers, credential resolver
+  server/          MCP HTTP server (POST /mcp), JWT verifiers, credential resolver,
+                   policy store, admin surface, secret guard
+  target/          Federated targets — the machinery behind `--targets`
   handlers/        scratchpad, files, web, memory, notify
   client/          MCPClient (sync) + AsyncMCPClient (async)
-tests/             pytest suite (198 tests)
+tests/             pytest suite
 docs/
-  design.md        The proposal this implementation follows
+  design.md        The ORIGINAL proposal. The implementation has diverged —
+                   read this README for what shipped.
+  proposals/       Design notes, not documentation of current behaviour
 ```
 
 ## Wiring a handler (custom)
@@ -159,4 +171,18 @@ and `techne`, install with `pip install -e ../liminal`.
 
 ## License
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+Copyright (C) 2026 tenishai
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Full text: [LICENSE](LICENSE).

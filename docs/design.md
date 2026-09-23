@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Proposal |
+| **Status** | ORIGINAL PROPOSAL — the implementation diverged. See README.md. |
 | **Authors** | Rook (SRE AI), Richard DiMartino |
 | **Created** | 2026-06-07 |
 
@@ -281,7 +281,7 @@ All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see DTSP
 | slack | Slack bot operations under the persona's Slack identity. Credentials: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` per persona. |
 | github | GitHub API (PRs, commits, search) under the persona's PAT. Credentials: `GITHUB_TOKEN` per persona. |
 | scratchpad | Per-agent ephemeral notes. No external credentials. |
-| patterns | Architect's pattern corpus surface (see [`pattern-toolbox.md`](pattern-toolbox.md)). The handler is a thin MCP proxy to the Architect singleton-persona's data backend. No service-specific API key — the agent's A2A JWT is forwarded; Architect authenticates the caller against Cabal Core's JWKS the same way liminal does. |
+| patterns | Architect's pattern corpus surface (see a patterns handler (never built)). The handler is a thin MCP proxy to the Architect singleton-persona's data backend. No service-specific API key — the agent's A2A JWT is forwarded; Architect authenticates the caller against Cabal Core's JWKS the same way liminal does. |
 | datadog | Metrics queries. Credentials: `DATADOG_API_KEY`, `DATADOG_APP_KEY` per persona (typically only on personas that operate infra). |
 | atlassian | Jira / Confluence. Credentials per persona. |
 | web | Web search + fetch. **URL policy: allowlist by hostname**, declared per persona in `identity.toml` as `web.allowed_hosts = ["*"]` (broad) or specific domains. Default denies `localhost`, `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`, and link-local — explicit SSRF protection against pivoting through the agent to reach `http://cabal-core:8080`, `http://litellm:4000`, or cloud metadata services. Operators who genuinely need internal fetches whitelist hosts explicitly. |
@@ -527,7 +527,7 @@ banner. Build on `_meta`.
 
 ## References
 
-- [`pattern-toolbox.md`](pattern-toolbox.md) — Pattern Toolbox proposal (planned liminal handler)
+- a patterns handler (never built) — Pattern Toolbox proposal (planned liminal handler)
 
 ---
 

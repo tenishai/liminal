@@ -1,11 +1,19 @@
 # liminal Status — 2026-06-11
 
+> **HISTORICAL SNAPSHOT, kept for the record.** This is where the repo stood on
+> 2026-06-11, four days in. It is months out of date: the test count below is
+> 176 against a suite that now runs several hundred, and everything landed
+> since — scope-gated federated targets, the multi-issuer trust registry, the
+> SQLite policy store, the federation admin surface — is absent from the "not
+> built yet" list. **Read README.md for what liminal is today.** This file is
+> not maintained.
+
 First commits laying the foundation. Working from `docs/design.md` (the
 proposal carried over from the Cabal workspace).
 
 ## Headline
 
-- **GitHub**: https://github.com/dimartin/liminal — private, MCP server landing.
+- **GitHub**: https://github.com/tenishai/liminal — private, MCP server landing.
 - **Tests**: 176 passing, ~1.1s.
 - **Handlers shipped**: `scratchpad` (per-agent k/v notes), `web` (allowlisted HTTP fetch with SSRF defense), `files` (scoped read/write/list/exists with path-traversal defense), `memory` (techne-backed knowledge recall + commit), `notify` (transport-agnostic notifications; webhook in v1).
 - **Credential plumbing complete**: `cabal_tool_extras` JWT claim → Context.extra; `CabalCoreCredentialResolver` fetches per-(persona, handler) secrets from Cabal Core with TTL caching.
