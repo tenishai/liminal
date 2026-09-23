@@ -90,9 +90,16 @@ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 #   LIMINAL_FILES_ALLOWED_PATHS=/srv/work:/tmp/sandbox \
 #     LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 #
-# os.pathsep-separated, read once at startup. It is a CEILING: a per-persona
-# allowlist arriving later in a JWT claim can narrow it, never widen it.
-# `web`, `scratchpad` and `notify` need no such grant.
+# os.pathsep-separated, read once at startup. Relative segments are refused.
+#
+# WHAT IT MEANS DEPENDS ON THE CALLER:
+#   no files.allowed_paths claim  -> this IS the grant (auth-off is this case)
+#   a claim  -> this is the CEILING; the claim narrows it, never widens it
+#   an empty or malformed claim   -> nothing is granted
+#
+# So on a JWT deployment, setting this grants it to every token WITHOUT the
+# claim — it is not only a ceiling. `web`, `scratchpad` and `notify` need no
+# such grant.
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
 liminal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json

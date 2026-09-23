@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -350,13 +351,60 @@ def _fresh_handler(monkeypatch, value: str | None):
     return files_mod.get_handler()
 
 
-def test_unset_env_still_refuses_everything(monkeypatch, tmp_path) -> None:
-    """The fail-closed default is the whole point and must not have moved."""
+@pytest.mark.anyio
+async def test_unset_env_still_refuses_everything(monkeypatch, tmp_path) -> None:
+    """The fail-closed default is the whole point and must not have moved.
+
+    Asserting the empty list is not enough — the name promises a refusal, so the
+    test performs one (review of #100, nit 4).
+    """
     target = tmp_path / "f.txt"
     target.write_text("x")
 
     handler = _fresh_handler(monkeypatch, None)
     assert handler.default_config.allowed_paths == []
+
+    result = await handler.dispatch("read", {"path": str(target)}, _ctx(extra={}))
+    assert result.is_error is True
+
+
+@pytest.mark.anyio
+async def test_an_empty_claim_grants_nothing_rather_than_the_ceiling(
+    monkeypatch, tmp_path
+) -> None:
+    """A persona that says "no paths" must not inherit the operator ceiling.
+
+    THE BUG THIS PINS (found reviewing #100): `_resolve_config` fell back to
+    `default_config` whenever the claim was falsy. That was safe only while the
+    default was always empty. With an env-supplied ceiling it meant a claim of
+    `[]` — an explicit grant of nothing — silently became the whole ceiling.
+    """
+    target = tmp_path / "s.txt"
+    target.write_text("secret")
+
+    handler = _fresh_handler(monkeypatch, str(tmp_path))
+
+    for claim in ([], [""], "/nowhere", {"not": "a list"}, [None]):
+        result = await handler.dispatch(
+            "read", {"path": str(target)}, _ctx(extra={"files.allowed_paths": claim})
+        )
+        assert result.is_error is True, f"claim {claim!r} was granted the ceiling"
+
+    # An ABSENT key is the documented fallback and still reaches the ceiling.
+    ok = await handler.dispatch("read", {"path": str(target)}, _ctx(extra={}))
+    assert ok.is_error is False
+
+    # And a key absent from a non-empty extras dict is still absent.
+    ok2 = await handler.dispatch(
+        "read", {"path": str(target)}, _ctx(extra={"memory.db_path": "/x"})
+    )
+    assert ok2.is_error is False
+
+
+def test_a_relative_ceiling_segment_is_refused(monkeypatch, tmp_path) -> None:
+    """`.` as a ceiling would grant wherever the daemon happened to start."""
+    handler = _fresh_handler(monkeypatch, f".{os.pathsep}{tmp_path}{os.pathsep}  ")
+    assert handler.default_config.allowed_paths == [tmp_path.resolve()]
 
 
 def test_env_seeds_the_operator_allowlist(monkeypatch, tmp_path) -> None:
