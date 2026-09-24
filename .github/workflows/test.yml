@@ -2,8 +2,8 @@ name: test
 
 # unit runs on every push to main and every same-repo PR (fork PRs run fork-pr,
 # its hosted twin) — no private deps, no secret required.
-# integration runs on workflow_dispatch only — requires GH_PAT_REPOS to clone the
-# private techne sibling repo.
+# integration runs on workflow_dispatch only. It clones the techne sibling
+# without a token, so it works once techne is public (agora#31).
 on:
   push:
     branches: [main]
@@ -88,7 +88,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: tenishai/techne
-          token: ${{ secrets.GH_PAT_REPOS }}
           path: techne
 
       - name: Set up Python ${{ matrix.python-version }}
