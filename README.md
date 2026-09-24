@@ -158,6 +158,12 @@ Register via `pyproject.toml`:
 greet = "mypackage.greet:get_handler"
 ```
 
+That's the mechanism. Before you write a real handler, read
+[`docs/writing-a-handler.md`](docs/writing-a-handler.md) — four things
+(`ctx.extra`'s security contract, silent discovery failure, a scope-gating
+footgun, the testing convention) that this sketch doesn't cover and that
+you'd otherwise have to find in source.
+
 ## Using the MCP client
 
 ```python
