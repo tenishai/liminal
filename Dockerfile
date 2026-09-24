@@ -44,7 +44,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/venv/bin:$PATH" \
     VIRTUAL_ENV="/venv"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The upgrade pass pulls base-image packages (libc6, zlib1g, libpcre2, ...)
+# up to current Debian security revisions WHEN THIS LAYER REBUILDS. Docker
+# caches a RUN step by its parent layer and its text, not by what it downloads,
+# so a plain rebuild on a warm builder reuses the last upgrade and goes stale
+# exactly like the base layer. APT_REFRESH breaks that: pass a new value, e.g.
+# `--build-arg APT_REFRESH=$(date +%F)`, and the upgrade runs again.
+ARG APT_REFRESH=unset
+RUN echo "apt refresh: ${APT_REFRESH}" && apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         && rm -rf /var/lib/apt/lists/*
