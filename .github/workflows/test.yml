@@ -1,8 +1,9 @@
 name: test
 
-# unit runs on every push/PR — no private deps, no secret required.
-# integration runs on workflow_dispatch and pushes to main — requires
-# GH_PAT_REPOS to clone the private techne sibling repo.
+# unit runs on every push to main and every same-repo PR (fork PRs run fork-pr,
+# its hosted twin) — no private deps, no secret required.
+# integration runs on workflow_dispatch only — requires GH_PAT_REPOS to clone the
+# private techne sibling repo.
 on:
   push:
     branches: [main]
@@ -16,8 +17,113 @@ concurrency:
 
 jobs:
   # ---- unit: no sibling deps, always runs -----------------------------------
+  # SELF-HOSTED on mash1 (2026-09-23): hosted Actions stopped on a billing failure.
+  # The `if:` below is DEFENCE IN DEPTH for honest fork PRs, not a security boundary:
+  # for `pull_request` GitHub runs the PR's own copy of this file, so a fork can
+  # delete the guard (see the ATTACKER-EDITABLE block in tenishai/techne's test.yml).
+  # The real controls: this repo is private, "Run workflows from fork pull requests"
+  # is off (checked 2026-09-23), and the runner stops before the go-public flip.
   unit:
+    runs-on: [self-hosted, linux, x64, liminal-ci]
+    timeout-minutes: 20  # one small runner; a hung job starves it
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+      fail-fast: false
+
+    steps:
+      - name: Checkout liminal
+        uses: actions/checkout@v4
+        with:
+          path: liminal
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: liminal/pyproject.toml
+      # The runner CONTAINER persists between jobs (same machine name across legs), so
+      # setup-python's interpreter in _work/_tool is shared: a bare `pip install` would
+      # let one job's packages satisfy the next job's imports (liminal#103 r1). A fresh
+      # venv per job, first on PATH, keeps each run to what it installed itself.
+      # setup-python stays (proven on this runner) rather than the image's interpreters.
+      - name: Fresh venv for this job
+        run: |
+          python -m venv --clear "$GITHUB_WORKSPACE/.venv-ci"
+          echo "$GITHUB_WORKSPACE/.venv-ci/bin" >> "$GITHUB_PATH"
+
+      - name: Install (no siblings)
+        working-directory: liminal
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        working-directory: liminal
+        run: ruff check src tests
+
+      - name: Pytest (unit — memory handler tests auto-skip via importorskip)
+        working-directory: liminal
+        run: pytest -q
+
+  # ---- integration: full suite with techne ----------------------------------
+  integration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, liminal-ci]
+    timeout-minutes: 20  # one small runner; a hung job starves it
+    strategy:
+      matrix:
+        python-version: ['3.12']
+      fail-fast: false
+
+    steps:
+      - name: Checkout liminal
+        uses: actions/checkout@v4
+        with:
+          path: liminal
+
+      - name: Checkout techne
+        uses: actions/checkout@v4
+        with:
+          repository: tenishai/techne
+          token: ${{ secrets.GH_PAT_REPOS }}
+          path: techne
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: liminal/pyproject.toml
+      # The runner CONTAINER persists between jobs (same machine name across legs), so
+      # setup-python's interpreter in _work/_tool is shared: a bare `pip install` would
+      # let one job's packages satisfy the next job's imports (liminal#103 r1). A fresh
+      # venv per job, first on PATH, keeps each run to what it installed itself.
+      # setup-python stays (proven on this runner) rather than the image's interpreters.
+      - name: Fresh venv for this job
+        run: |
+          python -m venv --clear "$GITHUB_WORKSPACE/.venv-ci"
+          echo "$GITHUB_WORKSPACE/.venv-ci/bin" >> "$GITHUB_PATH"
+
+      - name: Install (with techne)
+        working-directory: liminal
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "../techne"
+          pip install -e ".[dev]"
+
+      - name: Pytest (full suite)
+        working-directory: liminal
+        run: pytest -q
+
+  # ---- fork-pr: the complement of unit's guard, on a hosted runner -----------
+  fork-pr:
     runs-on: ubuntu-latest
+    # Techne's spelling (#590): the literal negation, so an event nobody named still
+    # gets a hosted run instead of an empty Checks tab.
+    if: ${{ !(github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
@@ -47,45 +153,5 @@ jobs:
         run: ruff check src tests
 
       - name: Pytest (unit — memory handler tests auto-skip via importorskip)
-        working-directory: liminal
-        run: pytest -q
-
-  # ---- integration: full suite with techne ----------------------------------
-  integration:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.12']
-      fail-fast: false
-
-    steps:
-      - name: Checkout liminal
-        uses: actions/checkout@v4
-        with:
-          path: liminal
-
-      - name: Checkout techne
-        uses: actions/checkout@v4
-        with:
-          repository: tenishai/techne
-          token: ${{ secrets.GH_PAT_REPOS }}
-          path: techne
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: liminal/pyproject.toml
-
-      - name: Install (with techne)
-        working-directory: liminal
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e "../techne"
-          pip install -e ".[dev]"
-
-      - name: Pytest (full suite)
         working-directory: liminal
         run: pytest -q
