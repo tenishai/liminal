@@ -4,11 +4,11 @@
 
 Please don't open a public issue for a security problem.
 
-Report it privately, either way:
+Report it privately to **security@tenish.ai**.
 
-- **Email:** security@tenish.ai
-- **GitHub:** the **Report a vulnerability** button on this repository's
-  **Security** tab (private vulnerability reporting).
+If this repository's **Security** tab shows a **Report a vulnerability**
+button, you can use that instead. GitHub offers it only on public
+repositories where it has been turned on.
 
 Include what you can of:
 
