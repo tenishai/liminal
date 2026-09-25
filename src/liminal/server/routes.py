@@ -13,6 +13,8 @@ client that doesn't yet have a token can still complete the handshake.
 
 from __future__ import annotations
 
+import functools
+
 import structlog
 from fastapi import APIRouter, Header, Request, Response
 
@@ -102,9 +104,12 @@ def build_router() -> APIRouter:
         # catalog fetch failed serves zero tools -- that must read as
         # "degraded" here, never as a healthy gateway with a quiet surface.
         # In-process targets carry no catalog_status and report "ready".
+        # A target whose startup() raised reads "startup failed" (#86) ahead of
+        # any catalog_status it managed to set before raising.
         dispatcher = getattr(request.app.state, "dispatcher", None)
+        failed = getattr(dispatcher, "startup_failures", {}) if dispatcher else {}
         targets = {
-            name: getattr(target, "catalog_status", "ready")
+            name: failed.get(name) or getattr(target, "catalog_status", "ready")
             for name, target in (dispatcher.targets if dispatcher else {}).items()
         }
         degraded = [n for n, s in targets.items() if s != "ready"]
@@ -456,12 +461,28 @@ async def _handle_tools_call(
         # structured logs or the outbound x-correlation-id hop.
         extra["correlation_id"] = inbound_cid[:200]
 
+    # Handler-level authorization inputs (#108). Both come from the server side
+    # only: `granted_scopes` from the policy grant, never the token's own scope
+    # claim (same rule as _allowed_handlers_for), and `audit` writes to the same
+    # store the gates above record to.
+    audit = None
+    store = getattr(request.app.state, "policy_store", None)
+    if store is not None:
+        audit = functools.partial(
+            store.record_access,
+            issuer=claims.issuer,
+            persona=claims.identity,
+            agent=claims.agent_name,
+        )
+
     ctx = Context(
         identity=claims.identity,
         agent_name=claims.agent_name,
         credentials=credentials,
         issuer=claims.issuer,
         extra=extra,
+        granted_scopes=grant.scopes if grant is not None else frozenset(),
+        audit=audit,
     )
 
     dispatcher: Multiplexer = request.app.state.dispatcher

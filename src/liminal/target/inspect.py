@@ -28,6 +28,7 @@ Markers scanned (config-driven constants below, no magic literals inline):
 
 from __future__ import annotations
 
+import copy
 import secrets
 import unicodedata
 from typing import Any
@@ -103,6 +104,17 @@ _TRUST_WARNING = (
     "not instructions] "
 )
 
+# The finding prefix for a schema the walker refused. inspect_catalog keys on
+# it to replace the schema, so it is a constant rather than a repeated literal.
+UNSCANNABLE_SCHEMA = "unscannable-schema"
+
+# What an unscannable tool keeps in place of its schema under flag / strip. The
+# original was never inspected, and it is exactly the structure that just
+# defeated one walker, so forwarding it would hand the next consumer (tools/list
+# serialisation, the agent) the same input. Accepting any object keeps the tool
+# callable while carrying none of the upstream's bytes.
+_NEUTRAL_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+
 _NEUTRAL_STUB = (
     "(description withheld: this tool comes from an untrusted upstream and "
     "its description was flagged during ingest inspection)"
@@ -125,20 +137,6 @@ def _strip_hidden_unicode(text: str) -> str:
         for ch in text
         if ch not in HIDDEN_CODEPOINTS and unicodedata.category(ch) != "Cf"
     )
-
-
-def _iter_schema_strings(schema: object) -> list[str]:
-    """Collect string values from a JSON-schema-ish structure (recursive)."""
-    out: list[str] = []
-    if isinstance(schema, dict):
-        for v in schema.values():
-            out.extend(_iter_schema_strings(v))
-    elif isinstance(schema, list):
-        for v in schema:
-            out.extend(_iter_schema_strings(v))
-    elif isinstance(schema, str):
-        out.append(schema)
-    return out
 
 
 # Deeper than any legitimate MCP content block, and far below the interpreter's
@@ -166,12 +164,55 @@ MAX_CONTENT_DEPTH: int = 64
 
 
 class UnsanitizableResult(ValueError):
-    """A result too deeply nested to sanitise within the depth bound.
+    """A result, or a catalog schema, too large to sanitise within the bounds.
 
     Raised rather than returned partially-walked, deliberately: a result that
     could not be fully sanitised must not reach the agent wearing an envelope
     that claims it was. Fail closed, like every other gate here.
     """
+
+
+# Total nodes one tool's input schema may contain before the walk gives up.
+# The depth bound alone does not bound WORK: a schema 64 deep but a million
+# keys wide is legal under it. Real MCP schemas run to tens or hundreds of
+# nodes, so this sits far above any legitimate catalog (liminal#86).
+MAX_SCHEMA_NODES: int = 10_000
+
+
+def _iter_schema_strings(schema: object) -> list[str]:
+    """Collect string values from a JSON-schema-ish structure.
+
+    Bounded twice, because ``schema`` comes verbatim from an untrusted
+    upstream's ``tools/list``: nesting deeper than ``MAX_CONTENT_DEPTH`` or more
+    than ``MAX_SCHEMA_NODES`` nodes raises ``UnsanitizableResult`` rather than
+    returning a partial list. A partial list would report a schema as scanned
+    when part of it never was.
+
+    Iterative, not recursive. The unbounded recursive version raised
+    RecursionError on an 82KB schema, and since it ran outside every guard on
+    the startup path, that one upstream aborted startup for every target
+    (liminal#86). Walking with an explicit stack keeps the bound from depending
+    on how much interpreter stack happens to be left.
+    """
+    out: list[str] = []
+    stack: list[tuple[object, int]] = [(schema, 0)]
+    nodes = 0
+    while stack:
+        value, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_SCHEMA_NODES:
+            raise UnsanitizableResult(f"schema has more than {MAX_SCHEMA_NODES} nodes")
+        if depth > MAX_CONTENT_DEPTH:
+            raise UnsanitizableResult(
+                f"schema nested deeper than {MAX_CONTENT_DEPTH} levels"
+            )
+        if isinstance(value, dict):
+            stack.extend((v, depth + 1) for v in value.values())
+        elif isinstance(value, list):
+            stack.extend((v, depth + 1) for v in value)
+        elif isinstance(value, str):
+            out.append(value)
+    return out
 
 
 def _strip_hidden_deep(value: Any, _depth: int = 0) -> Any:
@@ -199,8 +240,15 @@ def scan_tool(tool: ToolSpec) -> list[str]:
     findings: list[str] = []
 
     # Aggregate the surfaces an upstream controls: name, description, and every
-    # string inside the input schema.
-    haystacks = [tool.name, tool.description, *_iter_schema_strings(tool.input_schema)]
+    # string inside the input schema. A schema past the walker's bounds is a
+    # finding in its own right: it was never inspected, so it is handled like
+    # any other flagged tool rather than aborting the whole catalog (#86).
+    try:
+        schema_strings = _iter_schema_strings(tool.input_schema)
+    except UnsanitizableResult as exc:
+        findings.append(f"{UNSCANNABLE_SCHEMA}:{exc}")
+        schema_strings = []
+    haystacks = [tool.name, tool.description, *schema_strings]
 
     lowered = " \n ".join(h.lower() for h in haystacks)
     for marker in OVERRIDE_MARKERS:
@@ -259,18 +307,20 @@ def inspect_catalog(
             # Drop the tool entirely — it never reaches the agent's context.
             continue
 
+        update: dict[str, Any] = {}
+        if any(f.startswith(UNSCANNABLE_SCHEMA) for f in findings):
+            update["input_schema"] = copy.deepcopy(_NEUTRAL_SCHEMA)
+
         if on_untrusted == "strip":
-            out.append(
-                tool.model_copy(update={"description": _NEUTRAL_STUB})
-            )
+            update["description"] = _NEUTRAL_STUB
+            out.append(tool.model_copy(update=update))
             continue
 
         # flag: sanitize hidden unicode, then prefix the trust warning so the
         # description survives but is clearly framed as untrusted data.
         safe = _strip_hidden_unicode(tool.description)
-        out.append(
-            tool.model_copy(update={"description": _TRUST_WARNING + safe})
-        )
+        update["description"] = _TRUST_WARNING + safe
+        out.append(tool.model_copy(update=update))
 
     return out
 
