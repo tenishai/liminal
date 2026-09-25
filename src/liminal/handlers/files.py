@@ -22,6 +22,10 @@ Defenses (applied before any disk operation):
   5. Write size cap — payload content longer than `max_write_bytes` is
      rejected; the agent shouldn't be dumping 50MB blobs to disk in
      one tool call.
+  6. Protected instruction files (#108) — a write to CLAUDE.md, AGENTS.md
+     and the like, or anywhere under a `.claude/` directory, is refused
+     unless the server-side policy grant holds `files:protected_writes`.
+     See `_protected_match`.
 
 Allowlist source: constructor default (operator-wired at handler
 factory time, or from LIMINAL_FILES_ALLOWED_PATHS — see `get_handler`)
@@ -47,6 +51,33 @@ log = structlog.get_logger(__name__)
 DEFAULT_MAX_READ_BYTES = 1_000_000   # 1 MB
 DEFAULT_MAX_WRITE_BYTES = 500_000    # 500 KB
 DEFAULT_MAX_LIST_ENTRIES = 500
+
+
+# ---- protected instruction files (#108) -------------------------------------
+#
+# Agent tools load these as INSTRUCTIONS in every later session run in that
+# directory (Claude Code reads CLAUDE.md; AGENTS.md, GEMINI.md and .cursorrules
+# are the equivalents for other tools). A persona that reads untrusted content and is steered into one
+# files_write would turn a one-off injection into a persistent one. The path
+# allowlist does not help, because the repo is meant to be writable.
+#
+# Matched case-insensitively, in any directory, against the requested path AND
+# the resolved one, so neither case, `./`, a symlinked file nor a symlinked
+# parent reaches a protected file under a different name. A hard link can, and
+# is not handled: files.write cannot create one. Shape follows the prior art
+# cited in #108 (hermes-agent's write guards, ported from Roo-Code).
+PROTECTED_BASENAMES: frozenset[str] = frozenset(
+    {"claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md"}
+)
+# Anything beneath these directories. `.claude/settings.json` can register
+# hooks, which is code execution, not just instructions.
+PROTECTED_DIRS: frozenset[str] = frozenset({".claude"})
+
+# The one grant that lifts the gate. Checked against `ctx.granted_scopes`, which
+# only the server-side policy grant fills, so a token cannot grant it to itself.
+# Explicit membership, deliberately: `admin:*` does NOT imply it, because an
+# admin grant is given for managing liminal, not for rewriting agent prompts.
+PROTECTED_WRITE_SCOPE = "files:protected_writes"
 
 
 CARD = {
@@ -173,6 +204,9 @@ class FilesHandler:
         if name == "read":
             return await self._read(resolved, payload, cfg)
         if name == "write":
+            refusal = await self._gate_protected_write(raw_path, resolved, ctx)
+            if refusal is not None:
+                return refusal
             return await self._write(resolved, payload, cfg)
         if name == "list":
             return await self._list(resolved, cfg)
@@ -280,6 +314,48 @@ class FilesHandler:
             f"({[str(p) for p in cfg.allowed_paths]})"
         )
 
+    async def _gate_protected_write(
+        self, raw_path: str, resolved: Path, ctx: Context
+    ) -> ToolResult | None:
+        """Refuse a write to a protected instruction file unless granted.
+
+        Returns None to let the write proceed. Every decision on a protected
+        path is audited: a denial, and a granted write before it happens.
+        """
+        match = _protected_target(raw_path, resolved)
+        if match is None:
+            return None
+
+        allowed = PROTECTED_WRITE_SCOPE in ctx.granted_scopes
+        detail = {
+            "tool": "files.write",
+            "path": str(resolved),
+            "protected": match,
+            "reason": "protected write granted" if allowed else "protected instruction file",
+        }
+        log.warning("files.protected_write", allowed=allowed, **detail)
+        try:
+            if ctx.audit is not None:
+                await ctx.audit(allowed=allowed, detail=detail)
+        except Exception as exc:  # noqa: BLE001
+            log.error("files.protected_write_audit_failed", error=str(exc))
+            if allowed:
+                # A granted write the audit log cannot record does not happen.
+                return ToolResult.failure(
+                    f"protected instruction file {str(resolved)!r}: audit record "
+                    "failed, refusing the write"
+                )
+
+        if allowed:
+            return None
+        return ToolResult.failure(
+            f"protected instruction file ({match}); requires operator grant. "
+            f"{str(resolved)!r} is loaded as instructions by agent tools, so "
+            "writing it needs the server-side "
+            f"{PROTECTED_WRITE_SCOPE!r} grant. Report this rather than writing "
+            "the content somewhere else."
+        )
+
     # ---- tools ------------------------------------------------------------
 
     async def _read(
@@ -374,6 +450,26 @@ class FilesHandler:
                 "truncated": truncated,
             }
         )
+
+
+def _protected_target(raw_path: str, resolved: Path) -> str | None:
+    """Check both the requested path (normalised, not resolved) and the
+    resolved one. The first catches a protected name that is a symlink to an
+    ordinary file; the second catches an ordinary name, or a parent directory,
+    that is a symlink to a protected one."""
+    requested = Path(os.path.normpath(Path(raw_path).expanduser()))
+    return _protected_match(requested) or _protected_match(resolved)
+
+
+def _protected_match(path: Path) -> str | None:
+    """The protected name `path` hits, or None. Case-insensitive, any depth."""
+    parts = [part.casefold() for part in path.parts]
+    if parts and parts[-1] in PROTECTED_BASENAMES:
+        return parts[-1]
+    for part in parts[:-1]:
+        if part in PROTECTED_DIRS:
+            return f"{part}/"
+    return None
 
 
 def _is_under(candidate: Path, prefix: Path) -> bool:

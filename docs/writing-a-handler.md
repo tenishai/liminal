@@ -3,7 +3,7 @@
 The README's "Wiring a handler (custom)" section shows the mechanism: implement
 `Handler` (or match its protocol — `tools()`, `dispatch()`, `capability_card()`),
 register it via the `liminal.handlers` entry-point group. That covers how to get a
-handler running. This page covers four things an author needs that aren't in the
+handler running. This page covers five things an author needs that aren't in the
 README or `docs/design.md`, because they only show up in source.
 
 ## `ctx.extra` is the per-handler operator-config channel
@@ -35,6 +35,17 @@ mode, and the difference matters if your handler uses `extra` to pick a
 In other words: `ctx.extra` is safe for a handler to trust as operator
 config, but it is never caller input, and a handler must not treat it as
 if the calling agent chose it.
+
+## `ctx.granted_scopes` and `ctx.audit` are for decisions the token must not make
+
+`ctx.extra` comes from the token in single-cabal mode, so it cannot carry an
+authorization decision. When a handler needs one inside a tool (the `files`
+handler refusing CLAUDE.md and friends unless granted, #108), read
+`ctx.granted_scopes` instead: routes.py fills it only from the server-side
+policy grant, and it is empty in single-cabal, auth-off and library mode. Record
+the decision with `await ctx.audit(allowed=..., detail={...})` when `ctx.audit`
+is set (sovereign mode only; log it otherwise); it writes through `policy_store.record_access`, so it lands in the same
+audit log as the route's own gates.
 
 ## Discovery is fail-open, and failure is silent
 

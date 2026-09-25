@@ -404,9 +404,31 @@ class HttpTarget(Target):
         ]
         # #16 — inspect the catalog at ingest (the single chokepoint). TRUSTED
         # targets pass through; UNTRUSTED get flag/strip/block per policy.
-        self._tools = inspect_catalog(
-            raw_specs, self.trust, self.spec.on_untrusted
-        )
+        #
+        # GUARDED LIKE THE FETCH ABOVE (#86). This call sat outside that try,
+        # so anything inspection raised went straight into the lifespan and
+        # aborted startup. inspect_catalog now handles an oversized schema as
+        # a finding, but the payload is upstream-authored either way, so an
+        # inspection failure degrades THIS target (zero tools at startup, the
+        # last inspected catalog on refresh) and /healthz says so. The status
+        # is fixed text for the same reason as above: /healthz is unauthenticated.
+        try:
+            inspected = inspect_catalog(
+                raw_specs, self.trust, self.spec.on_untrusted
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.catalog_status = (
+                "catalog inspection failed (startup)" if initialize
+                else "catalog inspection failed (refresh)"
+            )
+            log.error(
+                "http_target.catalog_inspection_failed",
+                target=self.name,
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+            return
+        self._tools = inspected
         self.catalog_status = "ready"
         log.info(
             "http_target.tools_refreshed",

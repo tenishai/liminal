@@ -52,6 +52,9 @@ class Multiplexer:
                     msg="last one wins",
                 )
             self._targets[target.name] = target
+        # Targets whose startup() raised, by name -> fixed status text. Read by
+        # /healthz so a target that failed to start reads as degraded (#86).
+        self.startup_failures: dict[str, str] = {}
 
     @classmethod
     def from_registry(cls, registry: Registry) -> Multiplexer:
@@ -71,9 +74,26 @@ class Multiplexer:
         return dict(self._targets)
 
     async def startup(self) -> None:
-        """Start every target in registration order."""
-        for target in self._targets.values():
-            await target.startup()
+        """Start every target in registration order.
+
+        One target's failure does not stop the others (#86). This loop had no
+        guard, so a single hostile upstream that made its own startup raise
+        took down every target after it, in-process handlers included — the
+        request path has the blanket ``except`` in ``dispatch`` below, and
+        startup had nothing. A failed target stays registered, so ``shutdown``
+        still releases whatever it opened, and is reported on /healthz.
+        """
+        for name, target in self._targets.items():
+            try:
+                await target.startup()
+            except Exception as exc:  # noqa: BLE001
+                self.startup_failures[name] = "startup failed"
+                log.error(
+                    "multiplexer.target_startup_failed",
+                    target=name,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
 
     async def shutdown(self) -> None:
         """Shut down every target in reverse registration order."""
