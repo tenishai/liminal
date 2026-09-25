@@ -52,17 +52,32 @@ def _is_self_hosted(runs_on) -> bool:
     `runs-on` accepts a string, a list of labels, or a mapping with `labels:` /
     `group:`. Checking only the list form this file uses today would let the
     same exposure return through another spelling.
+
+    An expression (`${{ matrix.os }}`, `${{ vars.RUNNER }}`) cannot be resolved
+    here, so it counts as self-hosted: a job whose runner this test cannot see
+    must carry the guard anyway. Fail closed.
     """
     if isinstance(runs_on, str):
-        return "self-hosted" in runs_on
+        return "self-hosted" in runs_on or "${{" in runs_on
     if isinstance(runs_on, list):
-        return "self-hosted" in runs_on
+        return any("self-hosted" in str(label) or "${{" in str(label) for label in runs_on)
     if isinstance(runs_on, dict):
         labels = runs_on.get("labels") or []
         if isinstance(labels, str):
             labels = [labels]
         return "self-hosted" in labels or bool(runs_on.get("group"))
     return False
+
+
+def test_test_yml_is_the_only_workflow():
+    """This file checks one workflow. A second one would run jobs this test never
+    reads, so its arrival has to be noticed. `*.y*ml` because Actions reads both
+    .yml and .yaml."""
+    workflows = sorted(p.name for p in WORKFLOW.parent.glob("*.y*ml"))
+    assert workflows == ["test.yml"], (
+        f"a second workflow appeared ({workflows}); extend this test to cover it "
+        "before any of its jobs can reach the self-hosted runner"
+    )
 
 
 def test_every_self_hosted_job_carries_the_fork_guard():
