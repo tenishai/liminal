@@ -104,10 +104,14 @@ async def test_protected_name_is_refused(tmp_path, rel: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dotdot_route_to_a_protected_name_is_refused(tmp_path) -> None:
+async def test_dotdot_route_to_a_protected_name_is_refused_before_the_gate(tmp_path) -> None:
+    """Not a test of the #108 gate: `..` never reaches it, because
+    `_safe_resolve` refuses the segment first. Kept so that relaxing that
+    defence cannot silently open a `..` route to a protected name."""
     (tmp_path / "sub").mkdir()
     result = await _write(_handler(tmp_path), f"{tmp_path}/sub/../CLAUDE.md")
     assert result.is_error is True
+    assert "contains '..'" in result.error
     assert not (tmp_path / "CLAUDE.md").exists()
 
 
@@ -321,3 +325,25 @@ async def test_single_cabal_token_scope_cannot_grant(tmp_path) -> None:
 
 def _json_text(result: dict[str, Any]) -> str:
     return " ".join(b.get("text", "") for b in result.get("content", []))
+
+
+@pytest.mark.asyncio
+async def test_auth_off_with_an_inert_store_neither_grants_nor_audits(
+    tmp_path, monkeypatch
+) -> None:
+    """A store wired under LIMINAL_AUTH_DISABLED is inert (app.py): no grant is
+    resolved, so nothing lifts the gate, and no audit rows are written."""
+    monkeypatch.setenv("LIMINAL_AUTH_DISABLED", "1")
+    store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
+    root = tmp_path / "repo"
+    root.mkdir()
+    reg = Registry()
+    register_explicit(reg, "files", _handler(root))
+    app = create_app(registry=reg, policy_store=store)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        result = await _call_write(client, "anything", root / "CLAUDE.md")
+        rows = await store.audit(limit=20)
+    store.close()
+    assert result["isError"] is True
+    assert not (root / "CLAUDE.md").exists()
+    assert [r for r in rows if r.detail.get("tool") == "files.write"] == []

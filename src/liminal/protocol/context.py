@@ -35,6 +35,7 @@ class Context:
     # from the caller's token, so a handler can gate on it without trusting the
     # caller; empty in single-cabal, auth-off and library mode (#108).
     granted_scopes: frozenset[str] = frozenset()
-    # Set when a policy store is wired; None otherwise. Lets a handler record
-    # its own authorization decisions through ``policy_store.record_access``.
+    # Set in sovereign mode, where a policy store backs the grant; None
+    # otherwise. Lets a handler record its own authorization decisions through
+    # ``policy_store.record_access``. Where it is None, log the decision.
     audit: AuditHook | None = None

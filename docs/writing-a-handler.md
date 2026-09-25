@@ -44,7 +44,7 @@ handler refusing CLAUDE.md and friends unless granted, #108), read
 `ctx.granted_scopes` instead: routes.py fills it only from the server-side
 policy grant, and it is empty in single-cabal, auth-off and library mode. Record
 the decision with `await ctx.audit(allowed=..., detail={...})` when `ctx.audit`
-is set; it writes through `policy_store.record_access`, so it lands in the same
+is set (sovereign mode only; log it otherwise); it writes through `policy_store.record_access`, so it lands in the same
 audit log as the route's own gates.
 
 ## Discovery is fail-open, and failure is silent

@@ -461,13 +461,14 @@ async def _handle_tools_call(
         # structured logs or the outbound x-correlation-id hop.
         extra["correlation_id"] = inbound_cid[:200]
 
-    # Handler-level authorization inputs (#108). Both come from the server side
-    # only: `granted_scopes` from the policy grant, never the token's own scope
-    # claim (same rule as _allowed_handlers_for), and `audit` writes to the same
-    # store the gates above record to.
+    # Handler-level authorization inputs (#108). Both exist only in sovereign
+    # mode (a grant is present): `granted_scopes` comes from the policy grant,
+    # never the token's own scope claim (same rule as _allowed_handlers_for),
+    # and `audit` writes to the same store the gates above record to. Under
+    # auth-off a wired store is inert (app.py), so it gets no audit rows either.
     audit = None
     store = getattr(request.app.state, "policy_store", None)
-    if store is not None:
+    if grant is not None and store is not None:
         audit = functools.partial(
             store.record_access,
             issuer=claims.issuer,
