@@ -33,6 +33,10 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.8",
     "mypy>=1.13",
+    # tests/test_ci_workflow.py parses .github/workflows/test.yml. pyyaml is
+    # importable today only because uvicorn[standard] pulls it in; declared so a
+    # dependency bump cannot take the fork-guard test with it.
+    "pyyaml>=6.0",
 ]
 # Enables the techne-backed `memory` handler (imported lazily; liminal runs
 # without it). techne is not on a public index, so pair this extra with the
