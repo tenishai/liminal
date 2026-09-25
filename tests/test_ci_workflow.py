@@ -57,15 +57,12 @@ def _is_self_hosted(runs_on) -> bool:
     here, so it counts as self-hosted: a job whose runner this test cannot see
     must carry the guard anyway. Fail closed.
     """
+    if isinstance(runs_on, dict):
+        return bool(runs_on.get("group")) or _is_self_hosted(runs_on.get("labels") or [])
     if isinstance(runs_on, str):
-        return "self-hosted" in runs_on or "${{" in runs_on
+        runs_on = [runs_on]
     if isinstance(runs_on, list):
         return any("self-hosted" in str(label) or "${{" in str(label) for label in runs_on)
-    if isinstance(runs_on, dict):
-        labels = runs_on.get("labels") or []
-        if isinstance(labels, str):
-            labels = [labels]
-        return "self-hosted" in labels or bool(runs_on.get("group"))
     return False
 
 
