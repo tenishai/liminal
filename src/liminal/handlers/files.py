@@ -56,15 +56,16 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 # ---- protected instruction files (#108) -------------------------------------
 #
 # Agent tools load these as INSTRUCTIONS in every later session run in that
-# directory: Claude Code reads CLAUDE.md, and AGENTS.md when no CLAUDE.md is
-# present. A persona that reads untrusted content and is steered into one
+# directory (Claude Code reads CLAUDE.md; AGENTS.md, GEMINI.md and .cursorrules
+# are the equivalents for other tools). A persona that reads untrusted content and is steered into one
 # files_write would turn a one-off injection into a persistent one. The path
 # allowlist does not help, because the repo is meant to be writable.
 #
 # Matched case-insensitively, in any directory, against the requested path AND
 # the resolved one, so neither case, `./`, a symlinked file nor a symlinked
-# parent reaches a protected file under a different name. Ported in shape from
-# hermes-agent's write guards (themselves from Roo-Code's RooProtectedController).
+# parent reaches a protected file under a different name. A hard link can, and
+# is not handled: files.write cannot create one. Shape follows the prior art
+# cited in #108 (hermes-agent's write guards, ported from Roo-Code).
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
     {"claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md"}
 )
