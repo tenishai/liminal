@@ -16,13 +16,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---- unit: no sibling deps, always runs -----------------------------------
+  # ---- unit: no sibling deps; push, dispatch, same-repo PRs -----------------
+  # Fork PRs run fork-pr instead. tests/test_ci_workflow.py pins the guard below.
   # SELF-HOSTED on mash1 (2026-09-23): hosted Actions stopped on a billing failure.
   # The `if:` below is DEFENCE IN DEPTH for honest fork PRs, not a security boundary:
   # for `pull_request` GitHub runs the PR's own copy of this file, so a fork can
   # delete the guard (see the ATTACKER-EDITABLE block in tenishai/techne's test.yml).
   # The real controls: this repo is private, "Run workflows from fork pull requests"
   # is off (checked 2026-09-23), and the runner stops before the go-public flip.
+  # That flip is tracked in tenishai/agora#20; the sequence is
+  # docs/go-public-runbook.md in tenishai/techne.
   unit:
     runs-on: [self-hosted, linux, x64, liminal-ci]
     timeout-minutes: 20  # one small runner; a hung job starves it
