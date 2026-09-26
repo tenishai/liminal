@@ -26,9 +26,11 @@ This is the same problem Unix solved in the 1980s with `inetd`: instead of N dae
 
 ## Proposal
 
-**liminal** (from Latin *limen*, threshold) is Cabal's bundled MCP gateway. One MCP connection per agent, many backend handlers behind it. Per Cabal's "single package, two deployment modes" decision, liminal is a module of the `cabal` Python package — in solo / dev mode it runs in-process alongside Cabal Core and the agents; in production / scale mode it runs as its own service container. Every persona agent reaches tools through liminal regardless of mode.
+**liminal** (from Latin *limen*, threshold) is an MCP gateway for agents. One MCP connection per agent, many backend handlers behind it. liminal is its own repository and distribution, and it does not depend on cabal. The dependency runs the other way: cabal declares handlers into liminal's `liminal.handlers` entry-point group, and liminal discovers them when cabal is installed alongside it. Each of cabal, techne and liminal stands alone, and the integrations between them are optional. Every persona agent reaches tools through liminal.
 
-Handlers are Python packages registered as entry points (`liminal.handlers` group). liminal discovers them at startup and dispatches calls into them. In solo mode, handler `dispatch()` is a Python function call. In scale mode, each handler runs in its own subprocess and liminal speaks **stdio JSON-RPC** to it. The handler interface is the same in either case; the runtime decides based on deployment mode.
+> **Correction (#72).** This proposal originally made liminal a module of the `cabal` Python package, running in-process inside the cabal daemon in solo mode. That did not ship. The "solo / dev mode" passages below describe that unbuilt design; what exists is `liminal serve`, a standalone process in every mode.
+
+Handlers are Python packages registered as entry points (`liminal.handlers` group). liminal discovers them at startup and dispatches calls into them; handler `dispatch()` is an in-process coroutine call. This proposal also described a scale mode where each handler runs in its own subprocess behind **stdio JSON-RPC**. That was not built: see the correction under Handler runtime modes.
 
 Credentials are fetched from **Cabal Core's encrypted secrets table** at handler-spawn (or handler-init) time — keyed by `(identity, handler)` per the secrets schema. liminal injects the full credential set for that `(identity, handler)` pair into the handler's runtime; the capability card's `credential_keys` field is documentation (what the handler expects), not enforcement. No plaintext `.env` files on disk.
 
@@ -90,6 +92,8 @@ The same protocol works in both deployment modes — the difference is *where* t
 
 **Solo / dev mode (in-process).** liminal is a module loaded into the same `cabal` daemon as Cabal Core and the agents. `dispatch()` is a Python coroutine call inside the daemon. There are no subprocesses, no IPC, no extra startup latency. A handler exception is caught by liminal's call site and surfaced to the agent as a structured tool-call error. Process boundary is the daemon's; isolation comes from in-process exception handling, not OS-level fork.
 
+> **Correction (#72): the subprocess runtime below was not built.** What exists is the `Target` abstraction: `InProcessTarget` for handlers and `HttpTarget` for federated MCP upstreams (`--targets`), behind one protocol. A `stdio` target is config-validated but refused at startup (`only 'http' is supported in Stage A`, `target/http.py`); the stdio transport is tracked in #12. So per-handler subprocess isolation, the cleanup-on-disconnect invariant, and the crash-loop breaker below are design, not a deployment mode you can run today.
+
 **Production / scale mode (subprocess).** liminal runs as its own service container. Each handler runs in its own subprocess, keyed by `(identity, handler)`, spawned on first use. liminal speaks **stdio JSON-RPC** to the subprocess — newline-delimited JSON over the handler's stdin/stdout, modeled on MCP's own subprocess transport. The subprocess inherits credentials via env vars (liminal passes them on spawn; never via argv). Benefits at scale:
 
 - **Isolation** — a crashing handler doesn't take down the gateway or other handlers.
@@ -142,7 +146,14 @@ liminal:
 
 Identity directories (`./identities/<persona>/`) are git-managed, mounted read-only, and carry only the non-secret config (`identity.toml`, prompts, hook bindings). **Secrets do not live in this directory**; they live in Cabal Core's encrypted `secrets` table and are fetched at handler-spawn time.
 
-Agents address liminal as `http://liminal:9000` (or `https://` with mTLS) on the network. Each tool call carries the agent's A2A JWT (`sub=agent_name, persona=<persona>`). liminal validates the JWT against Cabal Core's JWKS (`GET /jwks.json`, cached with `kid` rotation), extracts the `persona` claim, and routes to the matching `(persona, handler)` runtime (in-process or subprocess depending on mode).
+Agents address liminal as `http://liminal:9100` (or `https://` with mTLS) on the network; 9100 is the `liminal serve --port` default. Each tool call carries the agent's A2A JWT (`sub=agent_name, persona=<persona>`). liminal validates the JWT against Cabal Core's JWKS (`GET /jwks.json`, cached with `kid` rotation), extracts the `persona` claim, and dispatches to the handler in-process.
+
+**Standalone, auth off (local)** — `LIMINAL_AUTH_DISABLED=1 liminal serve`, bound to `127.0.0.1` (the `--host` default). This is the README quickstart: one gateway on a workstation serving an agent on the same host, with no Cabal Core. Its security model differs from both modes above, so state it rather than let someone discover it:
+
+- **The bind address is the only boundary.** There is no JWT and no persona. Anything that can reach the port can call every tool, so never bind it to a non-loopback address.
+- **Every caller is the same caller.** Claims are synthesised with `identity = agent_name = "anonymous"`, so handlers that scope by persona or agent collapse to one shared scope. `scratchpad`, keyed by `(identity, agent_name)`, becomes one bucket for every client.
+- **No per-persona allowlists.** The synthesised claims carry no `cabal_tool_extras`, so `ctx.extra` is empty. The `files` handler takes its ceiling from `LIMINAL_FILES_ALLOWED_PATHS` instead (#68), and with that unset it still refuses everything.
+- **No scope gate.** The per-tool scope gate needs a sovereign grant, so it does not run here, and `tools/list` shows every registered tool.
 
 ---
 
@@ -336,12 +347,12 @@ config_version = 1          # required; liminal will refuse version != 1 loudly
 # Minimal http target — the common case (two keys required)
 [[target]]
 name    = "jira"
-address = "https://jira-mcp.internal/mcp"
+address = "https://jira-mcp.internal"
 
 # Fuller example — bearer-auth, trusted, with untrusted-tool policy
 [[target]]
 name        = "github"
-address     = "https://github-mcp.internal/mcp"
+address     = "https://github-mcp.internal"
 auth_method = "bearer"
 bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
 trust       = "trusted"
@@ -358,7 +369,7 @@ identity    = "forward"     # forward caller persona as x-liminal-persona header
 # earlier revision of this doc shipped exactly that and did not load.
 [[target]]
 name    = "jira-scoped"
-address = "https://jira-mcp.internal/mcp"
+address = "https://jira-mcp.internal"
 
 [target.tool_scopes]
 "search"       = "jira:read"
@@ -371,7 +382,7 @@ address = "https://jira-mcp.internal/mcp"
 # grant holding `confluence:use`.
 [[target]]
 name           = "confluence"
-address        = "https://confluence-mcp.internal/mcp"
+address        = "https://confluence-mcp.internal"
 required_scope = "confluence:use"
 
 [target.tool_scopes]
@@ -383,7 +394,7 @@ required_scope = "confluence:use"
 | Key | Required | Default | Notes |
 |-----|----------|---------|-------|
 | `name` | yes | — | Namespace / authz key; becomes the `{name}.{tool}` prefix. No `.` allowed. |
-| `address` | yes (http) | — | Upstream MCP endpoint URL. |
+| `address` | yes (http) | — | Upstream base URL, **without** `/mcp`: the client appends it, so `https://host/mcp` would post to `/mcp/mcp`. |
 | `transport` | no | `"http"` | `"http"` or `"stdio"`. |
 | `command` | yes (stdio) | — | argv list for the spawned stdio child. |
 | `trust` | no | `"untrusted"` | `"trusted"` or `"untrusted"`. |

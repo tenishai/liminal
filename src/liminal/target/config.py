@@ -10,7 +10,7 @@ One ``TargetSpec`` describes one federated target:
     [[target]]
     name = "jira"
     transport = "http"          # http | stdio
-    address = "https://jira-mcp.internal/mcp"
+    address = "https://jira-mcp.internal"   # base URL; the client appends /mcp
     trust = "untrusted"         # trusted | untrusted (default untrusted for http/stdio)
     on_untrusted = "flag"       # flag | strip | block
     identity = "forward"        # forward | none  (http only)
@@ -58,7 +58,9 @@ class TargetSpec:
             (``"{name}.{tool}"``). Must be non-empty and contain no ``.``.
         transport: ``"http"`` (Streamable-HTTP MCP upstream) or ``"stdio"``
             (spawned MCP child — Stage B; config is validated here now).
-        address: The upstream endpoint URL (required for ``http``).
+        address: The upstream's base URL (required for ``http``), without
+            the ``/mcp`` path: the MCP client appends it, so an address that
+            already ends in ``/mcp`` posts to ``/mcp/mcp`` (#69).
         command: The child process argv (required for ``stdio``).
         trust: ``"trusted"`` | ``"untrusted"``. ``http``/``stdio`` default to
             ``"untrusted"`` so their catalogs are inspected at ingest.
