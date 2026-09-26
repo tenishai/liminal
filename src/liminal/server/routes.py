@@ -236,8 +236,10 @@ async def _handle_tools_list(
     # MCP camelCase: snake → camel for input_schema. Filter by the same two
     # gates tools/call enforces -- the per-persona handler allowlist and, in
     # sovereign mode, the per-tool scope gate -- so what a persona sees is
-    # exactly what it can call (#61). Both checks are the functions
-    # tools/call uses, so discovery cannot drift from enforcement.
+    # exactly what those gates let it call (#61). Both checks are the
+    # functions tools/call uses, so discovery cannot drift from them. Later
+    # refusals (secret guard, handler-internal checks) depend on arguments
+    # and are not visibility rules.
     out = []
     for spec in tools:
         handler_name = spec["name"].split(".", 1)[0]

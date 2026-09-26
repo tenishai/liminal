@@ -480,6 +480,7 @@ async def _scoped_app(tmp_path):
     store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
     reg = Registry()
     register_explicit(reg, "scratchpad", ScratchpadHandler())
+    register_explicit(reg, "echo", _EchoExtraHandler())  # outside the allowlist
     app = create_app(
         jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store,
         policy_scope_for=_scratchpad_scopes,
@@ -497,7 +498,10 @@ async def test_tools_list_hides_what_the_scope_gate_refuses(tmp_path) -> None:
     """#61: what a persona sees == what it can call. For every tool in the
     catalog, it is listed exactly when tools/call gets past both authz gates."""
     app, ks, store = await _scoped_app(tmp_path)
-    all_tools = {"scratchpad.set", "scratchpad.get", "scratchpad.list", "scratchpad.clear"}
+    all_tools = {
+        "scratchpad.set", "scratchpad.get", "scratchpad.list", "scratchpad.clear",
+        "echo.peek",
+    }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await store.grant("shaz-cabal", "rook", scopes={"mem:query"}, allowed_handlers={"scratchpad"})
         tok = _mint(ks, iss="shaz-cabal")
@@ -506,7 +510,13 @@ async def test_tools_list_hides_what_the_scope_gate_refuses(tmp_path) -> None:
         for name in all_tools:
             resp = (await _rpc(client, tok, "tools/call", {"name": name, "arguments": {"key": "k"}})).json()
             msg = (resp.get("error") or {}).get("message", "")
-            refused = "required for tool" in msg or "not named in the scope map" in msg
+            refused = any(
+                s in msg for s in (
+                    "not in persona's allowed_handlers",  # handler allowlist
+                    "required for tool",                   # scope gate
+                    "not named in the scope map",          # deny sentinel
+                )
+            )
             assert refused == (name not in listed), (name, msg)
     store.close()
 
