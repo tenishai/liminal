@@ -44,6 +44,20 @@ class MCPRemoteError(MCPError):
         self.data = data
 
 
+def _describe_http_error(exc: httpx.HTTPError) -> str:
+    """The message for an MCPTransportError raised from an httpx failure.
+
+    No "transport error:" prefix: the exception TYPE says that, and every
+    caller that catches MCPError already labels it -- HttpTarget as "upstream
+    'x' transport error", cabal's proxy as "tool transport error". Prefixing
+    here too doubled the phrase on the wire (#71). The httpx class name stays,
+    because some httpx errors (a bare ReadTimeout) stringify to "".
+    """
+    detail = str(exc)
+    name = type(exc).__name__
+    return f"{name}: {detail}" if detail else name
+
+
 @dataclass(slots=True, frozen=True)
 class Tool:
     name: str
@@ -239,7 +253,7 @@ class AsyncMCPClient:
                 f"{self._base_url}/mcp", json=envelope, headers=headers
             )
         except httpx.HTTPError as exc:
-            raise MCPTransportError(f"transport error: {exc}") from exc
+            raise MCPTransportError(_describe_http_error(exc)) from exc
         if resp.status_code >= 500:
             raise MCPTransportError(
                 f"server {resp.status_code}: {resp.text[:200]}"
@@ -406,7 +420,7 @@ class MCPClient:
                 f"{self._base_url}/mcp", json=envelope, headers=headers
             )
         except httpx.HTTPError as exc:
-            raise MCPTransportError(f"transport error: {exc}") from exc
+            raise MCPTransportError(_describe_http_error(exc)) from exc
         if resp.status_code >= 500:
             raise MCPTransportError(
                 f"server {resp.status_code}: {resp.text[:200]}"
