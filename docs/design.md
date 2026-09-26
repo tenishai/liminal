@@ -270,7 +270,7 @@ Tool scoping is the mechanism by which liminal decides which tools an agent sees
 
 **v1:**
 
-- **Capability cards** ship with every handler (schema and example above). All v1 handlers declare `activation: "always"` — every tool the handler provides shows up in every `list_tools` response.
+- **Capability cards** ship with every handler (schema and example above). All v1 handlers declare `activation: "always"` — every tool the handler provides shows up in every `list_tools` response that the caller's authorization allows. `tools/list` applies the same handler allowlist and per-tool scope gate as `tools/call`, so a persona never sees a tool it cannot call (#61).
 - **Fail-open invariant** for tool listing: a broken capability card or transient registry error doesn't black-hole the agent's tool surface; the missing handler simply doesn't appear, and other handlers stay reachable. Security-critical operations (credential resolution, registration, `cbl discovery approve`) fail-closed.
 - **QUARANTINED handlers** stay visible in `list_tools` but each `dispatch()` returns a structured `{error: "handler quarantined", retry_after: <seconds>}`. Fail-open on visibility, fail-fast on call — see Handler runtime modes above.
 
