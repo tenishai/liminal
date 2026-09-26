@@ -141,7 +141,9 @@ docs/
 ```python
 from liminal.protocol import Context, Handler, ToolResult, ToolSpec
 
-class GreetHandler(Handler):
+# No base class: `Handler` is a typing.Protocol, so conforming is structural.
+# None of the shipped handlers subclass it; the import is for the return type.
+class GreetHandler:
     def tools(self) -> list[ToolSpec]: ...
     def capability_card(self) -> dict: ...
     async def dispatch(self, name: str, payload: dict, ctx: Context) -> ToolResult:

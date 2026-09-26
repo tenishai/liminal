@@ -87,7 +87,7 @@ A typed `TargetSpec` union, shaped like agentgateway's `McpTargetSpec` for swapp
 [[target]]
 name = "jira"
 transport = "http"                     # http | stdio
-address = "https://jira-mcp.internal/mcp"
+address = "https://jira-mcp.internal"
 trust = "untrusted"                    # default for http/stdio
 on_untrusted = "flag"                  # flag | strip | block
 identity = "forward"                   # forward | none  (http only)

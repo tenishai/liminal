@@ -233,14 +233,19 @@ async def _handle_tools_list(
     dispatcher: Multiplexer = request.app.state.dispatcher
     tools = await dispatcher.list_tools()
     allowed = _allowed_handlers_for(claims, grant)
-    # MCP camelCase: snake → camel for input_schema. Also filter by
-    # per-persona allowed_handlers when set so the LLM never sees tools
-    # its persona can't actually call (consistent with the credentials
-    # isolation pattern: don't lie to the agent about what it can do).
+    # MCP camelCase: snake → camel for input_schema. Filter by the same two
+    # gates tools/call enforces -- the per-persona handler allowlist and, in
+    # sovereign mode, the per-tool scope gate -- so what a persona sees is
+    # exactly what those gates let it call (#61). Both checks are the
+    # functions tools/call uses, so discovery cannot drift from them. Later
+    # refusals (secret guard, handler-internal checks) depend on arguments
+    # and are not visibility rules.
     out = []
     for spec in tools:
         handler_name = spec["name"].split(".", 1)[0]
         if allowed is not None and handler_name not in allowed:
+            continue
+        if _missing_scope(request, grant, spec["name"]) is not None:
             continue
         adapted = {
             "name": spec["name"],
@@ -253,6 +258,25 @@ async def _handle_tools_list(
     # rather than sending null. Strict clients (Claude Agent SDK Zod schema)
     # type it as `string | undefined` and reject an explicit null.
     return make_success(id=rpc_req.id, result=result.model_dump(by_alias=True, exclude_none=True))
+
+
+def _missing_scope(
+    request: Request, grant: ScopeGrant | None, tool_name: str
+) -> str | None:
+    """The scope `tool_name` requires that `grant` does not hold, or None.
+
+    None means the scope gate admits the call: no grant (single-cabal and
+    auth-disabled modes have no per-tool gate), no scope map wired, no
+    requirement for this tool, or the requirement is held. Shared by
+    tools/call (enforcement) and tools/list (discovery, #61).
+    """
+    if grant is None:
+        return None
+    scope_for = getattr(request.app.state, "policy_scope_for", None)
+    required = scope_for(tool_name) if scope_for is not None else None
+    if required and not grant.has_scope(required):
+        return str(required)
+    return None
 
 
 def _allowed_handlers_for(
@@ -344,9 +368,8 @@ async def _handle_tools_call(
     # DENY_SCOPE for a tool on a deny-by-default target that no operator rule
     # names (#78). admin:* satisfies any of them (see ScopeGrant.has_scope).
     if grant is not None:
-        scope_for = getattr(request.app.state, "policy_scope_for", None)
-        required = scope_for(params.name) if scope_for is not None else None
-        if required and not grant.has_scope(required):
+        required = _missing_scope(request, grant, params.name)
+        if required is not None:
             store = getattr(request.app.state, "policy_store", None)
             if store is not None:
                 await store.record_access(
@@ -359,11 +382,19 @@ async def _handle_tools_call(
                     # called `required_scope`, and that is the surface an
                     # operator triaging a denial actually greps.
                     # (Prudence, liminal#81 round 2.)
-                    detail=(
-                        {"tool": params.name, "deny_reason": "not-in-scope-map"}
-                        if required == DENY_SCOPE
-                        else {"tool": params.name, "required_scope": required}
-                    ),
+                    #
+                    # `handler` matches the handler-allowlist deny above, so an
+                    # audit consumer keyed on either field sees every denial
+                    # (#44); `tool` keeps the per-tool granularity.
+                    detail={
+                        "handler": handler_name,
+                        "tool": params.name,
+                        **(
+                            {"deny_reason": "not-in-scope-map"}
+                            if required == DENY_SCOPE
+                            else {"required_scope": required}
+                        ),
+                    },
                 )
             # DENY_SCOPE is a sentinel, not a scope an operator should ever
             # grant. Naming it here would read as instructions: `has_scope` is

@@ -238,3 +238,19 @@ def test_tool_outcome_text_property_empty_when_no_text() -> None:
 
     o = ToolCallOutcome(content=[{"type": "json", "data": {}}])
     assert o.text == ""
+
+
+def test_sync_transport_error_is_not_self_prefixed() -> None:
+    """#71: the sync client's MCPTransportError carries the cause, not the
+    category -- the caller that catches it adds "transport error"."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    c = MCPClient(
+        "http://test", token_provider=lambda: "t",
+        http_client=httpx.Client(transport=httpx.MockTransport(refuse)),
+    )
+    with pytest.raises(MCPTransportError) as info:
+        c.list_tools()
+    assert str(info.value) == "ConnectError: All connection attempts failed"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pathlib
 from collections.abc import Callable
 from typing import Any
 
@@ -561,3 +562,100 @@ def test_build_http_targets_rejects_duplicate_names() -> None:
 def test_build_http_targets_rejects_stdio() -> None:
     with pytest.raises(TargetConfigError, match="http"):
         build_http_targets([TargetSpec(name="p", transport="stdio", command=("x",))])
+
+
+# ---- #71: the transport-error phrase appears once -------------------------
+
+
+def _down_after_catalog(exc: httpx.HTTPError) -> Callable[[httpx.Request], httpx.Response]:
+    """Serve the catalog, then fail every tools/call at the transport layer --
+    an upstream that died mid-session."""
+    ok = _responder()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.read()).get("method") == "tools/call":
+            raise exc
+        return ok(request)
+
+    return respond
+
+
+def _visible_text(result: Any) -> str:
+    parts = [result.error or ""]
+    parts += [c.get("text", "") for c in result.content if isinstance(c, dict)]
+    return "\n".join(parts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trust", ["trusted", "untrusted"])
+async def test_transport_failure_names_the_category_once(trust: str) -> None:
+    # The client and HttpTarget are in different modules and each looked
+    # right alone; together they said "transport error: transport error:".
+    target = HttpTarget(
+        _http_spec(trust=trust),
+        http_client=_client(_down_after_catalog(httpx.ConnectError("All connection attempts failed"))),
+    )
+    await target.startup()
+    try:
+        ctx = Context(identity="x", agent_name="x", credentials={})
+        result = await target.dispatch("search", {}, ctx)
+    finally:
+        await target.shutdown()
+    assert result.is_error is True
+    text = _visible_text(result)
+    assert text.count("transport error") == 1, text
+    assert "All connection attempts failed" in text
+    assert "upstream 'upstream' transport error" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_with_an_empty_httpx_message_still_says_what() -> None:
+    target = HttpTarget(
+        _http_spec(), http_client=_client(_down_after_catalog(httpx.ReadTimeout("")))
+    )
+    await target.startup()
+    try:
+        ctx = Context(identity="x", agent_name="x", credentials={})
+        result = await target.dispatch("search", {}, ctx)
+    finally:
+        await target.shutdown()
+    assert result.error == "upstream 'upstream' transport error: ReadTimeout"
+
+
+# ---- #69: a target address is a base URL ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_client_appends_mcp_to_the_address() -> None:
+    """The reason the docs must not put /mcp in `address`: the client adds it."""
+    captured: list[str] = []
+    ok = _responder()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.append(request.url.path)
+        return ok(request)
+
+    target = HttpTarget(_http_spec(address="http://test/base"), http_client=_client(respond))
+    await target.startup()
+    await target.shutdown()
+    assert captured and set(captured) == {"/base/mcp"}
+
+
+def test_no_documented_target_address_ends_in_mcp() -> None:
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    sources = [
+        root / "README.md",
+        root / "src" / "liminal" / "target" / "config.py",
+        *sorted((root / "docs").rglob("*.md")),
+    ]
+    pattern = re.compile(r'^\s*address\s*=\s*"([^"]+)"', re.MULTILINE)
+    seen = 0
+    for path in sources:
+        for addr in pattern.findall(path.read_text()):
+            seen += 1
+            assert not addr.rstrip("/").endswith("/mcp"), (
+                f"{path.relative_to(root)}: address {addr!r} would post to /mcp/mcp"
+            )
+    assert seen, "no documented `address = ...` examples found"

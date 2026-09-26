@@ -39,6 +39,15 @@ checkout, confirm you tested what you think you did, e.g.
 import by reinstalling editable from whichever tree you happen to be in — that repoints
 the install and hides the problem everywhere else.
 
+## Releasing
+
+There is no release workflow; tags are cut by hand. Bump `version` in `pyproject.toml`
+in a PR, merge it, then tag **that** merge commit `vX.Y.Z` with the same number. v0.2.0
+was tagged without the bump, so installs from it reported 0.1.0 (#95).
+`tests/test_version_tags.py` fails when a reachable `v*` tag is newer than
+`pyproject.toml`; it needs tags, so it skips in CI's shallow checkout and runs in a full
+clone.
+
 ## Auth modes are exclusive, and the choice changes what you are touching
 
 - `--jwks-url` — single-cabal: verify caller JWTs against one issuer's JWKS.
