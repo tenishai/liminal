@@ -15,4 +15,4 @@ INVARIANTS:
 - Card `credential_keys` is documentation; liminal injects whatever cabal returns, unfiltered.
 - Keyed by persona (`cabal_persona`), not agent (`sub`).
 CONSUMERS: routes.py (HTTP path); client/library.py:_default_ctx (library mode takes the same callable); target/http.py `_build_call_headers` (reads ctx.credentials). Counterparty: cabal/src/cabal/core/routes/admin.py (serves /admin/secrets, mint-service). Tests: tests/test_credential_resolver.py.
-NOT BUILT: a ladon/OpenBao-backed resolver. The July card's "repoint resolver to ladon for federation" was a plan; no code references ladon. Any new backend must keep this callable signature and the fail-soft contract.
+NOT BUILT: a ladon/OpenBao-backed resolver; no code references ladon. Any new backend must keep this callable signature and the fail-soft contract.

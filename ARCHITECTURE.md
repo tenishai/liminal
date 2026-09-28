@@ -6,7 +6,7 @@ anchor: src/liminal/server/routes.py sha=075e824a79c6e73ade1da5c44e04cce08a03c99
 ---
 # liminal — repo card
 
-WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; old cards/issues say limenal.
+WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal.
 STATE: main, v0.2.0 (pyproject), classifier Pre-Alpha, AGPL-3.0. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108 protected writes). Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
 STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = techne (not on a public index; pair with requirements-sources.txt). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
