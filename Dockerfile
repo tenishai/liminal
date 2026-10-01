@@ -7,6 +7,11 @@
 #   --build-arg EXTRA_INDEX_URL=https://<index>/simple/    (a package index)
 #     [--build-arg AR_TOKEN=…]  for a private Artifact Registry index; the
 #     token Gojira's generated CI passes to every build (2026-09-30).
+# techne itself is fetched from that index ALONE, then installed as a file, so
+# only its dependencies come from PyPI. The name `techne` on PyPI belongs to
+# someone else (0.0.2 as of 2026-10-01); with the index as an *extra* index,
+# pip would take whichever index offers the highest version, and a later
+# release there would land in this image.
 # The arg is not called PIP_EXTRA_INDEX_URL on purpose: pip reads that name
 # from the environment, and a build ARG is environment for every later RUN of
 # the stage, so the second install would stop to ask for a password.
@@ -47,7 +52,9 @@ RUN python3 -m venv /venv \
       /venv/bin/pip install --no-cache-dir /build/techne; \
     elif [ -n "$EXTRA_INDEX_URL" ]; then \
       if [ -n "$AR_TOKEN" ]; then EXTRA_INDEX_URL="$(echo "$EXTRA_INDEX_URL" | sed "s#://#://oauth2accesstoken:${AR_TOKEN}@#")"; fi; \
-      PIP_EXTRA_INDEX_URL="$EXTRA_INDEX_URL" /venv/bin/pip install --no-cache-dir "techne>=0.17.0"; \
+      /venv/bin/pip download --no-cache-dir --no-deps --index-url "$EXTRA_INDEX_URL" -d /tmp/techne-dist "techne>=0.17.0" \
+      && /venv/bin/pip install --no-cache-dir /tmp/techne-dist/* \
+      && rm -rf /tmp/techne-dist; \
     else \
       echo "techne: pass --build-context techne=../techne or --build-arg EXTRA_INDEX_URL=… (see the techne stage)" >&2; exit 1; \
     fi \
