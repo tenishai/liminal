@@ -1,6 +1,25 @@
 # syntax=docker/dockerfile:1.7
 # Multi-stage build for liminal MCP gateway.
 
+# ----- techne: a sibling checkout, or a package index -------------------------
+# Two ways in, same image either way:
+#   --build-context techne=../techne                       (compose, dev: unchanged)
+#   --build-arg EXTRA_INDEX_URL=https://<index>/simple/    (a package index)
+#     [--build-arg AR_TOKEN=…]  for a private Artifact Registry index; the
+#     token Gojira's generated CI passes to every build (2026-09-30).
+# techne itself is fetched from that index ALONE, then installed as a file, so
+# only its dependencies come from PyPI. The name `techne` on PyPI belongs to
+# someone else (0.0.2 as of 2026-10-01); with the index as an *extra* index,
+# pip would take whichever index offers the highest version, and a later
+# release there would land in this image.
+# The arg is not called PIP_EXTRA_INDEX_URL on purpose: pip reads that name
+# from the environment, and a build ARG is environment for every later RUN of
+# the stage, so the second install would stop to ask for a password.
+# `--build-context techne=` overrides the empty stage below by name. Without
+# it the stage is empty, the copy yields nothing, and the install falls
+# through to the index. Neither given: the build stops and says so.
+FROM scratch AS techne
+
 # ----- Build stage ----------------------------------------------------------
 FROM python:3.12-slim AS build
 
@@ -17,18 +36,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# techne is brought in via BuildKit `--build-context techne=../techne`
-# (set by docker-compose.yml's additional_contexts). See CABAL-DECISIONS D-008/D-012.
-# When techne lands on PyPI, drop both COPY+install lines and add a `techne>=0.17.0`
-# pin to pyproject.toml's dependencies.
+# See CABAL-DECISIONS D-008/D-012 for why techne is a build input. When it
+# lands on PyPI, drop the techne stage and the install branch below and add a
+# `techne>=0.17.0` pin to pyproject.toml's dependencies.
 COPY --from=techne / /build/techne
+ARG EXTRA_INDEX_URL=""
+ARG AR_TOKEN=""
 
 # Layer-cache: copy pyproject.toml first, install all deps (and a stub package
 # so the build system is satisfied), then copy the real source last so a
 # code-only change doesn't bust the dependency install layer.
 COPY pyproject.toml README.md LICENSE ./
 RUN python3 -m venv /venv \
- && /venv/bin/pip install --no-cache-dir /build/techne \
+ && if [ -f /build/techne/pyproject.toml ]; then \
+      /venv/bin/pip install --no-cache-dir /build/techne; \
+    elif [ -n "$EXTRA_INDEX_URL" ]; then \
+      if [ -n "$AR_TOKEN" ]; then EXTRA_INDEX_URL="$(echo "$EXTRA_INDEX_URL" | sed "s#://#://oauth2accesstoken:${AR_TOKEN}@#")"; fi; \
+      /venv/bin/pip download --no-cache-dir --no-deps --index-url "$EXTRA_INDEX_URL" -d /tmp/techne-dist "techne>=0.17.0" \
+      && /venv/bin/pip install --no-cache-dir /tmp/techne-dist/* \
+      && rm -rf /tmp/techne-dist; \
+    else \
+      echo "techne: pass --build-context techne=../techne or --build-arg EXTRA_INDEX_URL=… (see the techne stage)" >&2; exit 1; \
+    fi \
  && mkdir -p src/liminal && touch src/liminal/__init__.py \
  && /venv/bin/pip install --no-cache-dir . \
  && rm -rf src
