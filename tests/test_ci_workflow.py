@@ -113,3 +113,17 @@ def test_fork_pr_is_the_literal_negation_on_a_hosted_runner():
     assert not _is_self_hosted(fork_pr.get("runs-on")), (
         "fork-pr runs only for fork PRs; on the self-hosted pool it is the exposure, inverted"
     )
+
+
+def test_every_third_party_action_is_pinned_to_a_full_commit_sha():
+    """A tag can be moved after review; a commit SHA cannot."""
+    import re
+
+    pinned = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+    unpinned = [
+        step["uses"]
+        for job in _jobs().values()
+        for step in job.get("steps", [])
+        if "uses" in step and not step["uses"].startswith("./") and not pinned.match(step["uses"])
+    ]
+    assert not unpinned, f"pin these to a full commit SHA with a `# vX.Y.Z` comment: {unpinned}"
