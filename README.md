@@ -72,6 +72,13 @@ pip install -r requirements-sources.txt ".[memory]"
 
 Dev/CI keep the editable sibling checkout above (`pip install -e ../techne`).
 
+The PyPI distribution is named `tenishai-liminal`; the import package and the CLI
+command are still `liminal`. To install a tagged release straight from git:
+
+```bash
+pip install "tenishai-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
+```
+
 ## Run the gateway (`liminal serve`)
 
 Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal

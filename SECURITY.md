@@ -26,7 +26,7 @@ problem is enough to start.
 - We tell you whether we've confirmed the problem as soon as we know.
 - We fix confirmed problems in the next release, or sooner for serious ones,
   and tell you before the fix is public.
-- We credit you in the release notes unless you'd rather we didn't.
+- We credit you in the [changelog](CHANGELOG.md) entry for the fix unless you'd rather we didn't.
 
 We ask that you give us a reasonable chance to fix a problem before disclosing
 it publicly, and that you don't access or change data that isn't yours while

@@ -1,0 +1,24 @@
+# Dependabot version updates. Grouped so a week's bumps land as one PR, not
+# one per package.
+#
+# Dependabot PRs are same-repo PRs, so they run the same test.yml jobs as a
+# human contributor's. The DCO job exempts dependabot's own commits (see the
+# comment there).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      pip:
+        patterns:
+          - "*"
