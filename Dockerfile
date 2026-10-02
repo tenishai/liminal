@@ -60,10 +60,14 @@ RUN python3 -m venv /venv \
     fi \
  && mkdir -p src/liminal && touch src/liminal/__init__.py \
  && /venv/bin/pip install --no-cache-dir . \
- && rm -rf src
+ && rm -rf src build
 
 COPY src ./src
-RUN /venv/bin/pip install --no-cache-dir --no-deps .
+# The stub install above leaves setuptools' build/ tree behind unless it is removed
+# with src, and a stale build/ makes this install ship the empty stub __init__.py
+# (tenishai/liminal#126). The import check fails the build if that ever recurs.
+RUN /venv/bin/pip install --no-cache-dir --no-deps . \
+ && /venv/bin/python -c "import liminal, liminal.server; v = liminal.__version__; assert v != '0.0.0+unknown', v; print('liminal', v)"
 
 # ----- Runtime stage --------------------------------------------------------
 FROM python:3.12-slim AS runtime

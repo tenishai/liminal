@@ -58,6 +58,12 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **The Docker image no longer ships an empty `liminal/__init__.py`** (tenishai/liminal#126).
+  The dependency-cache stub left setuptools' `build/` tree behind, so the real install
+  reused it and the container crash-looped on `ImportError: cannot import name
+  '__version__'`. The Dockerfile now removes `build/` with the stub, and the build
+  fails if the installed package can't import its version.
+
 - **`tools/list` no longer shows tools the caller cannot call.** Discovery and `tools/call`
   now share one scope check in sovereign mode (tenishai/liminal#112).
 - **The scope-gate deny audit row carries `detail.handler`**, matching the allowlist deny
