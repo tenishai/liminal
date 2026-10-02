@@ -21,7 +21,7 @@ from liminal.client.mcp import Tool, ToolCallOutcome
 from liminal.dispatch.local import InProcessDispatcher
 from liminal.protocol.context import Context
 from liminal.registry import Registry
-from liminal.wire import to_spec_content
+from liminal.wire import to_spec_result_content
 
 __all__ = ["LibraryLiminalClient"]
 
@@ -92,9 +92,15 @@ class LibraryLiminalClient:
         )
         # ToolResult → ToolCallOutcome wire shape. The MCP-spec content
         # conversion is the same one the HTTP route applies, so both
-        # backends present identical wire-format content to callers.
+        # backends present identical wire-format content to callers,
+        # including the failure message ToolResult.failure keeps in .error
+        # (liminal#66, #114).
         return ToolCallOutcome(
-            content=to_spec_content(list(result.content)),
+            content=to_spec_result_content(
+                list(result.content),
+                is_error=result.is_error,
+                error=result.error,
+            ),
             is_error=result.is_error,
         )
 

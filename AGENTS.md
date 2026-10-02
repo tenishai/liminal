@@ -30,11 +30,12 @@ a PR checkout can silently test **main** instead of the branch you are on — th
 pass, and they passed against the wrong tree.
 
 That produced a "the PRs are broken" report that was wrong (#83, #84). The fix is
-`pythonpath = ["src"]` in `[tool.pytest.ini_options]`, which is **not on main yet** — it
-is open as #85.
+`pythonpath = ["src"]` in `[tool.pytest.ini_options]`, which is now on main
+(#88), so `pytest` run from a worktree imports that worktree's `src/`.
 
-So, until #85 lands: when you run the suite from anywhere other than the canonical
-checkout, confirm you tested what you think you did, e.g.
+Outside pytest (a script, `python -c`, the `liminal` CLI) the editable install still
+decides what `import liminal` finds. If you run those from anywhere other than the
+canonical checkout, confirm you tested what you think you did, e.g.
 `python -c "import liminal, sys; print(liminal.__file__)"`. And never "fix" a failing
 import by reinstalling editable from whichever tree you happen to be in — that repoints
 the install and hides the problem everywhere else.
