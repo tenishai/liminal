@@ -1,7 +1,6 @@
-"""Tiny CLI — `liminal --version`, `liminal list-handlers`.
+"""liminal CLI — `liminal version`, `liminal list-handlers`, `liminal serve`.
 
-The real serve mode comes in Phase 1.5 when the MCP HTTP/SSE server
-lands.
+`serve` runs the MCP gateway (JSON-RPC over HTTP at `POST /mcp`).
 """
 
 from __future__ import annotations

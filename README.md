@@ -49,15 +49,24 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 
 ## Quickstart (development)
 
+You need git and Python 3.12 or newer. On Debian and Ubuntu, also run
+`sudo apt install python3-venv`; without it `python3 -m venv` fails.
+
 ```bash
-python3.12 -m venv .venv
+git clone https://github.com/tenishai/liminal.git && cd liminal
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install -e ../techne        # OPTIONAL: only the memory handler needs techne,
-                                # and techne is not public yet. Everything else,
-                                # including the test suite, runs without it.
-
 pytest -q
+```
+
+Everything above, including the test suite, runs without techne. Only the
+`memory` handler needs it. techne is not public yet, so this step needs access to
+`tenishai/techne`:
+
+```bash
+pip install -r requirements-sources.txt   # techne at its pinned git tag, no sibling checkout
+pip install -e ".[dev,memory]"
 ```
 
 ## Install (non-dev / clean machine)
