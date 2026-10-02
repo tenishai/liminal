@@ -22,8 +22,9 @@ Defenses (applied before any disk operation):
   5. Write size cap — payload content longer than `max_write_bytes` is
      rejected; the agent shouldn't be dumping 50MB blobs to disk in
      one tool call.
-  6. Protected instruction files (#108) — a write to CLAUDE.md, AGENTS.md
-     and the like, or anywhere under a `.claude/` directory, is refused
+  6. Protected paths (#108, #110) — a write to CLAUDE.md, AGENTS.md and the
+     like, .mcp.json, .claude.json, .git/hooks/*, .git/config, or anywhere
+     under a `.claude/` or `.cursor/` directory, is refused
      unless the server-side policy grant holds `files:protected_writes`.
      See `_protected_match`.
 
@@ -64,14 +65,40 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 # Matched case-insensitively, in any directory, against the requested path AND
 # the resolved one, so neither case, `./`, a symlinked file nor a symlinked
 # parent reaches a protected file under a different name. A hard link can, and
-# is not handled: files.write cannot create one. Shape follows the prior art
+# is not handled: files.write cannot create one. Nor are `@path` imports
+# from a CLAUDE.md (#110). Shape follows the prior art
 # cited in #108 (hermes-agent's write guards, ported from Roo-Code).
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
-    {"claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md"}
+    {
+        "claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md",
+        ".windsurfrules", ".clinerules",
+        # Code execution (#110): these register MCP servers, i.e. commands an
+        # agent starts on its next launch in the tree.
+        ".mcp.json", ".claude.json",
+    }
 )
 # Anything beneath these directories. `.claude/settings.json` can register
-# hooks, which is code execution, not just instructions.
-PROTECTED_DIRS: frozenset[str] = frozenset({".claude"})
+# hooks, which is code execution, not just instructions. `.cursor/` holds
+# rules, mcp.json and hooks.json.
+PROTECTED_DIRS: frozenset[str] = frozenset({".claude", ".cursor"})
+# Anything beneath a directory reached through this parent/child component
+# pair. `.git/hooks/*` runs on the next commit, checkout or merge. The pair is
+# matched, not `hooks` alone, so `.github/hooks.md` and `docs/hooks/` stay
+# writable.
+PROTECTED_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({(".git", "hooks")})
+# Exact parent/child pairs naming a single file. `.git/config` can set
+# core.hooksPath, core.fsmonitor and core.sshCommand, all of which run commands.
+PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {
+        (".git", "config"),
+        (".github", "copilot-instructions.md"),
+    }
+)
+# Names above that are code-execution paths rather than instruction files; used
+# only to word the refusal.
+_EXEC_NAMES: frozenset[str] = frozenset(
+    {".mcp.json", ".claude.json", ".git/hooks/", ".git/config"}
+)
 
 # The one grant that lifts the gate. Checked against `ctx.granted_scopes`, which
 # only the server-side policy grant fills, so a token cannot grant it to itself.
@@ -327,11 +354,12 @@ class FilesHandler:
             return None
 
         allowed = PROTECTED_WRITE_SCOPE in ctx.granted_scopes
+        kind = "code-execution path" if match in _EXEC_NAMES else "instruction file"
         detail = {
             "tool": "files.write",
             "path": str(resolved),
             "protected": match,
-            "reason": "protected write granted" if allowed else "protected instruction file",
+            "reason": "protected write granted" if allowed else f"protected {kind}",
         }
         log.warning("files.protected_write", allowed=allowed, **detail)
         try:
@@ -342,15 +370,15 @@ class FilesHandler:
             if allowed:
                 # A granted write the audit log cannot record does not happen.
                 return ToolResult.failure(
-                    f"protected instruction file {str(resolved)!r}: audit record "
+                    f"protected {kind} {str(resolved)!r}: audit record "
                     "failed, refusing the write"
                 )
 
         if allowed:
             return None
         return ToolResult.failure(
-            f"protected instruction file ({match}); requires operator grant. "
-            f"{str(resolved)!r} is loaded as instructions by agent tools, so "
+            f"protected {kind} ({match}); requires operator grant. "
+            f"{str(resolved)!r} is loaded or run by agent tools and git, so "
             "writing it needs the server-side "
             f"{PROTECTED_WRITE_SCOPE!r} grant. Report this rather than writing "
             "the content somewhere else."
@@ -466,9 +494,14 @@ def _protected_match(path: Path) -> str | None:
     parts = [part.casefold() for part in path.parts]
     if parts and parts[-1] in PROTECTED_BASENAMES:
         return parts[-1]
+    if len(parts) >= 2 and (parts[-2], parts[-1]) in PROTECTED_FILE_PAIRS:
+        return f"{parts[-2]}/{parts[-1]}"
     for part in parts[:-1]:
         if part in PROTECTED_DIRS:
             return f"{part}/"
+    for pair in zip(parts[:-2], parts[1:-1], strict=True):
+        if pair in PROTECTED_DIR_PAIRS:
+            return f"{pair[0]}/{pair[1]}/"
     return None
 
 
