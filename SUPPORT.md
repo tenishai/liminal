@@ -2,7 +2,7 @@
 
 - **Questions and bugs:** open a GitHub issue with the
   [question, bug report or feature request template](https://github.com/tenishai/liminal/issues/new/choose).
-  For a bug, include your liminal version (`liminal --version`) and the steps to
+  For a bug, include your liminal version (`liminal version`) and the steps to
   reproduce it.
 - **Security problems:** don't open a public issue. Report them privately as
   [SECURITY.md](SECURITY.md) describes.
