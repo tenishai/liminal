@@ -1,0 +1,9 @@
+# Build artefacts from a host-side `pip install .` must never reach an image:
+# a stale build/ tree is how the empty stub __init__.py shipped (tenishai/liminal#126).
+build/
+*.egg-info/
+**/__pycache__/
+.venv/
+.git/
+.pytest_cache/
+.ruff_cache/
