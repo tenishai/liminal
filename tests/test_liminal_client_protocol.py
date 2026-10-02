@@ -179,3 +179,14 @@ def test_factory_rejects_unknown_mode() -> None:
 def test_factory_rejects_proxy_without_url() -> None:
     with pytest.raises(ValueError, match="proxy mode requires 'url'"):
         from_config({"mode": "proxy", "token_provider": lambda: "tok"})
+
+
+@pytest.mark.asyncio
+async def test_library_failure_message_reaches_the_caller(library_client) -> None:
+    """#114: ToolResult.failure keeps its reason in .error and leaves content
+    empty; library mode used to hand that back as is_error with no content."""
+    outcome = await library_client.call_tool("scratchpad.set", {})
+    assert outcome.is_error is True
+    assert outcome.content, "failure reached the caller with empty content"
+    assert outcome.content[0]["type"] == "text"
+    assert outcome.content[0]["text"]
