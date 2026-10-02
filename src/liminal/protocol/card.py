@@ -41,6 +41,12 @@ class _ToolEntry(_Open):
     # protection (there is no "max of the two"). Use this to REFINE (narrow) a
     # handler scope, never to widen it.
     required_scope: str | None = None
+    # Operator-only tool (cabal#233). Enforced at tools/call and filtered from
+    # tools/list, independently of required_scope: single-cabal mode needs the
+    # verified token's cabal_scope (fallback `scope`) to hold "operator";
+    # sovereign mode needs the policy grant to hold it (or admin:*), never the
+    # token's own claim; auth-off refuses outright (no verified identity).
+    requires_operator: bool = False
 
 
 class CapabilityCard(_Open):

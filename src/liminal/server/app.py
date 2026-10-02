@@ -143,6 +143,23 @@ def scope_for(
     return _scope_for
 
 
+def operator_only_tools(reg: Registry) -> frozenset[str]:
+    """Full names ``<handler>.<tool>`` of every in-process tool whose card
+    entry sets ``requires_operator`` (cabal#233).
+
+    Built from the same validated ``CapabilityCard`` the scope map reads, so a
+    handler discovered through entry points carries the flag into the gate.
+    Federated targets have no such flag: their catalogs are untrusted and
+    their gating is operator config (``TargetSpec``), as with scopes.
+    """
+    return frozenset(
+        f"{record.name}.{tool.name}"
+        for record in reg
+        for tool in record.card.tools
+        if tool.requires_operator
+    )
+
+
 def create_app(
     *,
     jwt_verifier: JWTVerifier | None = None,
@@ -268,6 +285,9 @@ def create_app(
         policy_scope_for if policy_scope_for is not None
         else scope_for(reg, targets or ())
     )
+    # Operator-only tools (cabal#233). Unlike the scope map this gate runs in
+    # EVERY mode, so it is not inert in single-cabal: see routes._operator_refusal.
+    app.state.operator_only = operator_only_tools(reg)
     # Server-supplied sandbox config (memory.db_path, files.allowed_paths,
     # egress allowlists) for sovereign mode. Used INSTEAD of the caller's
     # token tool_extras when a grant is present — the token never picks a
