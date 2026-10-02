@@ -145,6 +145,15 @@ def test_a_final_event_without_a_trailing_blank_line_still_counts():
     assert sync_client(Server(tools_body=unterminated)).list_tools()[0].name == "get_me"
 
 
+def test_the_parser_strips_a_trailing_carriage_return_itself():
+    """httpx's iter_lines already splits on CRLF, so drive the parser directly to
+    pin its own handling of a line that still ends in a carriage return."""
+    from liminal.client.mcp import _SSEParser
+    p = _SSEParser()
+    out = [d for line in ["data: {\"a\": 1}\r", "\r"] for d in p.feed(line)]
+    assert out == ['{"a": 1}']
+
+
 def test_comments_and_crlf_line_endings_are_tolerated():
     def crlf(rid):
         msg = json.dumps({"jsonrpc": "2.0", "id": rid, "result": TOOLS})
@@ -279,10 +288,16 @@ def _session_headers(server: Server) -> list[str | None]:
     return [r.headers.get("mcp-session-id") for r in server.requests]
 
 
-def test_session_id_is_not_echoed_by_default():
-    """A shared client stays stateless across callers (liminal#76)."""
+@pytest.mark.parametrize("make", [sync_client, async_client])
+def test_session_id_is_not_echoed_by_default(make):
+    """A shared client stays stateless across callers (liminal#76). The async
+    client is the one HttpTarget shares, so its default matters most."""
     server = Server(session_id="sess-1")
-    sync_client(server).list_tools()
+    client = make(server)
+    if isinstance(client, AsyncMCPClient):
+        run(client.list_tools())
+    else:
+        client.list_tools()
     assert _session_headers(server) == [None, None, None]
 
 

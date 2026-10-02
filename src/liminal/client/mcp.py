@@ -1,8 +1,10 @@
 """MCP client implementation.
 
-The client speaks the same JSON-RPC surface the server exposes. Errors
-break out into:
-  - MCPTransportError    network failed (DNS, connect, 5xx)
+The client speaks the same JSON-RPC surface the server exposes, over plain
+JSON or Streamable-HTTP SSE responses. Errors break out into:
+  - MCPTransportError    no usable JSON-RPC response: network failure (DNS,
+                         connect, 5xx), or a body that is not JSON, not a JSON
+                         object, or an event stream that ends without the reply
   - MCPRemoteError       server returned a JSON-RPC error body
   - MCPError             base type, lets callers catch either flavor
 
