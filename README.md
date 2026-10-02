@@ -73,8 +73,10 @@ pip install -e ".[dev,memory]"
 ## Install (non-dev / clean machine)
 
 The `memory` handler needs `techne`, which is not on a public index. To install
-without a sibling checkout (agents, other hosts, containers), pin the git source
-alongside the extra, inside a virtual environment:
+without a sibling checkout (agents, other hosts, containers), work from a clone of
+this repo (see the Quickstart above, including its Debian/Ubuntu `python3-venv`
+step), with access to `tenishai/techne`, and pin the git source alongside the extra
+inside a virtual environment:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
