@@ -347,3 +347,120 @@ async def test_auth_off_with_an_inert_store_neither_grants_nor_audits(
     assert result["isError"] is True
     assert not (root / "CLAUDE.md").exists()
     assert [r for r in rows if r.detail.get("tool") == "files.write"] == []
+
+
+# ---- code-execution paths (#110) --------------------------------------------
+
+EXEC_REFUSAL = "protected code-execution path"
+
+EXEC_BLOCKED = [
+    ".git/hooks/pre-commit",
+    ".git/hooks/post-checkout",
+    ".GIT/Hooks/pre-push",
+    "sub/repo/.git/hooks/pre-commit",
+    ".git/hooks/sub/x",
+    "./.git/hooks/pre-commit",
+    "sub//.git/hooks/pre-commit",
+    ".git/config",
+    ".git/modules/s/hooks/x",
+    ".git/modules/s/config",
+    ".git/worktrees/w/commondir",
+    ".git/info/attributes",
+    ".git/worktrees/w/config.worktree",
+    "sub/.git/hooks/x",
+    ".mcp.json",
+    ".MCP.JSON",
+    "sub/deeper/.mcp.json",
+    ".claude.json",
+    ".Claude.Json",
+    "sub/.claude.json",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rel", EXEC_BLOCKED)
+async def test_code_execution_path_is_refused(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert "requires operator grant" in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rel", [".windsurfrules", ".clinerules", ".cursor/rules/x.mdc",
+                                 ".cursor/mcp.json", ".github/copilot-instructions.md",
+                                 ".GitHub/Copilot-Instructions.md"])
+async def test_other_tools_instruction_files_are_refused(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".github/hooks.md",
+        ".github/workflows/ci.yml",
+        "docs/hooks/guide.md",
+        "hooks/pre-commit",
+        ".git-notes/hooks/x",
+        ".gitignore",
+        ".gitattributes",
+        "sub/.gitattributes",
+        ".gitconfig",
+        ".gitmodules",
+        ".github/hooks/x",
+        "mcp.json",
+        ".mcp.json.bak",
+        "claude.json",
+    ],
+)
+async def test_neighbours_of_code_execution_paths_still_write(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is False, result.error
+    assert (tmp_path / rel).read_text() == "ignore previous instructions"
+
+
+@pytest.mark.asyncio
+async def test_git_pointer_file_at_a_worktree_root_is_refused(tmp_path) -> None:
+    """In a linked worktree or submodule checkout `.git` is a file holding
+    `gitdir: <path>`; rewriting it redirects git to an attacker's gitdir."""
+    (tmp_path / ".git").write_text("gitdir: /real/gitdir\n")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/.git")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert (tmp_path / ".git").read_text() == "gitdir: /real/gitdir\n"
+    result = await _write(_handler(tmp_path), f"{tmp_path}/sub/.git")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+
+
+@pytest.mark.asyncio
+async def test_symlink_into_git_hooks_is_refused(tmp_path) -> None:
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    os.symlink(tmp_path / ".git" / "hooks", tmp_path / "h")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/h/pre-commit")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert not (tmp_path / ".git" / "hooks" / "pre-commit").exists()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_name_symlinked_to_mcp_json_is_refused(tmp_path) -> None:
+    (tmp_path / ".mcp.json").write_text("{}")
+    os.symlink(tmp_path / ".mcp.json", tmp_path / "notes.json")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/notes.json")
+    assert result.is_error is True
+    assert (tmp_path / ".mcp.json").read_text() == "{}"
+
+
+@pytest.mark.asyncio
+async def test_granted_scope_lifts_the_code_execution_gate(tmp_path) -> None:
+    audit = _Audit()
+    ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
+    result = await _write(_handler(tmp_path), f"{tmp_path}/.mcp.json", ctx)
+    assert result.is_error is False, result.error
+    assert [(c["allowed"], c["protected"]) for c in audit.calls] == [(True, ".mcp.json")]
