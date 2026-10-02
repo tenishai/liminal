@@ -13,7 +13,7 @@ ruff check src tests       # CI runs this too
 
 Then: branch, commit with `git commit -s` (see [Developer Certificate of
 Origin](#developer-certificate-of-origin)), open a PR. Keep the suite green: CI
-runs pytest on Python 3.12 and 3.13 on every push and pull request.
+runs pytest on Python 3.12 and 3.13 on pushes to `main` and on pull requests that target `main`.
 
 Everyone taking part in this project is expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately, as
