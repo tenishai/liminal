@@ -47,11 +47,15 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   only in sovereign mode (a multi-issuer verifier plus a policy store).
   Single-cabal JWT mode checks the `dispatch` scope and the
   `liminal.allowed_handlers` list in the token's tool extras, not per-tool
-  scopes. `LIMINAL_AUTH_DISABLED=1` is a
-  supported mode for a single operator on localhost or a trusted network; with
-  it set there is no authentication and no handler allowlist, so anyone who can
-  reach the port can call any registered tool. That is open by design, so do
-  not expose it beyond the trust boundary;
+  scopes. A tool whose card sets `requires_operator` runs only for an
+  operator, in every mode: in single-cabal mode the verified token's
+  `cabal_scope` (or `scope`) must hold `operator`, in sovereign mode the
+  server-side grant must (a caller's own claim never counts), and with auth
+  disabled it never runs. `LIMINAL_AUTH_DISABLED=1` is a supported mode for a
+  single operator on localhost or a trusted network; with it set there is no
+  authentication and no handler allowlist, so anyone who can reach the port can
+  call any registered tool except operator-only ones. That is open by design,
+  so do not expose it beyond the trust boundary;
 - per-agent credentials: anything that lets one agent use another's
   credentials or tools;
 - policy: any way around a tool, file or scope restriction the operator set,
