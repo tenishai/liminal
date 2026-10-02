@@ -74,31 +74,27 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
         ".windsurfrules", ".clinerules",
         # Code execution (#110): these register MCP servers, i.e. commands an
         # agent starts on its next launch in the tree.
-        ".mcp.json", ".claude.json",
+        ".mcp.json", ".claude.json", ".git",
     }
 )
 # Anything beneath these directories. `.claude/settings.json` can register
 # hooks, which is code execution, not just instructions. `.cursor/` holds
-# rules, mcp.json and hooks.json.
-PROTECTED_DIRS: frozenset[str] = frozenset({".claude", ".cursor"})
-# Anything beneath a directory reached through this parent/child component
-# pair. `.git/hooks/*` runs on the next commit, checkout or merge. The pair is
-# matched, not `hooks` alone, so `.github/hooks.md` and `docs/hooks/` stay
-# writable.
-PROTECTED_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset({(".git", "hooks")})
-# Exact parent/child pairs naming a single file. `.git/config` can set
-# core.hooksPath, core.fsmonitor and core.sshCommand, all of which run commands.
+# rules, mcp.json and hooks.json. `.git` is protected whole: git loads hooks
+# and config from `.git/hooks`, `.git/config`, `.git/modules/*/{hooks,config}`,
+# and `.git/worktrees/*/commondir` can redirect a worktree to another common
+# dir. (`.git/config` sets core.hooksPath, core.fsmonitor and core.sshCommand,
+# all of which run commands.) `.github/` and `.gitignore` are different names
+# and stay writable.
+PROTECTED_DIRS: frozenset[str] = frozenset({".claude", ".cursor", ".git"})
+# Exact parent/child pairs naming a single file.
 PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
-    {
-        (".git", "config"),
-        (".github", "copilot-instructions.md"),
-    }
+    {(".github", "copilot-instructions.md")}
 )
 # Names above that are code-execution paths rather than instruction files; used
-# only to word the refusal.
-_EXEC_NAMES: frozenset[str] = frozenset(
-    {".mcp.json", ".claude.json", ".git/hooks/", ".git/config"}
-)
+# only to word the refusal. `.git` as a basename is the pointer file of a linked
+# worktree or submodule checkout (`gitdir: <path>`), which redirects git to
+# another gitdir and so to its config and hooks.
+_EXEC_NAMES: frozenset[str] = frozenset({".mcp.json", ".claude.json", ".git/", ".git"})
 
 # The one grant that lifts the gate. Checked against `ctx.granted_scopes`, which
 # only the server-side policy grant fills, so a token cannot grant it to itself.
@@ -499,9 +495,6 @@ def _protected_match(path: Path) -> str | None:
     for part in parts[:-1]:
         if part in PROTECTED_DIRS:
             return f"{part}/"
-    for pair in zip(parts[:-2], parts[1:-1], strict=True):
-        if pair in PROTECTED_DIR_PAIRS:
-            return f"{pair[0]}/{pair[1]}/"
     return None
 
 

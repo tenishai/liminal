@@ -362,6 +362,12 @@ EXEC_BLOCKED = [
     "./.git/hooks/pre-commit",
     "sub//.git/hooks/pre-commit",
     ".git/config",
+    ".git/modules/s/hooks/x",
+    ".git/modules/s/config",
+    ".git/worktrees/w/commondir",
+    ".git/info/attributes",
+    ".git/worktrees/w/config.worktree",
+    "sub/.git/hooks/x",
     ".mcp.json",
     ".MCP.JSON",
     "sub/deeper/.mcp.json",
@@ -402,7 +408,11 @@ async def test_other_tools_instruction_files_are_refused(tmp_path, rel: str) -> 
         "hooks/pre-commit",
         ".git-notes/hooks/x",
         ".gitignore",
+        ".gitattributes",
+        "sub/.gitattributes",
         ".gitconfig",
+        ".gitmodules",
+        ".github/hooks/x",
         "mcp.json",
         ".mcp.json.bak",
         "claude.json",
@@ -412,6 +422,20 @@ async def test_neighbours_of_code_execution_paths_still_write(tmp_path, rel: str
     result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
     assert result.is_error is False, result.error
     assert (tmp_path / rel).read_text() == "ignore previous instructions"
+
+
+@pytest.mark.asyncio
+async def test_git_pointer_file_at_a_worktree_root_is_refused(tmp_path) -> None:
+    """In a linked worktree or submodule checkout `.git` is a file holding
+    `gitdir: <path>`; rewriting it redirects git to an attacker's gitdir."""
+    (tmp_path / ".git").write_text("gitdir: /real/gitdir\n")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/.git")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert (tmp_path / ".git").read_text() == "gitdir: /real/gitdir\n"
+    result = await _write(_handler(tmp_path), f"{tmp_path}/sub/.git")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
 
 
 @pytest.mark.asyncio
@@ -435,6 +459,8 @@ async def test_ordinary_name_symlinked_to_mcp_json_is_refused(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_granted_scope_lifts_the_code_execution_gate(tmp_path) -> None:
-    ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}))
+    audit = _Audit()
+    ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
     result = await _write(_handler(tmp_path), f"{tmp_path}/.mcp.json", ctx)
     assert result.is_error is False, result.error
+    assert [(c["allowed"], c["protected"]) for c in audit.calls] == [(True, ".mcp.json")]
