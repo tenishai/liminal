@@ -50,7 +50,8 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   scopes. A tool whose card sets `requires_operator` runs only for an
   operator, in every mode: in single-cabal mode the verified token's
   `cabal_scope` (or `scope`) must hold `operator`, in sovereign mode the
-  server-side grant must (a caller's own claim never counts), and with auth
+  server-side grant must hold `operator` (or `admin:*`; a caller's own claim
+  never counts), and with auth
   disabled it never runs. `LIMINAL_AUTH_DISABLED=1` is a supported mode for a
   single operator on localhost or a trusted network; with it set there is no
   authentication and no handler allowlist, so anyone who can reach the port can
