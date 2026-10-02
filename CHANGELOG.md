@@ -1,0 +1,120 @@
+# Changelog
+
+All notable changes to liminal are documented here. Format loosely follows
+[Keep a Changelog](https://keepachangelog.com/); the project uses semantic versioning.
+Each line cites the pull request that made the change.
+
+## [Unreleased]
+
+### Added
+
+- **`LIMINAL_FILES_ALLOWED_PATHS` grants the `files` handler its allowlist without a JWT**
+  (tenishai/liminal#100). Auth-off mode has no token to carry a per-persona allowlist, so
+  every `files` call was refused. The variable is `os.pathsep`-separated and read once at
+  startup; unset still refuses everything, and a JWT claim can narrow it but not widen it.
+- **`liminal serve --admin-port` / `--admin-host` serve the admin surface on its own
+  listener**, and `create_app(mount_admin=False)` keeps `/admin/*` off the data-plane app
+  (tenishai/liminal#83).
+- **`admin_personas` on the trust registry's parent issuer** narrows who holds admin
+  standing, and `liminal serve --audience` sets the expected audience for a single-issuer
+  verifier (tenishai/liminal#83).
+- **Per-tool scopes for federated targets.** A target in `--targets` takes `required_scope`
+  and `tool_scopes`, authored by the operator and never read from the upstream's catalog.
+  Declaring `tool_scopes` denies any tool not named (tenishai/liminal#81).
+- **Untrusted federated results carry a marker.** Results from a target with
+  `trust = "untrusted"` are wrapped in a nonce-tagged envelope, hidden and bidi-control
+  Unicode is stripped, and the JSON-RPC result carries `_meta` keys `liminal/untrusted`,
+  `liminal/untrusted_source` and `liminal/untrusted_nonce` (tenishai/liminal#82).
+- **`/healthz` reports per-target status** with a `degraded` rollup when a target's
+  catalog fetch failed or its startup failed (tenishai/liminal#84, tenishai/liminal#109).
+- **Docs:** `docs/writing-a-handler.md` (tenishai/liminal#101), `SECURITY.md`
+  (tenishai/liminal#106), a copyright notice, `AGENTS.md` and a README that marks techne
+  as optional (tenishai/liminal#99).
+
+### Changed
+
+- **A tool-level failure now reaches the agent as text.** `ToolResult.failure(msg)` used to
+  serialise as `{"content": [], "isError": true}`; the message is now a text content block
+  (tenishai/liminal#70).
+- **Parent policy rows no longer answer on the data plane.** Admin standing moves to a
+  dedicated lookup used only by the admin gate. Parent rows seed per persona, defaulting to
+  `*` as before. A registry whose only issuer is the parent, with no `admin_personas`, is
+  refused at startup with exit 2 (tenishai/liminal#83).
+- **`initialize` is authenticated** like every other call to an upstream. An empty token
+  still sends no header (tenishai/liminal#84).
+- **Transport errors carry the cause once.** The client message is now
+  `<httpx class>: <cause>`, so agents no longer see "transport error:" twice. `str(exc)` on
+  `MCPTransportError` no longer starts with `transport error:` (tenishai/liminal#112).
+- **The techne floor and source pin move to 0.17.0** (tenishai/liminal#96).
+- **The Docker image builds from a sibling techne checkout or a package index.** Pass
+  `--build-context techne=../techne` or `--build-arg EXTRA_INDEX_URL=...`; with neither,
+  the build stops and says which (tenishai/liminal#117).
+
+### Fixed
+
+- **`tools/list` no longer shows tools the caller cannot call.** Discovery and `tools/call`
+  now share one scope check in sovereign mode (tenishai/liminal#112).
+- **The scope-gate deny audit row carries `detail.handler`**, matching the allowlist deny
+  (tenishai/liminal#112).
+- **A catalog fetch failure is loud** (error log and a degraded `/healthz`) instead of
+  leaving a target quietly serving zero tools (tenishai/liminal#84).
+- **Package metadata matches the tag.** `pyproject.toml` said 0.1.0 at tag v0.2.0, so
+  installs reported the wrong version. It now says 0.2.0, and
+  `tests/test_version_tags.py` fails when a reachable tag is newer than pyproject
+  (tenishai/liminal#112).
+- **Docs:** target `address` examples no longer end in `/mcp`, `design.md` has correction
+  notes and a section on the standalone auth-off trust boundary, and the README handler
+  example no longer subclasses `Handler` (tenishai/liminal#112).
+
+### Security
+
+- **A parent policy row could grant data-plane tool access to any persona** through the
+  wildcard fallback. It cannot now (tenishai/liminal#83).
+- **Upstream `Set-Cookie` no longer persists**, so a session set on one persona's call
+  cannot replay on another's (tenishai/liminal#84).
+- **A `service-token` dispatch whose credential did not resolve is refused** before
+  anything is dialed, instead of going out unauthenticated (tenishai/liminal#84).
+- **One hostile upstream schema could abort startup.** Schema inspection is now bounded in
+  depth and node count; a tool past either bound is reported as `unscannable-schema` and
+  dropped or flagged per the target's policy, and each target starts in isolation
+  (tenishai/liminal#109).
+- **`files.write` refuses agent-instruction files** (`CLAUDE.md`, `AGENTS.md`,
+  `.cursorrules`, `GEMINI.md`, anything under `.claude/`) unless the server-side grant
+  carries `files:protected_writes` (tenishai/liminal#109).
+- **The runtime image runs `apt-get upgrade`**, so base-image CVEs fixed upstream reach a
+  rebuild on a cached base (tenishai/liminal#92).
+
+## [0.2.0] — 2026-08-10
+
+### Added
+
+- **Per-tool scope enforcement**, with the scope map derived from handler capability cards
+  (tenishai/liminal#41, tenishai/liminal#43).
+- **A fail-closed secret guard** that refuses to persist secret-shaped values
+  (tenishai/liminal#51), with a fix for false positives on digit-free kebab slugs
+  (tenishai/liminal#53).
+- **`LIMINAL_MEMORY_DB`** sets the memory handler's database path for `liminal serve`
+  (tenishai/liminal#46).
+- **A `liminal serve` quickstart** in the README (tenishai/liminal#49).
+- **A draft proposal** for the MCP 2026-07-28 dual-era migration (tenishai/liminal#63).
+
+### Changed
+
+- **Project renamed from "limenal" to "liminal"**, the correct spelling
+  (tenishai/liminal#65). The `LIMENAL_*` environment variables became `LIMINAL_*`.
+
+### Fixed
+
+- **Strict MCP clients get spec-compliant JSON-RPC** (tenishai/liminal#47).
+- **The no-auth client sends no `Authorization` header**, and `create_app` config errors
+  exit 2 (tenishai/liminal#45).
+
+## [0.1.0] — 2026-07-10
+
+First tagged release. A handler protocol, registry and dispatcher behind an MCP HTTP
+server (`POST /mcp`) with JWT verification (RS256 pin, audience and scope checks, JWKS
+with multiple issuers). Built-in handlers: `scratchpad`, `files`, `web` (SSRF defence with
+a pinned-IP transport), `memory` (techne-backed) and `notify`. A sync and async MCP
+client, a credential resolver backed by Cabal Core, a server-side policy store with
+federation admin, federated HTTP targets from a declarative `--targets` file, and a
+generic MCP proxy handler. Licensed AGPL-3.0-or-later.
