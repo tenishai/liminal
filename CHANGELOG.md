@@ -58,6 +58,10 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **The README quickstart runs as written on a fresh Ubuntu machine** (tenishai/liminal#128).
+  `sudo apt update` precedes the `python3-venv` install, the non-dev install creates a
+  virtual environment first, and the health endpoint (`/healthz`) is named. Found by the
+  2026-10-02 clean-machine run (tenishai/agora#47).
 - **The Docker image no longer ships an empty `liminal/__init__.py`** (tenishai/liminal#127).
   The dependency-cache stub left setuptools' `build/` tree behind, so the real install
   reused it and the container crash-looped on `ImportError: cannot import name

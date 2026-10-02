@@ -50,7 +50,8 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 ## Quickstart (development)
 
 You need git and Python 3.12 or newer. On Debian and Ubuntu, also run
-`sudo apt install python3-venv`; without it `python3 -m venv` fails.
+`sudo apt update && sudo apt install python3-venv`; without it `python3 -m venv`
+fails.
 
 ```bash
 git clone https://github.com/tenishai/liminal.git && cd liminal
@@ -73,13 +74,15 @@ pip install -e ".[dev,memory]"
 
 The `memory` handler needs `techne`, which is not on a public index. To install
 without a sibling checkout (agents, other hosts, containers), pin the git source
-alongside the extra:
+alongside the extra, inside a virtual environment:
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-sources.txt ".[memory]"
 ```
 
-Dev/CI keep the editable sibling checkout above (`pip install -e ../techne`).
+If you work on techne and liminal together, install your techne checkout instead:
+`pip install -e ../techne`.
 
 The PyPI distribution is named `tenishai-liminal`; the import package and the CLI
 command are still `liminal`. To install a tagged release straight from git:
@@ -98,6 +101,7 @@ handlers register automatically next to liminal's own five.
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
+# health check: curl http://127.0.0.1:9100/healthz
 #
 # The `files` handler starts with an EMPTY allowlist and refuses every call
 # until you grant it something. In auth-off mode there is no JWT to carry a
