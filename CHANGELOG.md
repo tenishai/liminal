@@ -45,6 +45,12 @@ Each line cites the pull request that made the change.
 - **Transport errors carry the cause once.** The client message is now
   `<httpx class>: <cause>`, so agents no longer see "transport error:" twice. `str(exc)` on
   `MCPTransportError` no longer starts with `transport error:` (tenishai/liminal#112).
+- **The distribution is named `tenishai-liminal`** (was `liminal`). The bare names are
+  taken or open to squatting on PyPI. The import package (`liminal`) and the CLI command
+  (`liminal`) are unchanged. `liminal.__version__` now reads the new distribution's
+  metadata, and a pin such as `liminal>=0.2` becomes `tenishai-liminal>=0.2`
+  (tenishai/liminal#118). An existing editable install keeps the old `liminal`
+  distribution beside the new one; run `pip uninstall liminal` and reinstall.
 - **The techne floor and source pin move to 0.17.0** (tenishai/liminal#96).
 - **The Docker image builds from a sibling techne checkout or a package index.** Pass
   `--build-context techne=../techne` or `--build-arg EXTRA_INDEX_URL=...`; with neither,

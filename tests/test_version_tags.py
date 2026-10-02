@@ -2,7 +2,7 @@
 
 v0.2.0 was tagged by hand on the rename commit (#65) without bumping
 `version` in pyproject.toml, so every install from main or from the tag
-reported itself as 0.1.0, which a consumer pinning `liminal>=0.2` would reject.
+reported itself as 0.1.0, which a consumer pinning `tenishai-liminal>=0.2` would reject.
 There is no release workflow; tags are cut manually. This check fails when a
 `v*` tag reachable from HEAD is newer than pyproject's version.
 
