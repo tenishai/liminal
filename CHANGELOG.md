@@ -89,6 +89,9 @@ Each line cites the pull request that made the change.
   carries `files:protected_writes` (tenishai/liminal#109).
 - **The runtime image runs `apt-get upgrade`**, so base-image CVEs fixed upstream reach a
   rebuild on a cached base (tenishai/liminal#92).
+- **A test pins that single-cabal mode does not accept `admin:*` as operator.** Only a
+  token scope of `operator` passes the operator-only gate; a sovereign grant with `admin:*`
+  still does (tenishai/liminal#124).
 
 ## [0.2.0] — 2026-08-10
 
