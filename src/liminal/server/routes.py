@@ -41,7 +41,7 @@ from liminal.server.mcp_types import (
     make_success,
 )
 from liminal.server.policy import PolicyStore, ScopeGrant
-from liminal.server.scopes import DENY_SCOPE
+from liminal.server.scopes import DENY_SCOPE, OPERATOR_SCOPE
 from liminal.server.secret_guard import scan_tool_call
 from liminal.wire import to_spec_result_content as _to_spec_result_content
 
@@ -49,6 +49,17 @@ log = structlog.get_logger(__name__)
 
 
 PUBLIC_METHODS = {"initialize", "ping", "notifications/initialized"}
+
+
+def _token_scopes(claims: VerifiedClaims | None) -> list | None:
+    """The verified token's own scope list: `cabal_scope`, falling back to
+    `scope` so non-Cabal MCP clients (Claude Desktop, Cursor) work. Trusted
+    only in single-cabal mode, where the token's issuer is the policy
+    authority; never consult it when a grant is present."""
+    if claims is None:
+        return None
+    scope = claims.raw.get("cabal_scope") or claims.raw.get("scope")
+    return scope if isinstance(scope, list) else None
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -75,8 +86,8 @@ async def _authenticate(
         # Single-cabal: the one trusted cabal is also the policy authority, so
         # trust its token-embedded scope. Accept `scope` as a fallback for
         # `cabal_scope` so non-Cabal MCP clients (Claude Desktop, Cursor) work.
-        scope = claims.raw.get("cabal_scope") or claims.raw.get("scope")
-        if not isinstance(scope, list) or "dispatch" not in scope:
+        scope = _token_scopes(claims)
+        if scope is None or "dispatch" not in scope:
             raise AuthError("dispatch scope required")
         return claims, None
 
@@ -247,6 +258,8 @@ async def _handle_tools_list(
             continue
         if _missing_scope(request, grant, spec["name"]) is not None:
             continue
+        if _operator_refusal(request, claims, grant, spec["name"]) is not None:
+            continue
         adapted = {
             "name": spec["name"],
             "description": spec.get("description", ""),
@@ -277,6 +290,48 @@ def _missing_scope(
     if required and not grant.has_scope(required):
         return str(required)
     return None
+
+
+def _operator_refusal(
+    request: Request,
+    claims: VerifiedClaims | None,
+    grant: ScopeGrant | None,
+    tool_name: str,
+) -> str | None:
+    """Why `tool_name` is refused as operator-only, or None if it may run.
+
+    Runs in every mode, unlike `_missing_scope` (cabal#233):
+    - auth-off: refused. There is no verified identity to be an operator.
+    - sovereign (a grant is present): the GRANT must hold "operator" (admin:*
+      satisfies it, per ScopeGrant.has_scope). The caller's token claims are
+      ignored, so a foreign cabal cannot mint itself operator (liminal#22).
+    - single-cabal (no grant): the verified token's cabal_scope (fallback
+      `scope`) must hold "operator", alongside the "dispatch" auth requires.
+    Shared by tools/call (enforcement) and tools/list (discovery).
+    """
+    operator_only = getattr(request.app.state, "operator_only", frozenset())
+    if tool_name not in operator_only:
+        return None
+    if getattr(request.app.state, "auth_disabled", False):
+        return (
+            f"tool {tool_name!r} is operator-only and this server runs with "
+            "auth disabled (LIMINAL_AUTH_DISABLED), so no caller can prove "
+            "operator scope. Enable JWT auth to use it."
+        )
+    if grant is not None:
+        if grant.has_scope(OPERATOR_SCOPE):
+            return None
+        return (
+            f"tool {tool_name!r} is operator-only: the policy grant for this "
+            f"caller must hold scope {OPERATOR_SCOPE!r}"
+        )
+    scope = _token_scopes(claims)
+    if scope is not None and OPERATOR_SCOPE in scope:
+        return None
+    return (
+        f"tool {tool_name!r} is operator-only: the token's cabal_scope must "
+        f"hold {OPERATOR_SCOPE!r} as well as 'dispatch'"
+    )
 
 
 def _allowed_handlers_for(
@@ -418,6 +473,29 @@ async def _handle_tools_call(
                 code=ERROR_UNAUTHORIZED,
                 message=message,
             )
+
+    # Operator-only gate (cabal#233). Runs in every mode; see _operator_refusal.
+    operator_refusal = _operator_refusal(request, claims, grant, params.name)
+    if operator_refusal is not None:
+        if grant is not None:
+            store = getattr(request.app.state, "policy_store", None)
+            if store is not None:
+                await store.record_access(
+                    issuer=claims.issuer, persona=claims.identity,
+                    agent=claims.agent_name, allowed=False,
+                    detail={
+                        "handler": handler_name,
+                        "tool": params.name,
+                        "required_scope": OPERATOR_SCOPE,
+                    },
+                )
+        log.warning(
+            "operator_only.denied", tool=params.name,
+            identity=claims.identity, issuer=claims.issuer,
+        )
+        return make_error(
+            id=rpc_req.id, code=ERROR_UNAUTHORIZED, message=operator_refusal
+        )
 
     # Fail-closed pre-persist secret guard (liminal#50): scan the content of
     # write-path tools before dispatch so a real key can't be persisted into the

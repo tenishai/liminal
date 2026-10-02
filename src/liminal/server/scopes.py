@@ -13,3 +13,7 @@ from __future__ import annotations
 # deny-by-default gate, which is why the refusal message refuses to name it as
 # something to grant.
 DENY_SCOPE = "liminal:deny"
+
+# The scope an operator-only tool requires (a tool card's ``requires_operator``).
+# Matches cabal's own definition of an operator: "operator" in cabal_scope.
+OPERATOR_SCOPE = "operator"
