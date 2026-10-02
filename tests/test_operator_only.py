@@ -160,6 +160,17 @@ async def test_single_dispatch_only_refused_and_hidden(single) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("claim", ["cabal_scope", "scope"])
+async def test_single_admin_star_in_token_does_not_satisfy_operator(single, claim) -> None:
+    """Single-cabal checks the token for the literal "operator"; unlike a
+    sovereign grant (ScopeGrant.has_scope), admin:* does not stand in for it."""
+    client, key = single
+    tok = _mint(key, **{claim: ["dispatch", "admin:*"]})
+    _assert_operator_refused(await _call(client, tok, "ops.admin"))
+    assert await _listed(client, tok) == {"ops.open"}
+
+
+@pytest.mark.asyncio
 async def test_single_unflagged_tool_unaffected(single) -> None:
     client, key = single
     tok = _mint(key, cabal_scope=["dispatch"])
