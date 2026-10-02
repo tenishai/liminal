@@ -659,3 +659,40 @@ def test_no_documented_target_address_ends_in_mcp() -> None:
                 f"{path.relative_to(root)}: address {addr!r} would post to /mcp/mcp"
             )
     assert seen, "no documented `address = ...` examples found"
+
+
+# ---- liminal#129: an upstream's Mcp-Session-Id never rides other calls -------
+
+
+def _with_session(responder: Callable[[httpx.Request], httpx.Response]):
+    """Wrap a responder so initialize returns an Mcp-Session-Id, as GitHub's does."""
+    def respond(request: httpx.Request) -> httpx.Response:
+        resp = responder(request)
+        if b'"initialize"' in request.content:
+            resp.headers["Mcp-Session-Id"] = "sess-from-initialize"
+        return resp
+    return respond
+
+
+@pytest.mark.asyncio
+async def test_upstream_session_id_is_not_echoed_across_personas() -> None:
+    """HttpTarget's client is shared by every persona and must stay stateless
+    (liminal#76), so a session id from the base handshake never reaches a
+    persona's call. Pins AsyncMCPClient's use_session default at the place it
+    matters: flip that default and this test fails."""
+    captured: list[dict] = []
+    http = _client(_with_session(_responder()), captured=captured)
+    target = HttpTarget(
+        _http_spec(auth_method="service-token", credential_key="JIRA_TOKEN"),
+        http_client=http,
+    )
+    await target.startup()
+    try:
+        for persona in ("persona-a", "persona-b"):
+            ctx = Context(identity=persona, agent_name=persona,
+                          credentials={"JIRA_TOKEN": f"{persona}-token"})
+            await target.dispatch("search", {}, ctx)
+        assert len([c for c in captured if b"tools/call" in c["body"]]) == 2
+        assert all("mcp-session-id" not in c["headers"] for c in captured)
+    finally:
+        await target.shutdown()

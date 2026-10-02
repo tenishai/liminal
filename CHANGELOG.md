@@ -8,6 +8,17 @@ Each line cites the pull request that made the change.
 
 ### Added
 
+- **The MCP client reads Streamable-HTTP SSE responses** (tenishai/liminal#129). Both
+  clients send `Accept: application/json, text/event-stream` on every POST and, when a
+  server answers with `text/event-stream`, return the JSON-RPC message whose `id` matches
+  the request, stopping there rather than waiting for the stream to close. Plain JSON
+  servers are unaffected. This lets GitHub's hosted MCP server
+  (`https://api.githubcopilot.com/mcp`) be federated as an `http` target; it always
+  streams and rejects a JSON-only Accept with 400.
+- **`use_session=True` on either client keeps the server's `Mcp-Session-Id`** from
+  `initialize` and sends it on later requests (tenishai/liminal#129). It is off by
+  default and `HttpTarget` does not enable it, because its shared client must stay
+  stateless across personas (tenishai/liminal#76).
 - **`LIMINAL_FILES_ALLOWED_PATHS` grants the `files` handler its allowlist without a JWT**
   (tenishai/liminal#100). Auth-off mode has no token to carry a per-persona allowlist, so
   every `files` call was refused. The variable is `os.pathsep`-separated and read once at
@@ -58,6 +69,8 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **A JSON reply that is not an object is a clean `MCPTransportError`** in both clients,
+  instead of an `AttributeError` on `.get` (tenishai/liminal#129).
 - **The README quickstart runs as written on a fresh Ubuntu machine** (tenishai/liminal#128).
   `sudo apt update` precedes the `python3-venv` install, the non-dev install creates a
   virtual environment first, and the health endpoint (`/healthz`) is named. Found by the
@@ -84,6 +97,10 @@ Each line cites the pull request that made the change.
 
 ### Security
 
+- **The sync `MCPClient` now coerces an upstream error `code` like the async client**
+  (tenishai/liminal#129). It never received tenishai/liminal#82's guard, so a hostile
+  upstream could put arbitrary text in `code`. Both clients now share one response parser,
+  for plain JSON and SSE alike.
 - **A parent policy row could grant data-plane tool access to any persona** through the
   wildcard fallback. It cannot now (tenishai/liminal#83).
 - **Upstream `Set-Cookie` no longer persists**, so a session set on one persona's call
