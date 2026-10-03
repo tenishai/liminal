@@ -3,13 +3,13 @@ card: arch-card:liminal-handler-protocol
 updated: 2026-10-03
 anchor: src/liminal/protocol/handler.py sha=adfe378e757a7889f1a9a6f48983859fccb44296
 anchor: src/liminal/registry/discover.py sha=6a348939f6216d5d2bb6b94e9872a69b8ca4b7af
-anchor: src/liminal/protocol/card.py sha=f1fe47125cc56c1e138076bdda7140b33b5f6198
+anchor: src/liminal/protocol/card.py sha=9e018dcdfcd627b674cd1ee69848c03367ed3e3f
 anchor: src/liminal/protocol/context.py sha=5b7f5acd34f387424f37b19dbf51eff3f0c82bad
 ---
 # handler-protocol — the in-process extension surface
 
 WHAT / SEAM: `Handler` (typing.Protocol, runtime_checkable; protocol/handler.py): `tools() -> list[ToolSpec]` (sync), `capability_card() -> dict`, `async dispatch(name, payload, ctx: Context) -> ToolResult`. Optional `startup()`/`shutdown()` coroutines are called if present (target/inprocess.py). Structural: no base class needed.
-TYPES: ToolSpec(name, description, input_schema) and ToolResult(content, is_error, error; `.text/.json/.failure`) in protocol/tool.py, both pydantic `extra="allow"`. CapabilityCard (protocol/card.py): handler, description, tools[{name, description, required_scope, requires_operator}], activation (always|on_demand; only `always` is used), relevance_signals, credential_keys (documentation only, not enforced), labels, required_scope.
+TYPES: ToolSpec(name, description, input_schema) and ToolResult(content, is_error, error; `.text/.json/.failure`) in protocol/tool.py, both pydantic `extra="allow"`. CapabilityCard (protocol/card.py): handler, description, tools[{name, description, required_scope, requires_operator}], activation (always|on_demand; only `always` is used), credential_keys (documentation only, not enforced), labels, required_scope.
 Context (protocol/context.py): identity (persona), agent_name, credentials, issuer, extra (sandbox config), granted_scopes (server grant only), audit (hook; sovereign only).
 OPS / FLOW: registry/discover.py:discover_handlers scans entry-point group `liminal.handlers` → `ep.load()` → factory() → isinstance(Handler) → validate_card → Registry keyed by ENTRY-POINT NAME (not card.handler). create_app wraps each record as an InProcessTarget in the Multiplexer. Tool is exposed as `<ep-name>.<tool>`.
 INVARIANTS:

@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-policy
 updated: 2026-10-03
-anchor: src/liminal/server/policy.py sha=8d1c6df0b4e18aaefd638a39e836e54f640e00b8
+anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
 anchor: src/liminal/server/routes.py sha=221458c82d66576e9fd29841fe1739cf32e43c19
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
 anchor: src/liminal/server/app.py sha=806511d7180a5b74716cc405ad318b0304fc0937
@@ -20,6 +20,7 @@ OPS / FLOW (routes.py):
 RESOLUTION: data plane `resolve` = exact persona → (issuer,"*") → None, parent rows EXCLUDED on both legs (#73). Admin plane `resolve_parent` = parent rows only. FAIL-CLOSED.
 INVARIANTS:
 - Parent rows (`is_parent=1`, admin:*) are seeded at boot per `admin_personas`, immutable: grant/revoke raise ParentImmutable. WHY: "graduation does not orphan".
+- Opening a store whose `is_parent` rows name an issuer other than the configured parent (or any parent row when no parent issuer is configured) raises ParentIssuerDemoted, a ParentNarrowingConflict subclass, before anything is seeded (#87, #134); the CLI's ParentNarrowingConflict handler exits 2, and a new policy DB is required. WHY: the persona check compares within one issuer, so a demoted issuer's rows would otherwise keep answering `parents()` and the admin gate.
 - Dropping ANY previously seeded parent persona raises ParentNarrowingConflict (cli exit 2); new policy DB required. WHY: seeding is idempotent and rows immutable, so a narrowing would be a silent no-op leaving the dropped persona admin (#83). `"*"` in wanted = widening, allowed.
 - cli refuses a parent issuer with no `admin_personas`; `["*"]` is allowed with a warning.
 - MultiIssuerJWKSVerifier without a policy_store → ConfigError (app.py). Store + auth-disabled → warning, store inert.
