@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Callable, Iterator
+import socket
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 import httpx
 
 from liminal import __version__ as LIMINAL_VERSION
@@ -33,6 +36,15 @@ DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 # JSON-only Accept with 400).
 ACCEPT = "application/json, text/event-stream"
 SESSION_HEADER = "Mcp-Session-Id"
+
+# How long to keep reading an SSE response after its reply arrived, so the
+# chunked terminator is consumed and the connection goes back to the pool
+# (liminal#132). A server that ends the stream sends the terminator in the same
+# write as the reply or one segment behind it, so the drain normally finishes
+# within one round trip; 0.5 s clears a slow intercontinental RTT (~300 ms) with
+# room for scheduling. Against a server that holds the stream open it is pure
+# added latency per call, which is why it is small. 0 disables the drain.
+DEFAULT_SSE_DRAIN_TIMEOUT = 0.5
 
 
 class MCPError(RuntimeError):
@@ -172,6 +184,67 @@ def _json_body(resp: httpx.Response) -> dict[str, Any]:
     return body
 
 
+def _drain(resp: httpx.Response, lines: Iterator[str], seconds: float) -> None:
+    """Read the rest of an SSE response for at most ``seconds``.
+
+    httpcore pools a connection only when the response was read to its end, and
+    closes it otherwise, so a drain that finishes lets the next request reuse
+    the connection and one that does not can never hand back a half-read one.
+
+    A blocking read cannot be cancelled, so a timer shuts the socket down to
+    end it; the read then fails and httpcore closes the connection. If the
+    timer fires just as the drain finishes, the connection is pooled with a
+    dead socket, and httpcore's idle check discards it before reuse. A
+    transport without a socket (httpx.MockTransport) has no pool, so there is
+    nothing to drain for.
+    """
+    stream = resp.extensions.get("network_stream")
+    sock = stream.get_extra_info("socket") if stream is not None else None
+    if seconds <= 0 or sock is None:
+        return
+    lock = threading.Lock()
+    finished = False
+
+    def _cut() -> None:
+        with lock:
+            if not finished:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    timer = threading.Timer(seconds, _cut)
+    timer.daemon = True
+    timer.start()
+    try:
+        for _ in lines:
+            pass
+    except httpx.HTTPError:
+        pass  # cut by the timer or the server; the reply is already in hand
+    finally:
+        with lock:
+            finished = True
+        timer.cancel()
+
+
+async def _adrain(resp: httpx.Response, lines: AsyncIterator[str], seconds: float) -> None:
+    """The async twin of ``_drain``: here the read itself can be cancelled.
+
+    Cancelling mid-read makes httpcore close the connection; the explicit close
+    after a timeout makes that independent of where the cancel landed.
+    """
+    if seconds <= 0:
+        return
+    with anyio.move_on_after(seconds) as scope:
+        try:
+            async for _ in lines:
+                pass
+        except httpx.HTTPError:
+            pass  # the reply is already in hand
+    if scope.cancelled_caught:
+        await resp.aclose()
+
+
 def _no_sse_response(request_id: int) -> MCPTransportError:
     return MCPTransportError(f"event stream ended without a response to request {request_id}")
 
@@ -276,6 +349,10 @@ class AsyncMCPClient(_RequestHeaders):
         static_headers: headers sent on every request, including the handshake
             and catalog fetch. Callers validate them (``TargetSpec`` refuses
             reserved names); the client's own headers override a collision.
+        sse_drain_timeout: seconds to keep reading an SSE response after its
+            reply so the connection can be reused (liminal#132). If the server
+            has not ended the stream by then, the connection is closed instead.
+            0 stops at the reply and never reuses the connection.
     """
 
     def __init__(
@@ -289,6 +366,7 @@ class AsyncMCPClient(_RequestHeaders):
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         use_session: bool = False,
         static_headers: dict[str, str] | None = None,
+        sse_drain_timeout: float = DEFAULT_SSE_DRAIN_TIMEOUT,
     ) -> None:
         self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
@@ -296,6 +374,7 @@ class AsyncMCPClient(_RequestHeaders):
         self._owned_client = http_client is None
         self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(30.0))
         self._use_session = use_session
+        self._sse_drain_timeout = sse_drain_timeout
         self._session_id: str | None = None
         self._client_name = client_name
         self._client_version = client_version
@@ -422,14 +501,17 @@ class AsyncMCPClient(_RequestHeaders):
                     raise _server_error(resp)
                 self._keep_session(method, resp)
                 if _is_sse(resp):
-                    # Read only until our response arrives: a server may keep
-                    # the stream open afterwards.
+                    # Stop parsing at our response, since a server may keep
+                    # the stream open afterwards, then drain briefly so the
+                    # connection can be reused.
                     body = None
                     parser = _SSEParser()
-                    async for line in resp.aiter_lines():
+                    lines = resp.aiter_lines()
+                    async for line in lines:
                         for data in parser.feed(line):
                             body = body or _response_for(data, rid)
                         if body is not None:
+                            await _adrain(resp, lines, self._sse_drain_timeout)
                             break
                     else:
                         for data in parser.close():
@@ -474,6 +556,7 @@ class MCPClient(_RequestHeaders):
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         use_session: bool = False,
         static_headers: dict[str, str] | None = None,
+        sse_drain_timeout: float = DEFAULT_SSE_DRAIN_TIMEOUT,
     ) -> None:
         self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
@@ -481,6 +564,7 @@ class MCPClient(_RequestHeaders):
         self._owned_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(30.0))
         self._use_session = use_session
+        self._sse_drain_timeout = sse_drain_timeout
         self._session_id: str | None = None
         self._client_name = client_name
         self._client_version = client_version
@@ -575,10 +659,12 @@ class MCPClient(_RequestHeaders):
                 if _is_sse(resp):
                     body = None
                     parser = _SSEParser()
-                    for line in resp.iter_lines():
+                    lines = resp.iter_lines()
+                    for line in lines:
                         for data in parser.feed(line):
                             body = body or _response_for(data, rid)
                         if body is not None:
+                            _drain(resp, lines, self._sse_drain_timeout)
                             break
                     else:
                         for data in parser.close():
