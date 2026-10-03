@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog.testing
 
 from liminal.server.credentials import (
     DEFAULT_CACHE_TTL_SECONDS,
@@ -228,6 +229,51 @@ async def test_missing_credentials_key_returns_empty_dict() -> None:
     resolver = _make_resolver(handler)
     creds = await resolver.fetch("rook", "slack")
     assert creds == {}
+    await resolver.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"credentials": {}},
+        {"credentials": None},
+        {"credentials": []},
+        {"persona": "rook", "handler": "slack"},
+    ],
+    ids=["empty-dict", "null", "empty-list", "missing-key"],
+)
+async def test_empty_successful_answer_is_not_cached(body: dict) -> None:
+    """An empty 200 is likely "not provisioned yet"; caching it would hide
+    a secret added later for the full TTL. Every call re-fetches."""
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(200, json=body)
+
+    resolver = _make_resolver(handler)
+    assert await resolver.fetch("rook", "slack") == {}
+    assert resolver.cache_size() == 0
+    assert await resolver.fetch("rook", "slack") == {}
+    assert call_count["n"] == 2
+    await resolver.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_object_body_is_wrong_shape_not_cached() -> None:
+    """A 200 whose body is a JSON array takes the wrong-shape path: {}
+    returned, a warning logged, nothing cached, no AttributeError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"credentials": {"X": "y"}}])
+
+    resolver = _make_resolver(handler)
+    with structlog.testing.capture_logs() as logs:
+        creds = await resolver.fetch("rook", "slack")
+    assert creds == {}
+    assert resolver.cache_size() == 0
+    assert [e["event"] for e in logs] == ["credentials.fetch_wrong_shape"]
     await resolver.aclose()
 
 

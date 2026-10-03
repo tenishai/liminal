@@ -74,6 +74,11 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **The credential resolver no longer caches an empty answer** (tenishai/liminal#140,
+  closes tenishai/liminal#139). A 200 whose `credentials` is empty, null or missing is
+  returned uncached, so a secret added later is seen on the next call; a body that is not
+  a JSON object now returns `{}` as a wrong-shape answer instead of raising
+  `AttributeError`.
 - **A JSON reply that is not an object is a clean `MCPTransportError`** in both clients,
   instead of an `AttributeError` on `.get` (tenishai/liminal#129).
 - **The README quickstart runs as written on a fresh Ubuntu machine** (tenishai/liminal#128).
