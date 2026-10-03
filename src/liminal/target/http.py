@@ -57,7 +57,13 @@ from liminal.client.mcp import (
 )
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
-from liminal.target.config import TargetConfigError, TargetSpec
+from liminal.target.config import (
+    HEADER_CORRELATION_ID,
+    HEADER_ISSUER,
+    HEADER_PERSONA,
+    TargetConfigError,
+    TargetSpec,
+)
 from liminal.target.inspect import (
     UnsanitizableResult,
     frame_untrusted_result,
@@ -67,10 +73,8 @@ from liminal.target.inspect import (
 
 log = structlog.get_logger(__name__)
 
-# Per-call header names (config — not magic strings inline).
-HEADER_PERSONA = "x-liminal-persona"
-HEADER_ISSUER = "x-liminal-issuer"
-HEADER_CORRELATION_ID = "x-correlation-id"
+# Per-call header names live in target.config (imported above) so config
+# validation can reserve them.
 CORRELATION_ID_KEY = "correlation_id"
 
 
@@ -240,6 +244,7 @@ class HttpTarget(Target):
             token_provider=_base_token_provider,
             http_client=self._http_client,
             client_name=self.spec.client_name,
+            static_headers=self.spec.headers,
         )
 
         await self._refresh_tools_once(initialize=True)

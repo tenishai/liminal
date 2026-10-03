@@ -8,6 +8,12 @@ Each line cites the pull request that made the change.
 
 ### Added
 
+- **`http` targets accept a static `headers` table in `targets.toml`** (tenishai/liminal#135, closes tenishai/liminal#130),
+  for example `X-MCP-Readonly = "true"` for GitHub's hosted MCP server. The headers go on
+  `initialize`, `tools/list` and `tools/call`. Config load refuses `Authorization`,
+  `Mcp-Session-Id`, `Accept`, `Content-Type` and liminal's identity headers
+  (`X-Liminal-Persona`, `X-Liminal-Issuer`, `X-Correlation-Id`) in any case, and refuses
+  `headers` on a `stdio` target.
 - **The MCP client reads Streamable-HTTP SSE responses** (tenishai/liminal#129). Both
   clients send `Accept: application/json, text/event-stream` on every POST and, when a
   server answers with `text/event-stream`, return the JSON-RPC message whose `id` matches

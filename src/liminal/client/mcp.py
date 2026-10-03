@@ -229,6 +229,7 @@ class _RequestHeaders:
     _token: Callable[[], str]
     _use_session: bool
     _session_id: str | None
+    _static_headers: dict[str, str]
 
     def _headers(self, auth: bool) -> dict[str, str]:
         headers = _base_headers()
@@ -236,7 +237,17 @@ class _RequestHeaders:
             headers.update(_auth_header(self._token()))
         if self._session_id:
             headers[SESSION_HEADER] = self._session_id
-        return headers
+        # The headers the client owns always win. Header names are
+        # case-insensitive, so a static header is dropped when any client
+        # header matches it in another case; a dict merge would keep both.
+        # Two static names equal in any case collapse to the first one.
+        owned = {k.lower() for k in headers}
+        static: dict[str, str] = {}
+        for k, v in self._static_headers.items():
+            if k.lower() not in owned:
+                owned.add(k.lower())
+                static[k] = v
+        return {**static, **headers}
 
     def _keep_session(self, method: str, resp: httpx.Response) -> None:
         if self._use_session and method == "initialize" and resp.headers.get(SESSION_HEADER):
@@ -262,6 +273,9 @@ class AsyncMCPClient(_RequestHeaders):
             a client shared across callers must stay stateless (liminal#76
             blocks cookies for the same reason), so only enable it when every
             call on this client carries the same credential.
+        static_headers: headers sent on every request, including the handshake
+            and catalog fetch. Callers validate them (``TargetSpec`` refuses
+            reserved names); the client's own headers override a collision.
     """
 
     def __init__(
@@ -274,7 +288,9 @@ class AsyncMCPClient(_RequestHeaders):
         client_version: str = LIMINAL_VERSION,
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         use_session: bool = False,
+        static_headers: dict[str, str] | None = None,
     ) -> None:
+        self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
         self._owned_client = http_client is None
@@ -457,7 +473,9 @@ class MCPClient(_RequestHeaders):
         client_version: str = LIMINAL_VERSION,
         protocol_version: str = DEFAULT_PROTOCOL_VERSION,
         use_session: bool = False,
+        static_headers: dict[str, str] | None = None,
     ) -> None:
+        self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
         self._owned_client = http_client is None

@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
+from liminal.client.mcp import AsyncMCPClient
 from liminal.protocol import Context, ToolSpec
 from liminal.target import (
     HttpTarget,
@@ -533,6 +534,109 @@ def test_config_stdio_rejects_service_token() -> None:
             name="x", transport="stdio", command=("run",),
             auth_method="service-token", credential_key="K",
         ).validate()
+
+
+# ---- static headers (liminal#130) ------------------------------------------
+
+
+def test_config_accepts_static_headers() -> None:
+    spec = _http_spec(headers={"X-MCP-Readonly": "true", "X-MCP-Toolsets": "repos"})
+    spec.validate()
+    assert spec.headers["X-MCP-Readonly"] == "true"
+
+
+@pytest.mark.parametrize("name", [
+    "Authorization", "authorization", "AUTHORIZATION",
+    "X-Liminal-Persona", "x-liminal-persona",
+    "X-Liminal-Issuer", "x-LIMINAL-issuer",
+    "X-Correlation-Id", "x-correlation-id",
+    "Mcp-Session-Id", "MCP-SESSION-ID",
+    "Accept", "ACCEPT",
+    "Content-Type", "content-type",
+])
+def test_config_refuses_reserved_header(name: str) -> None:
+    with pytest.raises(TargetConfigError, match="headers may not set"):
+        _http_spec(headers={name: "x"}).validate()
+
+
+def test_config_refuses_non_string_header_value() -> None:
+    with pytest.raises(TargetConfigError, match="must be a string"):
+        _http_spec(headers={"X-MCP-Readonly": True}).validate()
+
+
+def test_config_refuses_headers_on_stdio() -> None:
+    with pytest.raises(TargetConfigError, match="stdio targets cannot set headers"):
+        TargetSpec(
+            name="x", transport="stdio", command=("run",),
+            headers={"X-MCP-Readonly": "true"},
+        ).validate()
+
+
+@pytest.mark.asyncio
+async def test_static_headers_sent_on_initialize_list_and_call() -> None:
+    captured: list[dict] = []
+    http = _client(_responder(), captured=captured)
+    target = HttpTarget(
+        _http_spec(headers={"X-MCP-Readonly": "true"}), http_client=http
+    )
+    await target.startup()
+    try:
+        await target.dispatch(
+            "search", {}, Context(identity="rook", agent_name="a", credentials={})
+        )
+    finally:
+        await target.shutdown()
+    for method in (b"initialize", b"tools/list", b"tools/call"):
+        req = next(c for c in captured if method in c["body"])
+        assert req["headers"].get("x-mcp-readonly") == "true", method
+
+
+def test_config_refuses_headers_differing_only_by_case() -> None:
+    with pytest.raises(TargetConfigError, match="same header"):
+        _http_spec(headers={"X-A": "1", "x-a": "2"}).validate()
+
+
+def test_client_sends_a_static_header_once_across_cases() -> None:
+    client = AsyncMCPClient(
+        "http://upstream.test",
+        token_provider=lambda: "t",
+        static_headers={"X-A": "1", "x-a": "2"},
+    )
+    headers = client._headers(auth=True)
+    assert [k for k in headers if k.lower() == "x-a"] == ["X-A"]
+    assert headers["X-A"] == "1"
+
+
+def test_static_headers_never_displace_client_headers_in_any_case() -> None:
+    # A direct caller can bypass TargetSpec.validate(); the client itself must
+    # still keep its own headers, and send each name once.
+    client = AsyncMCPClient(
+        "http://upstream.test",
+        token_provider=lambda: "t",
+        static_headers={"accept": "static", "CONTENT-TYPE": "static", "X-MCP-Readonly": "true"},
+    )
+    headers = client._headers(auth=True)
+    lowered = [k.lower() for k in headers]
+    assert len(lowered) == len(set(lowered)), headers
+    assert headers["Content-Type"] == "application/json"
+    assert "text/event-stream" in headers["Accept"]
+    assert headers["X-MCP-Readonly"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_static_headers_leave_client_headers_intact() -> None:
+    captured: list[dict] = []
+    http = _client(_responder(), captured=captured)
+    target = HttpTarget(
+        _http_spec(headers={"X-MCP-Readonly": "true"}), http_client=http
+    )
+    await target.startup()
+    try:
+        call = next(c for c in captured if b"tools/list" in c["body"])
+        assert call["headers"]["content-type"] == "application/json"
+        assert "text/event-stream" in call["headers"]["accept"]
+    finally:
+        await target.shutdown()
 
 
 # ---- build_http_targets (collision + validation) --------------------------

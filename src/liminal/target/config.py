@@ -20,6 +20,9 @@ One ``TargetSpec`` describes one federated target:
     "create_issue" = "jira:write"
     "search" = "jira:read"
 
+    [target.headers]             # static request headers (http only, liminal#130)
+    X-MCP-Readonly = "true"
+
 Validation is loud (``TargetConfigError``, a ``ValueError``) — No Silent
 Failures. In particular a ``stdio`` target that asks for per-request identity
 (``identity="forward"`` or ``auth_method="service-token"``) is rejected: stdio
@@ -43,6 +46,26 @@ _TRUSTS = frozenset(get_args(Trust))
 _ON_UNTRUSTED = frozenset(get_args(OnUntrusted))
 _IDENTITIES = frozenset(get_args(Identity))
 _AUTH_METHODS = frozenset(get_args(AuthMethod))
+
+# Header names liminal sets itself (lowercase; names are case-insensitive).
+# Per-call identity headers (HttpTarget) -- defined here, not in http.py, so
+# validation can see them without a circular import.
+HEADER_PERSONA = "x-liminal-persona"
+HEADER_ISSUER = "x-liminal-issuer"
+HEADER_CORRELATION_ID = "x-correlation-id"
+
+# A static `headers` table may not set any of these (liminal#130): credentials,
+# forwarded identity, the session id, and the content negotiation the MCP client
+# owns. Mirrors liminal.client.mcp (_base_headers, SESSION_HEADER, Authorization).
+RESERVED_HEADERS = frozenset({
+    "authorization",
+    HEADER_PERSONA,
+    HEADER_ISSUER,
+    HEADER_CORRELATION_ID,
+    "mcp-session-id",
+    "accept",
+    "content-type",
+})
 
 
 class TargetConfigError(ValueError):
@@ -77,6 +100,11 @@ class TargetSpec:
         timeout_seconds: Per-call timeout for forwarded requests.
         refresh_tools_interval_seconds: Background catalog re-fetch cadence.
             ``0`` disables periodic refresh (still fetched once at startup).
+        headers: Static request headers sent on every call to this target
+            (``http`` only), e.g. ``{"X-MCP-Readonly": "true"}``. Names are
+            case-insensitive; ``Authorization`` and every header liminal sets
+            itself (``RESERVED_HEADERS``) are refused so a config can't
+            override per-call credentials or forwarded identity.
         client_name: Advertised in the upstream ``initialize`` handshake.
         required_scope: The sovereign scope a grant must hold to invoke ANY
             tool on this target. ``None`` = no target-level gate. This is the
@@ -117,6 +145,7 @@ class TargetSpec:
     client_name: str = "liminal-target"
     required_scope: str | None = None
     tool_scopes: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
 
     def validate(self) -> None:
         """Raise ``TargetConfigError`` on any invalid combination."""
@@ -194,6 +223,39 @@ class TargetSpec:
                     f"non-empty scope string, got {scope!r}"
                 )
 
+        if not isinstance(self.headers, dict):
+            raise TargetConfigError(
+                f"target {self.name!r}: headers must be a table mapping header "
+                f"name -> value, got {type(self.headers).__name__!r}"
+            )
+        seen_headers: dict[str, str] = {}
+        for hname, hvalue in self.headers.items():
+            if not isinstance(hname, str) or not hname.strip():
+                raise TargetConfigError(
+                    f"target {self.name!r}: headers has an empty/non-string "
+                    f"header name ({hname!r})"
+                )
+            if not isinstance(hvalue, str):
+                raise TargetConfigError(
+                    f"target {self.name!r}: headers[{hname!r}] must be a string, "
+                    f"got {type(hvalue).__name__!r}"
+                )
+            folded = hname.strip().lower()
+            if folded in seen_headers:
+                raise TargetConfigError(
+                    f"target {self.name!r}: headers names {seen_headers[folded]!r} "
+                    f"and {hname!r} are the same header (names are "
+                    "case-insensitive); declare it once"
+                )
+            seen_headers[folded] = hname
+            if folded in RESERVED_HEADERS:
+                raise TargetConfigError(
+                    f"target {self.name!r}: headers may not set {hname!r} — "
+                    "liminal owns credentials, forwarded identity, the session "
+                    f"id and content negotiation (reserved: "
+                    f"{sorted(RESERVED_HEADERS)})"
+                )
+
         if self.transport == "http":
             if not self.address:
                 raise TargetConfigError(
@@ -203,6 +265,12 @@ class TargetSpec:
             if not self.command:
                 raise TargetConfigError(
                     f"target {self.name!r}: stdio transport requires a command"
+                )
+            if self.headers:
+                raise TargetConfigError(
+                    f"target {self.name!r}: stdio targets cannot set headers — "
+                    "there is no HTTP request to carry them. Use "
+                    "transport='http'."
                 )
             # Hard constraint (#13): stdio children discard per-request headers,
             # so they cannot carry per-request identity. Reject loudly rather

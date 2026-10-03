@@ -343,3 +343,27 @@ def test_main_returns_2_for_stdio_target(tmp_path, monkeypatch) -> None:
         'config_version = 1\n\n[[target]]\nname = "pdf"\ntransport = "stdio"\ncommand = ["npx", "pdf-mcp"]\n',
     )
     assert main(["serve", "--targets", path]) == 2
+
+
+# ---------------------------------------------------------------------------
+# static headers (liminal#130)
+# ---------------------------------------------------------------------------
+
+
+def test_toml_headers_table_loads(tmp_path) -> None:
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[target]]\nname = "gh"\naddress = "https://gh.example"\n\n'
+        '[target.headers]\nX-MCP-Readonly = "true"\n',
+    )
+    assert _load_targets_file(path)[0].headers == {"X-MCP-Readonly": "true"}
+
+
+def test_toml_reserved_header_is_refused(tmp_path) -> None:
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[target]]\nname = "gh"\naddress = "https://gh.example"\n\n'
+        '[target.headers]\nauthorization = "Bearer x"\n',
+    )
+    with pytest.raises(ValueError, match="headers may not set"):
+        _load_targets_file(path)
