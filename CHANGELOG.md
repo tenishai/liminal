@@ -128,6 +128,14 @@ Each line cites the pull request that made the change.
 - **`files.write` refuses agent-instruction files** (`CLAUDE.md`, `AGENTS.md`,
   `.cursorrules`, `GEMINI.md`, anything under `.claude/`) unless the server-side grant
   carries `files:protected_writes` (tenishai/liminal#109).
+- **`files.write` refuses more protected paths and any hard-linked file** without
+  `files:protected_writes` (tenishai/liminal#137, closes tenishai/liminal#110): `.gemini/`, `.vscode/mcp.json`,
+  `.github/instructions/`, `.clinerules/`, `.cline/rules/`, `.windsurf/rules/`,
+  `.devin/rules/`, `.roo/`, `.roorules` and `.roorules-*`. A regular file with more than one
+  link is refused because its other names cannot be checked; this holds when the extra link
+  exists at the check, and a link made after the open-time re-check and before the write
+  ends is not caught. `LIMINAL_FILES_PROTECTED_PATTERNS`
+  adds operator fnmatch patterns to the built-in set; it cannot remove one.
 - **The runtime image runs `apt-get upgrade`**, so base-image CVEs fixed upstream reach a
   rebuild on a cached base (tenishai/liminal#92).
 - **A test pins that single-cabal mode does not accept `admin:*` as operator.** Only a
