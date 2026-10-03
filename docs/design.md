@@ -354,6 +354,17 @@ trust       = "trusted"
 on_untrusted = "strip"      # only matters when trust = "untrusted"
 identity    = "forward"     # forward caller persona as x-liminal-persona header
 
+# Static request headers (http only, liminal#130). GitHub's hosted MCP server
+# reads X-MCP-Readonly to restrict itself server-side.
+[[target]]
+name         = "github-readonly"
+address      = "https://api.githubcopilot.com"
+auth_method  = "bearer"
+bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
+
+[target.headers]
+X-MCP-Readonly = "true"
+
 # Scope-gated target, DENY-BY-DEFAULT (liminal#78).
 # NOTE there is no target-level `required_scope` here. That is deliberate --
 # see the precedence note below; adding one would DISABLE deny-by-default.
@@ -403,6 +414,7 @@ required_scope = "confluence:use"
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
 | `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
 | `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. Declaring it makes the target deny-by-default **only when no `required_scope` is set** — see precedence below. |
+| `headers` | no | `{}` | Table of static request headers (http only; a `stdio` target with `headers` is refused). Sent on every call to the target: `initialize`, `tools/list` and `tools/call`. Values must be strings. Names are case-insensitive, and the config is refused if two names differ only by case or if one is `Authorization`, `Mcp-Session-Id`, `Accept`, `Content-Type`, `X-Liminal-Persona`, `X-Liminal-Issuer` or `X-Correlation-Id`: liminal owns these. It sets them per call, or may set them later in the session (`Authorization` when the target authenticates; `Mcp-Session-Id` is the client's to echo after `initialize`, which `HttpTarget` leaves off, so a target config must not set it either). |
 
 ### Version handling
 
