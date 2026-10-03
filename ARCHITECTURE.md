@@ -1,13 +1,13 @@
 ---
 card: repo-card:liminal
 updated: 2026-10-03
-anchor: pyproject.toml sha=a567ddf9a9b25c710591fae721d0149dee32e73d
+anchor: pyproject.toml sha=f25431b6de4218bbdcaa3942644eb32b13a7e3b4
 anchor: src/liminal/server/routes.py sha=b0af5e275de3e8c318d1326211812aa7fd01cbe8
 ---
 # liminal — repo card
 
 WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal. The PyPI-style distribution name is `tenishai-liminal` (pyproject `name`; `liminal.__version__` reads it); the import package and CLI stay `liminal`.
-STATE: main, v0.2.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, parent-issuer demotion refusal #87). pyproject is still 0.2.0; CHANGELOG [Unreleased] holds the later changes. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
+STATE: main, v0.3.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, parent-issuer demotion refusal #87). CHANGELOG [0.3.0] describes this release; later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
 STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = `techne>=0.18.0` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree; the Dockerfile also pins TECHNE_WHEEL_SHA256, and scripts/check-techne-sibling.sh compares commits, run before a sibling-checkout build). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
 - CLI `liminal` → src/liminal/cli.py:main (`version`, `list-handlers [--cards]`, `serve`)

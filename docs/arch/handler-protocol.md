@@ -2,7 +2,7 @@
 card: arch-card:liminal-handler-protocol
 updated: 2026-10-03
 anchor: src/liminal/protocol/handler.py sha=adfe378e757a7889f1a9a6f48983859fccb44296
-anchor: src/liminal/registry/discover.py sha=6a348939f6216d5d2bb6b94e9872a69b8ca4b7af
+anchor: src/liminal/registry/discover.py sha=86f56acb6ddbc4bced63386de8d0f2ddb97d8579
 anchor: src/liminal/protocol/card.py sha=9e018dcdfcd627b674cd1ee69848c03367ed3e3f
 anchor: src/liminal/protocol/context.py sha=5b7f5acd34f387424f37b19dbf51eff3f0c82bad
 ---

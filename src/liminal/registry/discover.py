@@ -86,8 +86,9 @@ def discover_handlers(
     """Scan the entry-point group; instantiate handlers + validate cards.
 
     `only` filters discovery to a specific set of entry-point names. Useful
-    for tests and for the operator's `toolset.yaml` flow which can disable
-    specific handlers per persona.
+    for tests. (A per-persona `toolset.yaml` was proposed in design.md but is
+    not built; per-caller filtering is `allowed_handlers`, applied in
+    routes.py.)
     """
     registry = Registry()
     try:

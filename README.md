@@ -121,6 +121,9 @@ straight from git (this needs access to `tenishai/liminal` until it is public):
 pip install "tenishai-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
 ```
 
+`v0.3.0` is the first tag that builds `tenishai-liminal`; `v0.2.0` builds the old `liminal`
+distribution and `v0.1.0` builds `limenal`.
+
 ## Run the gateway (`liminal serve`)
 
 Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal

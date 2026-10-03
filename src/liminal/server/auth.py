@@ -127,7 +127,7 @@ class URLJWKSVerifier:
         log.info("auth.jwks.fetch", url=self.jwks_url)
         # Fail closed: a JWKS endpoint outage becomes an AuthError (JSON-RPC
         # -32001 at the route) rather than an httpx.HTTPStatusError that would surface
-        # as a 500 (routes._authenticate only catches AuthError).
+        # as a 500 (the route only catches AuthError).
         try:
             if self._client is not None:
                 resp = await self._client.get(self.jwks_url)
@@ -288,8 +288,9 @@ class MultiIssuerJWKSVerifier:
     cache + kid-miss re-fetch and one issuer's JWKS outage only denies that
     issuer's callers). Tests inject `StaticKeySetVerifier`s.
 
-    `parents` carries the issuers with guardian standing — used by the admin
-    plane to reject `admin/*` from non-parent issuers before touching policy.
+    `parents` carries the issuers with guardian standing. The admin plane does
+    not read it: its gate asks the policy store's `parents()` (admin.py), which
+    the store reconciles against the configured parent at startup (liminal#87).
     """
 
     registry: dict[str, JWTVerifier]
