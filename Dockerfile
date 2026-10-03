@@ -12,6 +12,19 @@
 # someone else (0.0.2 as of 2026-10-01); with the index as an *extra* index,
 # pip would take whichever index offers the highest version, and a later
 # release there would land in this image.
+# From the index, techne is pinned to one wheel by version AND sha256
+# (TECHNE_VERSION, TECHNE_WHEEL_SHA256). Anything with write access to the
+# index can publish a file under a version number, so the version alone names
+# nothing: on 2026-10-02 the tenish index's techne 0.18.0 turned out to be a
+# build from before the v0.18.0 tag. When this step runs, a wheel whose hash
+# does not match stops the build. A warm build cache can skip the step and
+# reuse the layer an earlier run built, so the check runs on a cold build or
+# after the args change. Moving to a new techne means changing both args
+# together, to a wheel built from that version's tag, along with
+# requirements-sources.txt and pyproject.toml's `memory` floor.
+# tests/test_techne_pin.py fails when the version, the requirements pin and the
+# floor disagree; it checks only that the hash is a sha256, so a stale hash is
+# caught when the image is built, not by the tests.
 # The arg is not called PIP_EXTRA_INDEX_URL on purpose: pip reads that name
 # from the environment, and a build ARG is environment for every later RUN of
 # the stage, so the second install would stop to ask for a password.
@@ -42,6 +55,15 @@ WORKDIR /build
 COPY --from=techne / /build/techne
 ARG EXTRA_INDEX_URL=""
 ARG AR_TOKEN=""
+# techne v0.18.0 (tag at 87bdcf1), the py3-none-any wheel.
+ARG TECHNE_VERSION=0.18.0
+ARG TECHNE_WHEEL_SHA256=7fb9ec7163c08ea9ab04a1492f2dcd73afaf8411aeaf877a0ee36fc71cd42433
+# A sibling checkout must report TECHNE_VERSION too. That catches a checkout of
+# another release; it cannot catch techne's main between releases, which reports
+# the last released version. scripts/check-techne-sibling.sh compares commits.
+# TECHNE_ANY_VERSION=1 skips this check, for building against whatever the
+# sibling has checked out.
+ARG TECHNE_ANY_VERSION=""
 
 # Layer-cache: copy pyproject.toml first, install all deps (and a stub package
 # so the build system is satisfied), then copy the real source last so a
@@ -49,11 +71,16 @@ ARG AR_TOKEN=""
 COPY pyproject.toml README.md LICENSE ./
 RUN python3 -m venv /venv \
  && if [ -f /build/techne/pyproject.toml ]; then \
-      /venv/bin/pip install --no-cache-dir /build/techne; \
+      sib="$(sed -n 's/^version = "\(.*\)"/\1/p' /build/techne/pyproject.toml | head -1)"; \
+      if [ "$sib" != "$TECHNE_VERSION" ] && [ "$TECHNE_ANY_VERSION" != "1" ]; then \
+        echo "techne: the sibling checkout is $sib, but TECHNE_VERSION pins $TECHNE_VERSION. Check out v$TECHNE_VERSION, or pass --build-arg TECHNE_ANY_VERSION=1." >&2; exit 1; \
+      fi \
+      && /venv/bin/pip install --no-cache-dir /build/techne; \
     elif [ -n "$EXTRA_INDEX_URL" ]; then \
       if [ -n "$AR_TOKEN" ]; then EXTRA_INDEX_URL="$(echo "$EXTRA_INDEX_URL" | sed "s#://#://oauth2accesstoken:${AR_TOKEN}@#")"; fi; \
-      /venv/bin/pip download --no-cache-dir --no-deps --index-url "$EXTRA_INDEX_URL" -d /tmp/techne-dist "techne>=0.17.0" \
-      && /venv/bin/pip install --no-cache-dir /tmp/techne-dist/* \
+      /venv/bin/pip download --no-cache-dir --no-deps --only-binary :all: --index-url "$EXTRA_INDEX_URL" -d /tmp/techne-dist "techne==${TECHNE_VERSION}" \
+      && echo "${TECHNE_WHEEL_SHA256}  /tmp/techne-dist/techne-${TECHNE_VERSION}-py3-none-any.whl" | sha256sum -c - \
+      && /venv/bin/pip install --no-cache-dir /tmp/techne-dist/techne-${TECHNE_VERSION}-py3-none-any.whl \
       && rm -rf /tmp/techne-dist; \
     else \
       echo "techne: pass --build-context techne=../techne or --build-arg EXTRA_INDEX_URL=… (see the techne stage)" >&2; exit 1; \

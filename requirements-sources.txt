@@ -13,5 +13,7 @@
 #
 # Bump the pinned tag below when consumers should pick up a new techne release —
 # and lift the matching `techne>=X` floor in pyproject.toml's `memory` extra so the
-# abstract floor and the concrete pin stay in step.
-techne @ git+https://github.com/tenishai/techne.git@v0.17.0
+# abstract floor and the concrete pin stay in step. The Dockerfile's
+# TECHNE_VERSION and TECHNE_WHEEL_SHA256 move with them; tests/test_techne_pin.py
+# fails when the three disagree.
+techne @ git+https://github.com/tenishai/techne.git@v0.18.0

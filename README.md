@@ -86,6 +86,22 @@ pip install -r requirements-sources.txt ".[memory]"
 If you work on techne and liminal together, install your techne checkout instead:
 `pip install -e ../techne`.
 
+The pinned techne is `v0.18.0`, stated in `requirements-sources.txt`, in the `memory`
+extra's floor, and as the Dockerfile's `TECHNE_VERSION`; `tests/test_techne_pin.py`
+keeps the three in step. To build the image from a sibling checkout, clone techne at
+that tag and check it before building:
+
+```bash
+git clone --branch v0.18.0 https://github.com/tenishai/techne.git ../techne
+bash scripts/check-techne-sibling.sh
+docker build --build-context techne=../techne -t liminal .
+```
+
+The image build itself only compares techne's version string, which cannot tell
+techne's main from the tag; the script compares commits. `TECHNE_ANY=1` skips the
+script and `--build-arg TECHNE_ANY_VERSION=1` skips the build's check, for building
+against whatever `../techne` has checked out.
+
 The PyPI distribution is named `tenishai-liminal`; the import package and the CLI
 command are still `liminal`. To install a tagged release straight from git:
 

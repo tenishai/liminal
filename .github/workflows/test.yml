@@ -87,10 +87,19 @@ jobs:
         with:
           path: liminal
 
+      # techne at the tag the Dockerfile pins, read from its TECHNE_VERSION so
+      # the suite tests the techne an install gets. Unpinned, this tested
+      # whatever techne's main was that day.
+      - name: Read the pinned techne version
+        id: techne
+        working-directory: liminal
+        run: echo "ref=v$(sed -n 's/^ARG TECHNE_VERSION=//p' Dockerfile)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout techne
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: tenishai/techne
+          ref: ${{ steps.techne.outputs.ref }}
           path: techne
 
       - name: Set up Python ${{ matrix.python-version }}
