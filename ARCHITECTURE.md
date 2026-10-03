@@ -1,14 +1,14 @@
 ---
 card: repo-card:liminal
 updated: 2026-10-03
-anchor: pyproject.toml sha=445d38e34db948a6f4f262eb9616e70338dcb95a
+anchor: pyproject.toml sha=8b1aa2fb1f51d78beabece0bf9cc7f569204b9d9
 anchor: src/liminal/server/routes.py sha=221458c82d66576e9fd29841fe1739cf32e43c19
 ---
 # liminal — repo card
 
 WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal. The PyPI-style distribution name is `tenishai-liminal` (pyproject `name`; `liminal.__version__` reads it); the import package and CLI stay `liminal`.
 STATE: main, v0.2.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131). Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
-STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = `techne>=0.17.0` (not on a public index; pair with requirements-sources.txt). Dockerfile present. `pip install -e ".[dev]"`.
+STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = `techne>=0.18.0` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
 - CLI `liminal` → src/liminal/cli.py:main (`version`, `list-handlers [--cards]`, `serve`)
 - server factory → src/liminal/server/app.py:create_app (data plane) + create_admin_app (admin plane on `--admin-port`)
@@ -29,9 +29,9 @@ SEAMS → card:
 
 DEPS:
 - cabal → liminal: cabal/src/cabal/core/tools/mcp_proxy.py lazily imports `liminal.client.AsyncMCPClient`; cabal's pyproject registers `patterns`/`documents`/`code`/`archivist` into the `liminal.handlers` group; cabal serves `GET /admin/secrets/{persona}/{handler}` and mints the JWTs liminal verifies (single-cabal defaults `--issuer cabal-core`, `--audience liminal`).
-- liminal → techne: handlers/memory.py only (lazy `import techne`; module-scope `from techne import VALID_TYPES` is inside try/except with a hardcoded fallback). CI integration job checks out tenishai/techne.
+- liminal → techne: handlers/memory.py only (lazy `import techne`; module-scope `from techne import VALID_TYPES` is inside try/except with a hardcoded fallback). CI integration job checks out tenishai/techne at the tag the Dockerfile's TECHNE_VERSION pins.
 - liminal does NOT call ladon; nothing in src references it.
-HEALTH: 39 test modules (tests/test_*.py), 612 tests pass (`pytest -q`, ~30s; memory tests importorskip techne). CI .github/workflows/test.yml: `unit` (self-hosted runner, py3.12/3.13, ruff + pytest, push/same-repo PR/dispatch), `fork-pr` (hosted twin for fork PRs), `integration` (workflow_dispatch only, with techne), `dco` (every PR: each non-merge commit needs a `Signed-off-by:` matching its author). mypy strict is configured but NOT run in CI. No branch protection: CI reports, never blocks.
+HEALTH: 40 test modules (tests/test_*.py), 615 tests pass (`pytest -q`, ~10-30s; memory tests importorskip techne). CI .github/workflows/test.yml: `unit` (self-hosted runner, py3.12/3.13, ruff + pytest, push/same-repo PR/dispatch), `fork-pr` (hosted twin for fork PRs), `integration` (workflow_dispatch only, with techne), `dco` (every PR into `main`: each non-merge commit needs a `Signed-off-by:` matching its author). mypy strict is configured but NOT run in CI. No branch protection: CI reports, never blocks.
 GOTCHAS:
 - Tool names are `<target>.<tool>`; `name.split(".",1)[0]` IS the authz key (allowlist, scope map, credential lookup). Target names must not contain `.` and must not collide with handler names (build_http_targets raises).
 - Security defaults are the product: empty files allowlist, SSRF deny list, fail-closed malformed allowlist (→ deny all). Never widen one to make a test pass.
