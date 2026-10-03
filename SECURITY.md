@@ -58,14 +58,22 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   call any registered tool except operator-only ones. That is open by design,
   so do not expose it beyond the trust boundary;
 - per-agent credentials: anything that lets one agent use another's
-  credentials or tools;
+  credentials or tools, including through the credential cache, which keeps
+  each `(persona, handler)` answer for a TTL (15 minutes by default) and does
+  not cache an empty answer;
 - policy: any way around a tool, file or scope restriction the operator set,
-  including the `files` handler's path allowlist and protected-file refusals,
-  the `web` handler's built-in SSRF denylist (`PRIVATE_NETWORKS` in
-  `handlers/web.py`), and the federation admin API (`server/admin.py`, which
+  including the `files` handler's path allowlist and protected-file refusals
+  (among them the refusal to write through a hard-linked file, and the
+  operator's `LIMINAL_FILES_PROTECTED_PATTERNS`, which add to the built-in set
+  and cannot remove from it). The `files:protected_writes` grant that lifts
+  those refusals exists only in sovereign mode: without a policy grant,
+  `ctx.granted_scopes` is empty. Also in scope: the `web` handler's built-in
+  SSRF denylist (`PRIVATE_NETWORKS` in `handlers/web.py`), and the federation admin API (`server/admin.py`, which
   requires an `admin:*` grant from a parent issuer);
 - federation: results from an upstream server being trusted when they
-  shouldn't be.
+  shouldn't be, and a target's static `headers` table setting a header
+  liminal reserves (`RESERVED_HEADERS` in `target/config.py`: credentials,
+  forwarded identity, the session id, and content negotiation).
 
 **Known and by design, not vulnerabilities:**
 
@@ -76,6 +84,12 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   overrides the handler-level scope, including when it is weaker. It is for
   refining a handler's scope, and there is no "stricter of the two" rule
   (`docs/writing-a-handler.md`).
+- The `files` handler refuses a write to a hard-linked file only when the
+  extra link exists at its check. A hard link made after the open-time
+  re-check and before the write ends is not caught.
+- Protected-file refusals cover the files themselves, not files a `CLAUDE.md`
+  pulls in through `@path` imports. Which files those are depends on every
+  `CLAUDE.md` a later session loads, so a write-time check cannot be complete.
 
 Reports that rely on a misconfiguration the README or handler docs warn about
 are welcome as documentation fixes, but we won't treat them as security

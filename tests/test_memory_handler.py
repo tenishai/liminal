@@ -1,8 +1,9 @@
 """memory handler — techne-backed recall + commit.
 
-Requires `techne` installed as a sibling (see README). Tests that don't
-need techne mock the import; the rest exercise the real backend against
-a tmp_path SQLite DB.
+The module-scope `pytest.importorskip("techne")` below skips the whole
+module when techne is not installed. Install it from the
+requirements-sources.txt pin or as an editable sibling checkout (see
+README). Tests that touch the backend run it against a tmp_path SQLite DB.
 """
 from __future__ import annotations
 

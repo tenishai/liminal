@@ -41,7 +41,8 @@ dev = [
 # Enables the techne-backed `memory` handler (imported lazily; liminal runs
 # without it). techne is not on a public index, so pair this extra with the
 # git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
-# Dev/CI keep an editable techne instead: `pip install -e ../techne`.
+# Dev, and CI's manual integration job, use an editable techne instead:
+# `pip install -e ../techne`.
 memory = ["techne>=0.18.0"]
 
 [project.scripts]

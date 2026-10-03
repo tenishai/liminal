@@ -43,7 +43,9 @@ the install and hides the problem everywhere else.
 ## Releasing
 
 There is no release workflow; tags are cut by hand. Bump `version` in `pyproject.toml`
-in a PR, merge it, then tag **that** merge commit `vX.Y.Z` with the same number. v0.2.0
+in a PR. In the same PR, move `[Unreleased]` to `[X.Y.Z] — <date>` in `CHANGELOG.md` and
+add an Upgrading section for changes an existing install must act on. Merge it, then tag
+**that** merge commit `vX.Y.Z` with the same number. v0.2.0
 was tagged without the bump, so installs from it reported 0.1.0 (#95).
 `tests/test_version_tags.py` fails when a reachable `v*` tag is newer than
 `pyproject.toml`; it needs tags, so it skips in CI's shallow checkout and runs in a full
@@ -59,8 +61,9 @@ mode and not the other; say which in the PR.
 
 `LIMINAL_AUTH_DISABLED=1` is the third state, for local use. It synthesises anonymous
 claims with no `cabal_tool_extras`, so `ctx.extra` is empty. The `files` handler therefore
-has no per-persona allowlist in that mode and takes its ceiling from
-`LIMINAL_FILES_ALLOWED_PATHS` instead (#68). Unset, it still refuses everything — that is
+has no per-persona allowlist in that mode, and `LIMINAL_FILES_ALLOWED_PATHS` is its grant:
+with no `files.allowed_paths` claim the variable is what the caller gets, not a ceiling
+(#68). Unset, it still refuses everything — that is
 the fail-closed default and it has not moved.
 
 ## Security defaults are load-bearing — do not widen them to make a test pass
@@ -88,7 +91,9 @@ src/liminal/
   server/      MCP HTTP server, JWT verifiers, policy store, admin, secret guard
   target/      Federated targets (the `--targets` machinery)
   handlers/    THE EXTENSION SURFACE — scratchpad, files, web, memory, notify
-  client/      MCPClient (sync) + AsyncMCPClient (async)
+  client/      LiminalClient, LibraryLiminalClient, ProxyLiminalClient, from_config;
+               MCPClient (sync) + AsyncMCPClient (async)
+  wire.py      Wire-format helpers shared by the server and the library client
 ```
 
 `handlers/` is where new capability goes. Everything else is gateway internals and should
