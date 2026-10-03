@@ -132,7 +132,7 @@ jobs:
   # ---- fork-pr: the complement of unit's guard, on a hosted runner -----------
   fork-pr:
     runs-on: ubuntu-latest
-    # Techne's spelling (#590): the literal negation, so an event nobody named still
+    # Techne's spelling (tenishai/techne#590): the literal negation, so an event nobody named still
     # gets a hosted run instead of an empty Checks tab.
     if: ${{ !(github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     strategy:

@@ -51,7 +51,7 @@ WORKDIR /build
 
 # See CABAL-DECISIONS D-008/D-012 for why techne is a build input. When it
 # lands on PyPI, drop the techne stage and the install branch below and add a
-# `techne>=0.17.0` pin to pyproject.toml's dependencies.
+# `techne>=` pin at the current TECHNE_VERSION to pyproject.toml's dependencies.
 COPY --from=techne / /build/techne
 ARG EXTRA_INDEX_URL=""
 ARG AR_TOKEN=""

@@ -19,8 +19,15 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
   HTTP fetch + SSRF DNS-rebinding defense via pinned-IP transport), `memory`
   (techne-backed knowledge recall + commit), `notify` (transport-agnostic
   notifications; webhook in v1).
-- **JWT auth** — RS256 algorithm pin, `aud` + `cabal_scope` enforcement on every
-  call. Wrong audience → 401. No scope → 401.
+- **JWT auth** — RS256 algorithm pin and `aud` enforcement on every authenticated
+  method (`tools/list`, `tools/call`); `initialize` and `ping` need no token. In
+  single-cabal mode (`--jwks-url`) the token must also hold the `dispatch` scope,
+  in `cabal_scope` or in a `scope` claim given as a JSON array (a space-delimited
+  string is rejected). In sovereign mode (`--trust-registry` + `--policy-db`) the
+  token's own scope and tool extras are ignored, and access comes from the
+  server-side grant for its `(issuer, persona)`. An auth failure on `/mcp` (wrong
+  audience, no scope, no grant) is HTTP 200 carrying JSON-RPC error `-32001`; only
+  `/admin/*` answers with a real 401.
 - **`cabal_tool_extras` clamping** — operator config is the ceiling. JWTs can
   narrow allowed paths/hosts/webhooks but cannot widen past the server-side bound.
 - **Credential flow** — `CabalCoreCredentialResolver` fetches per-`(persona, handler)`
@@ -39,8 +46,10 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 - **One MCP connection per agent**, not N.
 - **Persona-scoped credentials** — liminal fetches the credential set for
   `(persona, handler)` at dispatch time. No `.env` files on disk.
-- **Handler pooling** — `rook-primus` and `rook-secundus` share the same `slack`
-  handler runtime and rate-limit budget.
+- **Handler pooling** — personas share one runtime per handler, so `rook-primus`
+  and `rook-secundus` reach the same `web` handler instance. A credentialed
+  handler, such as a hypothetical `slack` one (none ships), could keep one
+  rate-limit budget for both.
 - **Same handler interface everywhere** — in-process Python callables today, with a
   federation path (`liminal serve --targets`) for fanning out to upstream MCP servers;
   identical `dispatch(name, payload, ctx)`.
@@ -51,7 +60,9 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 
 You need git and Python 3.12 or newer. On Debian and Ubuntu, also run
 `sudo apt update && sudo apt install python3-venv`; without it `python3 -m venv`
-fails.
+fails. liminal and techne are both private for now, so until they are public the
+clone needs access to `tenishai/liminal`, and the techne steps below need access
+to `tenishai/techne`.
 
 ```bash
 git clone https://github.com/tenishai/liminal.git && cd liminal
@@ -62,7 +73,7 @@ pytest -q
 ```
 
 Everything above, including the test suite, runs without techne. Only the
-`memory` handler needs it. techne is not public yet, so this step needs access to
+`memory` handler needs it. Until techne is public, this step needs access to
 `tenishai/techne`:
 
 ```bash
@@ -102,8 +113,9 @@ techne's main from the tag; the script compares commits. `TECHNE_ANY=1` skips th
 script and `--build-arg TECHNE_ANY_VERSION=1` skips the build's check, for building
 against whatever `../techne` has checked out.
 
-The PyPI distribution is named `tenishai-liminal`; the import package and the CLI
-command are still `liminal`. To install a tagged release straight from git:
+The distribution is named `tenishai-liminal` (not yet published to PyPI); the
+import package and the CLI command are still `liminal`. To install a tagged release
+straight from git (this needs access to `tenishai/liminal` until it is public):
 
 ```bash
 pip install "tenishai-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
@@ -139,8 +151,9 @@ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 # claim — it is not only a ceiling. `web`, `scratchpad` and `notify` need no
 # such grant.
 
-# production — verify caller JWTs against Cabal Core's JWKS (swap in your host):
-liminal serve --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
+# production — verify caller JWTs against Cabal Core's JWKS (swap in your host).
+# --host defaults to 127.0.0.1; 0.0.0.0 listens on every interface:
+liminal serve --host 0.0.0.0 --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
 ```
 
 `liminal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
@@ -166,7 +179,11 @@ src/liminal/
                    policy store, admin surface, secret guard
   target/          Federated targets — the machinery behind `--targets`
   handlers/        scratchpad, files, web, memory, notify
-  client/          MCPClient (sync) + AsyncMCPClient (async)
+  client/          LiminalClient protocol, LibraryLiminalClient (in-process),
+                   ProxyLiminalClient (HTTP, wraps AsyncMCPClient), from_config,
+                   MCPClient (sync) + AsyncMCPClient (async)
+  wire.py          Wire-format helpers shared by the server and the library client
+scripts/           check-techne-sibling.sh (sibling techne matches the pinned tag)
 tests/             pytest suite
 docs/
   design.md        The ORIGINAL proposal. The implementation has diverged —

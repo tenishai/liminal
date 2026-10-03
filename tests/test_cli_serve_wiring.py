@@ -5,9 +5,9 @@ The real serve loop calls uvicorn.run which blocks; we exercise just the
 app-construction path by reaching into create_app via the same import
 the CLI uses.
 
-Also covers Item 3 of Phase-0 pre-#12 hardening: [scope_map] / [tool_extras]
-wiring from the trust-registry TOML through the CLI-config helper into
-create_app (liminal #26 partial).
+Also covers Item 3 of Phase-0 pre-#12 hardening: [tool_extras] wiring
+from the trust-registry TOML through the CLI-config helper into create_app,
+and the [scope_map] deprecation warning (liminal #26 partial).
 """
 
 from __future__ import annotations

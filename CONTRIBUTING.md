@@ -11,6 +11,10 @@ pytest -q                  # the full suite
 ruff check src tests       # CI runs this too
 ```
 
+liminal and techne are both private for now: until they are public, the clone
+needs access to `tenishai/liminal`, and the memory tests need access to
+`tenishai/techne`.
+
 Then: branch, commit with `git commit -s` (see [Developer Certificate of
 Origin](#developer-certificate-of-origin)), open a PR. Keep the suite green: CI
 runs pytest on Python 3.12 and 3.13 on pushes to `main` and on pull requests that target `main`.
