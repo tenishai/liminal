@@ -117,11 +117,6 @@ CARD = {
         {"name": "exists", "description": "Test whether a path exists.", "required_scope": "files:read"},
     ],
     "activation": "always",
-    "relevance_signals": [
-        "reading a project source file to answer a question about it",
-        "writing notes or a draft to the operator's scratch directory",
-        "exploring a directory's contents before making a recommendation",
-    ],
     "credential_keys": [],
     "labels": {"tier": "builtin"},
 }

@@ -135,11 +135,6 @@ CARD = {
         },
     ],
     "activation": "always",
-    "relevance_signals": [
-        "fetching a documentation page or RFC the operator referenced",
-        "verifying a URL is reachable before suggesting it",
-        "pulling a JSON API response the persona needs to reason over",
-    ],
     "credential_keys": [],
     "labels": {"tier": "builtin"},
 }

@@ -50,7 +50,6 @@ class _EchoExtraHandler:
             "description": "echoes ctx.extra for tests",
             "tools": [{"name": "peek", "description": "echo ctx.extra"}],
             "activation": "always",
-            "relevance_signals": ["test only"],
             "credential_keys": [],
             "labels": {"tier": "test"},
         }

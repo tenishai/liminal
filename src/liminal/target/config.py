@@ -77,7 +77,6 @@ class TargetSpec:
         timeout_seconds: Per-call timeout for forwarded requests.
         refresh_tools_interval_seconds: Background catalog re-fetch cadence.
             ``0`` disables periodic refresh (still fetched once at startup).
-        relevance_signals: Free-form routing hints for the capability surface.
         client_name: Advertised in the upstream ``initialize`` handshake.
         required_scope: The sovereign scope a grant must hold to invoke ANY
             tool on this target. ``None`` = no target-level gate. This is the
@@ -115,7 +114,6 @@ class TargetSpec:
     credential_key: str | None = None
     timeout_seconds: float = 30.0
     refresh_tools_interval_seconds: int = 300
-    relevance_signals: tuple[str, ...] = ()
     client_name: str = "liminal-target"
     required_scope: str | None = None
     tool_scopes: dict[str, str] = field(default_factory=dict)
@@ -248,8 +246,6 @@ def load_target_specs(raw_targets: list[dict[str, Any]]) -> list[TargetSpec]:
         # Normalize list-valued TOML fields to the tuples the dataclass expects.
         if "command" in data and isinstance(data["command"], list):
             data["command"] = tuple(data["command"])
-        if "relevance_signals" in data and isinstance(data["relevance_signals"], list):
-            data["relevance_signals"] = tuple(data["relevance_signals"])
         try:
             spec = TargetSpec(**data)
         except TypeError as exc:
