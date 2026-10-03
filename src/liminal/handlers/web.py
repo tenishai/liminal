@@ -1,20 +1,12 @@
 """web — allowlisted HTTP fetch with SSRF defense.
 
-Per design.md §"Planned handlers":
-
-    URL policy: allowlist by hostname, declared per persona in
-    identity.toml as web.allowed_hosts = ["*"] (broad) or specific
-    domains. Default denies localhost, 127.0.0.0/8, 10.0.0.0/8,
-    172.16.0.0/12, 192.168.0.0/16, fc00::/7, and link-local — explicit
-    SSRF protection against pivoting through the agent to reach
-    http://cabal-core:8080, http://litellm:4000, or cloud metadata
-    services.
-
-Phase CC v1 implements the SSRF defense + the basic fetch surface. Per-
-persona allowlists declared in Cabal's identity.toml are forwarded
-through `ctx.extra["web.allowed_hosts"]` when the operator wires it
-(Phase CD or later); v1 falls back to the handler's constructor-level
-allowlist for any persona without one.
+URL policy: a per-caller hostname allowlist in
+`ctx.extra["web.allowed_hosts"]` (from the token's tool_extras in
+single-cabal mode, or the trust registry's [tool_extras] in sovereign mode);
+without one the handler's default allowlist applies. Private, loopback,
+link-local and other internal ranges (PRIVATE_NETWORKS) are refused on every
+resolved IP whatever the allowlist says, as SSRF protection against pivoting
+through the agent to internal services or cloud metadata.
 
 Defenses (all applied before the request leaves the handler):
   1. URL parse — reject non-http/https schemes.

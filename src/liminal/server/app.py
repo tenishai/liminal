@@ -179,11 +179,12 @@ def create_app(
             rejects every request with -32001. Tests pass a
             StaticKeySetVerifier; production wires URLJWKSVerifier.
         registry: pre-populated registry; if None, discover via entry-points.
-        credential_resolver: (persona, handler) → credentials dict. Optional;
-            when None the Context.credentials passed to handlers is {} (the
-            handler had better be one that doesn't need credentials, like
-            scratchpad). Phase 1.6 will swap a real Cabal Core fetcher in
-            via this hook.
+        credential_resolver: (persona, handler) → credentials dict. In
+            sovereign mode the route also passes `issuer=` as a keyword, and
+            calls it only for the parent issuer's callers (liminal#143), so a
+            resolver used there must accept `issuer`. Optional; when None the
+            Context.credentials passed to handlers is {}. The CLI wires
+            CabalCoreCredentialResolver.fetch when `--cabal-url` is set.
         server_name: the name reported by the `initialize` handshake.
         targets: optional list of ``TargetSpec`` describing federated
             upstream MCP servers (``transport="http"`` in Stage A). Each

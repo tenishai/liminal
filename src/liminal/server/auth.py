@@ -125,8 +125,8 @@ class URLJWKSVerifier:
 
     async def _fetch(self) -> KeySet:
         log.info("auth.jwks.fetch", url=self.jwks_url)
-        # Fail closed: a JWKS endpoint outage becomes an AuthError (→ 401 at
-        # the route) rather than an httpx.HTTPStatusError that would surface
+        # Fail closed: a JWKS endpoint outage becomes an AuthError (JSON-RPC
+        # -32001 at the route) rather than an httpx.HTTPStatusError that would surface
         # as a 500 (routes._authenticate only catches AuthError).
         try:
             if self._client is not None:

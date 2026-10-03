@@ -22,8 +22,8 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 - **JWT auth** — RS256 algorithm pin and `aud` enforcement on every authenticated
   method (`tools/list`, `tools/call`); `initialize` and `ping` need no token. In
   single-cabal mode (`--jwks-url`) the token must also hold the `dispatch` scope,
-  in `cabal_scope` or in a `scope` claim given as a JSON array (a space-delimited
-  string is rejected). In sovereign mode (`--trust-registry` + `--policy-db`) the
+  in a `cabal_scope` claim, or failing that a `scope` claim, given as a JSON array
+  (a space-delimited string is rejected; a non-list `cabal_scope` hides a valid `scope`). In sovereign mode (`--trust-registry` + `--policy-db`) the
   token's own scope and tool extras are ignored, and access comes from the
   server-side grant for its `(issuer, persona)`. An auth failure on `/mcp` (wrong
   audience, no scope, no grant) is HTTP 200 carrying JSON-RPC error `-32001`; only

@@ -73,7 +73,7 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
 - federation: results from an upstream server being trusted when they
   shouldn't be, and a target's static `headers` table setting a header
   liminal reserves (`RESERVED_HEADERS` in `target/config.py`: credentials,
-  forwarded identity, the session id, and content negotiation).
+  forwarded identity, the correlation id, the session id, and content negotiation).
 
 **Known and by design, not vulnerabilities:**
 

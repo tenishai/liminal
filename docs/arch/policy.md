@@ -2,9 +2,9 @@
 card: arch-card:liminal-policy
 updated: 2026-10-03
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
-anchor: src/liminal/server/routes.py sha=221458c82d66576e9fd29841fe1739cf32e43c19
+anchor: src/liminal/server/routes.py sha=b0af5e275de3e8c318d1326211812aa7fd01cbe8
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
-anchor: src/liminal/server/app.py sha=806511d7180a5b74716cc405ad318b0304fc0937
+anchor: src/liminal/server/app.py sha=9da8cd590f343caa0de4972048ab95b348ac107f
 ---
 # policy — sovereign (multi-issuer) authorization
 
