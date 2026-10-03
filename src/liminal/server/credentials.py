@@ -1,15 +1,13 @@
 """Credential resolution for handlers that need secrets.
 
-Per design.md §"Credential Flow", credentials live in Cabal Core's
-encrypted store and are fetched at handler-dispatch time:
-
-    in solo mode that's a direct function call into Cabal Core's
-    secrets module; in scale mode it's an authenticated HTTPS call to
-    GET /secrets/<identity>/<handler> on Cabal Core. Cabal Core
-    decrypts at request time and returns the dict.
+Credentials live in Cabal Core's encrypted store and are fetched at
+dispatch time, over an authenticated GET (bearer token) to
+{cabal_url}/admin/secrets/{persona}/{handler}, using whatever scheme
+`--cabal-url` carries (HTTPS in any real deployment); Cabal Core decrypts at
+request time and returns the dict. liminal ships no other resolver.
 
 This module provides the scale-mode adapter: `CabalCoreCredentialResolver`
-calls Cabal Core's `/admin/secrets/{persona}/{handler}` HTTPS endpoint
+calls Cabal Core's `/admin/secrets/{persona}/{handler}` endpoint
 with a bearer token, caches the result per `(issuer, persona, handler)`
 with a TTL (15 minutes per the design doc), and re-fetches when stale or on
 explicit invalidation.

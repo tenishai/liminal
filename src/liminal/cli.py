@@ -137,7 +137,12 @@ def main(argv: list[str] | None = None) -> int:
     serve_p.add_argument(
         "--jwks-url",
         default=None,
-        help="URL of the JWKS to verify caller tokens against. Required for any authenticated method (tools/list, tools/call).",
+        help=(
+            "URL of the JWKS to verify caller tokens against (single-cabal "
+            "mode). Some verifier is required for tools/list and tools/call: "
+            "this, or --trust-registry (sovereign mode), unless "
+            "LIMINAL_AUTH_DISABLED=1."
+        ),
     )
     serve_p.add_argument(
         "--issuer", default="cabal-core", help="Expected `iss` claim (single-issuer mode)."
@@ -161,7 +166,10 @@ def main(argv: list[str] | None = None) -> int:
             "graduated singleton persona serving several cabals). Mutually "
             "exclusive with --jwks-url; requires --policy-db. TOML shape: a "
             "top-level `service_audience` string + [[issuer]] tables with "
-            "id/jwks_uri/parent."
+            "id/jwks_uri/parent. Exactly one issuer sets parent = true, and "
+            "that issuer must also name `admin_personas` (a list of persona "
+            "names; serve exits 2 without it). An optional [tool_extras] "
+            "table is passed verbatim to the policy layer."
         ),
     )
     serve_p.add_argument(
@@ -212,7 +220,10 @@ def main(argv: list[str] | None = None) -> int:
         "--cred-cache-ttl",
         type=float,
         default=15 * 60,
-        help="Credential cache TTL in seconds (default 900).",
+        help=(
+            "TTL in seconds for cached non-empty credential answers "
+            "(default 900; empty answers are not cached)."
+        ),
     )
     serve_p.add_argument(
         "--targets",
@@ -220,7 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help=(
             "Path to a versioned targets TOML file declaring federated MCP upstreams "
-            "(``[[target]]`` tables). The file must set ``config_version = 1``. "
+            "(``[[target]]`` tables). The file should set ``config_version = 1``; "
+            "a file without it loads with a warning. "
             "Works in both --jwks-url (single-cabal) and --trust-registry (sovereign) modes. "
             "Example: ``liminal serve --jwks-url ... --targets targets.toml``."
         ),
@@ -267,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             build_multi_issuer_verifier,
             create_app,
         )
+        from liminal.server.app import _auth_disabled_from_env
 
         # Config guards: single-issuer (--jwks-url) XOR sovereign
         # (--trust-registry + --policy-db).
@@ -326,9 +339,17 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            verifier = build_multi_issuer_verifier(
-                issuers, service_audience=service_audience
-            )
+            try:
+                verifier = build_multi_issuer_verifier(
+                    issuers, service_audience=service_audience
+                )
+            except ValueError as exc:
+                # No parent, several parents, no issuers, or duplicate ids:
+                # a registry mistake, so exit 2 with a diagnostic rather than
+                # a traceback (liminal#144). This also guards the next() below,
+                # which assumes exactly one parent.
+                print(f"error: trust registry {args.trust_registry}: {exc}", file=sys.stderr)
+                return 2
             parent_issuer = next(i.id for i in issuers if i.parent)
             # Admin standing is per-persona (liminal#73): the parent's
             # [[issuer]] table may name `admin_personas`; each named persona
@@ -460,7 +481,10 @@ def main(argv: list[str] | None = None) -> int:
                 expected_issuer=args.issuer,
                 expected_audience=args.audience,
             )
-        else:
+        elif not _auth_disabled_from_env():
+            # Under LIMINAL_AUTH_DISABLED=1 no verifier is the required setup
+            # (create_app refuses both together) and requests are accepted with
+            # synthesised claims, so the warning would be false there.
             print(
                 "warning: no verifier configured (--jwks-url or --trust-registry); "
                 "tools/list and tools/call will reject every request",

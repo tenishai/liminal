@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-credentials
 updated: 2026-10-03
-anchor: src/liminal/server/credentials.py sha=ce3879ab2e5be560845265446522abe753404eba
+anchor: src/liminal/server/credentials.py sha=23f5174b3666ae5937e299d38df4172feb2c0f3c
 ---
 # credentials — per-(persona, handler) secrets from cabal
 

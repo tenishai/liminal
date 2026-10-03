@@ -1,12 +1,15 @@
 """files — scoped file I/O with path-traversal defense.
 
-Per design.md §"Planned handlers":
-
-    files | Scoped file I/O. Each persona's identity.toml declares a
-    files.paths allowlist (e.g., ["~/projects/cabal",
-    "~/.cbl/scratch/rook"]); reads and writes outside the allowlist
-    return a structured error. Path traversal (..) is rejected before
-    the allowlist check.
+Scoped file I/O against an allowlist of paths. A caller's
+`files.allowed_paths` (from the token's tool_extras, or in sovereign mode
+the trust registry's [tool_extras]) and the operator's
+LIMINAL_FILES_ALLOWED_PATHS combine as `get_handler()` and
+`_resolve_config()` document: without a key the caller gets the operator
+value; with a key, the operator value (when set) is a ceiling the key can
+only narrow, and when unset the key itself is the allowlist; a present but
+empty or malformed key grants nothing. Reads and
+writes outside the allowlist return a structured error. Path traversal (..) is rejected before the
+allowlist check.
 
 Defenses (applied before any disk operation):
   1. Path must be absolute. Relative paths are rejected so we never
@@ -755,7 +758,8 @@ def get_handler() -> Handler:
         this is what makes auth-off mode usable, and it means that in a JWT
         deployment every token lacking the claim receives it too;
       * a caller WITH a claim gets it as a CEILING — the claim narrows it and
-        can never widen it (`_resolve_config`);
+        can never widen it (`_resolve_config`); when the env value is unset or
+        empty there is no ceiling, and the claim's paths are the allowlist;
       * a caller whose claim is present but EMPTY or malformed gets NOTHING.
         A persona that grants no paths must not inherit the operator's.
 

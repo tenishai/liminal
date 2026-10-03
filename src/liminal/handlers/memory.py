@@ -1,9 +1,11 @@
 """memory — techne-backed knowledge recall + commit.
 
-Per design.md §"Planned handlers":
-
-    memory | Local techne queries (per-agent SQLite). No credentials
-    required.
+Local techne queries against a SQLite DB. Which file a call uses (a
+per-persona `memory.db_path` override, the LIMINAL_MEMORY_DB default, or a
+refusal) is decided in `_resolve_db_path`; `MemoryConfig` documents the
+override and refusal rules, and `get_handler()` seeds the default from
+LIMINAL_MEMORY_DB.
+No credentials required.
 
 Architectural note: in Cabal, the Archivist persona already has direct
 techne access via its `memory_store`. This handler is for the *other*
