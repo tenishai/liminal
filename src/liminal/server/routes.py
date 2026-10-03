@@ -528,11 +528,36 @@ async def _handle_tools_call(
     # Credential resolver lookup. If none was wired, the handler gets {}
     # and either errors gracefully (slack, github) or works fine
     # (scratchpad). Phase 1.6 wires the real Cabal Core fetch.
+    #
+    # Cabal's secrets path is /admin/secrets/{persona}/{handler} with no issuer
+    # (credentials.py), and a foreign issuer can mint any persona name, so in
+    # sovereign mode only the parent issuer's callers reach the resolver
+    # (liminal#143). A grant-authorized call from any other issuer gets {}: a
+    # service-token HTTP target then refuses (target/http.py), and notify's
+    # webhook falls back to the operator's policy_tool_extras URL or refuses.
+    # "The parent" is the policy store's parents(): the same source the admin
+    # guardian gate uses (admin.py), and the store refuses to open when its
+    # parent rows disagree with the configured parent issuer
+    # (_reconcile_parent_issuers). No grant (single-cabal, auth-off) keeps the
+    # unconditional two-argument call.
     resolver = request.app.state.credential_resolver
     credentials: dict[str, str] = {}
+    resolver_kwargs: dict[str, str] = {}
+    if grant is not None:
+        store = getattr(request.app.state, "policy_store", None)
+        if store is None or claims.issuer not in store.parents():
+            log.info(
+                "credential.skipped_non_parent_issuer",
+                issuer=claims.issuer, persona=claims.identity, handler=handler_name,
+            )
+            resolver = None
+        else:
+            resolver_kwargs = {"issuer": claims.issuer}
     if resolver is not None:
         try:
-            credentials = await resolver(claims.identity, handler_name)
+            credentials = await resolver(
+                claims.identity, handler_name, **resolver_kwargs
+            )
         except Exception as exc:  # noqa: BLE001
             log.warning("credential.resolve_failed", error=str(exc))
             return make_error(
