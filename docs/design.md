@@ -36,6 +36,8 @@ Credentials are fetched from **Cabal Core's encrypted secrets table** at handler
 
 liminal handles tool scoping via **capability cards** that handlers ship as part of their A2A AgentCard `metadata`. In v1, all handlers declare `activation: always` — the on-demand activation surface (with `liminal__discover` / `liminal__activate` meta-tools, federated discovery via `.well-known/dtsp` with operator approval) is deferred to v2, when handler count justifies the context-window optimization. Cards still declare metadata in v1 so the v2 transition is non-breaking.
 
+> **Correction: credential timing and where cards live.** Credentials are not fetched at handler spawn. When `liminal serve` gets `--cabal-url`, `CabalCoreCredentialResolver` (`server/credentials.py`) calls `{cabal_url}/admin/secrets/{persona}/{handler}` during a `tools/call` and caches a non-empty answer per `(issuer, persona, handler)` for `--cred-cache-ttl` seconds (default 900). An empty answer is not cached. In sovereign mode only callers from the policy store's parent issuer reach the fetch (see Credential Flow). Cards are not embedded in an A2A AgentCard either: liminal reads each handler's `capability_card()` at discovery, and nothing in liminal builds an AgentCard.
+
 ---
 
 ## Prior Art: Open-Source MCP Aggregators
@@ -119,11 +121,11 @@ class Context:
     credentials: dict       # full credential set for this (identity, handler)
 ```
 
-**Credentials come from Cabal Core's encrypted `secrets` table.** When liminal needs to spawn (or first-call) a handler for `(identity, handler)`, it asks Cabal Core for the credentials: in solo mode that's a direct function call into Cabal Core's secrets module; in scale mode it's an authenticated HTTPS call to `GET /secrets/<identity>/<handler>` on Cabal Core. Cabal Core decrypts at request time and returns the dict.
+**Credentials come from Cabal Core's encrypted `secrets` table.** When liminal needs to spawn (or first-call) a handler for `(identity, handler)`, it asks Cabal Core for the credentials: in solo mode that's a direct function call into Cabal Core's secrets module; in scale mode it's an authenticated HTTPS call to `GET /secrets/<identity>/<handler>` on Cabal Core. Cabal Core decrypts at request time and returns the dict. (As shipped there is no solo-mode function call and no spawn-time fetch: the resolver calls `{cabal_url}/admin/secrets/{persona}/{handler}` per `tools/call`, cached. See the correction under Proposal.)
 
 **Whole credential set per `(identity, handler)`.** liminal passes the full dict that Cabal Core returns into the handler's `Context.credentials` (and into subprocess env vars in scale mode). The capability card's `credential_keys` field is documentation — it tells the operator and the handler author which keys are expected — but it does not enforce. New keys added via `cbl secret` propagate without touching the card. (Solo scale; in-house handlers; the operator owns the trust boundary.)
 
-**Trust boundary.** liminal itself sees every persona's credentials when it fetches them. At solo scale that's no extra surface (liminal is the daemon that already owns everything). At team / company scale, liminal-the-service is a single point of compromise for every persona's secrets it has cached — comparable to the per-host-secrets-mount tradeoff the prior `.env` model also carried. Mitigations: limit cache TTL (15-minute default; re-fetch on next handler call); never persist fetched credentials to disk; use mTLS between liminal and Cabal Core in scale mode.
+**Trust boundary.** liminal itself sees every persona's credentials when it fetches them. At solo scale that's no extra surface (liminal is the daemon that already owns everything). At team / company scale, liminal-the-service is a single point of compromise for every persona's secrets it has cached — comparable to the per-host-secrets-mount tradeoff the prior `.env` model also carried. Mitigations: limit cache TTL (15-minute default; re-fetch on next handler call); never persist fetched credentials to disk; use mTLS between liminal and Cabal Core in scale mode (not built: the resolver authenticates with a bearer token only).
 
 ---
 
@@ -144,16 +146,18 @@ liminal:
     LIMINAL_CRED_CACHE_TTL: 900                # 15-minute credential cache
 ```
 
+> **Not built as shown.** liminal reads none of these three environment variables, has no mTLS client, and mounts no identity directory. The shipped knobs are `liminal serve` flags: `--cabal-url` (Cabal Core base URL; wires the credential resolver), `--cabal-token-env` (name of the env var holding the bearer token liminal presents to Cabal Core, default `LIMINAL_CABAL_TOKEN`) and `--cred-cache-ttl` (seconds, default 900).
+
 Identity directories (`./identities/<persona>/`) are git-managed, mounted read-only, and carry only the non-secret config (`identity.toml`, prompts, hook bindings). **Secrets do not live in this directory**; they live in Cabal Core's encrypted `secrets` table and are fetched at handler-spawn time.
 
-Agents address liminal as `http://liminal:9100` (or `https://` with mTLS) on the network; 9100 is the `liminal serve --port` default. Each tool call carries the agent's A2A JWT (`sub=agent_name, persona=<persona>`). liminal validates the JWT against Cabal Core's JWKS (`GET /jwks.json`, cached with `kid` rotation), extracts the `persona` claim, and dispatches to the handler in-process.
+Agents address liminal as `http://liminal:9100` on the network; 9100 is the `liminal serve --port` default, and liminal serves plain HTTP (no TLS or mTLS listener). Each tool call carries the agent's A2A JWT (`sub=agent_name, cabal_persona=<persona>`). liminal validates the JWT against the JWKS at `--jwks-url` (cabal serves its keys at `/.well-known/jwks.json`), cached with a re-fetch on an unknown `kid`. It reads the persona from `cabal_persona`, falling back to `persona`, and the agent from `sub`; a token missing either is refused. It then dispatches to the handler in-process.
 
 **Standalone, auth off (local)** — `LIMINAL_AUTH_DISABLED=1 liminal serve`, bound to `127.0.0.1` (the `--host` default). This is the README quickstart: one gateway on a workstation serving an agent on the same host, with no Cabal Core. Its security model differs from both modes above, so state it rather than let someone discover it:
 
 - **The bind address is the only boundary.** There is no JWT and no persona. Anything that can reach the port can call every tool, so never bind it to a non-loopback address.
 - **Every caller is the same caller.** Claims are synthesised with `identity = agent_name = "anonymous"`, so handlers that scope by persona or agent collapse to one shared scope. `scratchpad`, keyed by `(identity, agent_name)`, becomes one bucket for every client.
-- **No per-persona allowlists.** The synthesised claims carry no `cabal_tool_extras`, so `ctx.extra` is empty. The `files` handler takes its ceiling from `LIMINAL_FILES_ALLOWED_PATHS` instead (#68), and with that unset it still refuses everything.
-- **No scope gate.** The per-tool scope gate needs a sovereign grant, so it does not run here, and `tools/list` shows every registered tool.
+- **No per-persona allowlists.** The synthesised claims carry no `cabal_tool_extras`, so `ctx.extra` holds no handler config; its only possible key is `correlation_id`, copied from a caller's `x-correlation-id` header. With no `files.allowed_paths` claim, the `files` handler uses `LIMINAL_FILES_ALLOWED_PATHS` as the allowlist itself (#68), and with that unset it still refuses everything.
+- **No scope gate, but operator-only tools stay refused.** The per-tool scope gate needs a sovereign grant, so it does not run here. Tools a card marks `requires_operator` are refused, since no caller can prove operator scope, and `tools/list` hides them. Every other registered tool is listed.
 
 ---
 
@@ -185,7 +189,9 @@ Handler.dispatch(name, payload, ctx)
 Tool result → liminal → agent
 ```
 
-**Handler pooling**: keyed by `(persona, handler)`. Two rook-* agents (rook-primus and rook-secundus) share one slack handler runtime — same persona, same credentials. raven's slack runtime is separate. Cross-persona isolation is structural: rook's runtime sees rook's credential dict; raven's runtime sees raven's; liminal never mixes them.
+As shipped, step 4 runs only when `liminal serve` is given `--cabal-url`: `GET {cabal_url}/admin/secrets/{persona}/{handler}` with a bearer token during the `tools/call`, with non-empty answers cached for the TTL per `(issuer, persona, handler)` (the issuer is empty outside sovereign mode). Without `--cabal-url` no resolver is wired and handlers get empty credentials. In sovereign mode (a policy grant authorized the call) the fetch runs only when the caller's issuer is one of the policy store's `parents()`; a caller from any other issuer gets empty credentials and liminal logs `credential.skipped_non_parent_issuer`, because the secrets path carries no issuer and a foreign issuer can mint any persona name (#143). There is no direct function call and no mTLS.
+
+**Handler pooling** (the unbuilt subprocess design): keyed by `(persona, handler)`. Two rook-* agents (rook-primus and rook-secundus) share one slack handler runtime — same persona, same credentials. raven's slack runtime is separate. Cross-persona isolation is structural: rook's runtime sees rook's credential dict; raven's runtime sees raven's; liminal never mixes them. What shipped is one handler instance per liminal process, shared by every persona; isolation is per call, through the `ctx.credentials` resolved for that call's caller.
 
 ---
 
@@ -197,10 +203,13 @@ Each handler ships a capability card that declares its tools, activation mode, a
 |-------|------|----------|-------------|
 | `handler` | string | yes | Unique handler identifier (the entry-point key) |
 | `description` | string | yes | Human-readable summary of what the handler covers |
-| `tools` | object[] | yes | Array of `{name, description}` for each tool the handler provides |
-| `activation` | enum | yes | `"always"` (visible in every `list_tools` response) \| `"on_demand"` (v2 — activated when the agent calls `liminal__activate` after a relevance match) |
+| `tools` | object[] | no (default `[]`) | Array of `{name, description}` for each tool the handler provides. An entry may also set `required_scope` (string; overrides the handler-level scope for that tool, even when weaker) and `requires_operator` (bool, default false; refused and hidden from `tools/list` unless the caller holds `operator`). |
+| `activation` | enum | no (default `"always"`) | `"always"` (visible in every `list_tools` response) \| `"on_demand"` (v2 — activated when the agent calls `liminal__activate` after a relevance match) |
 | `credential_keys` | string[] | recommended | Keys the handler reads from `ctx.credentials`. Documentation for the operator (what to populate via `cbl secret`) and for the handler author (what to expect) — *not* enforced; liminal passes the whole set Cabal Core returns. |
 | `labels` | object | no | Free-form key/value labels (e.g., `tier: "core"`) |
+| `required_scope` | string | no | Scope a sovereign grant must hold (or `admin:*`) to call any tool on this handler that has no per-tool `required_scope`. Unset means no scope gate. Applies only in sovereign mode, after the `allowed_handlers` gate. |
+
+The live schema is `CapabilityCard` in `src/liminal/protocol/card.py`.
 
 Example for the `slack` handler:
 
@@ -220,13 +229,15 @@ CAPABILITY_CARD = {
 
 `credential_keys` tells the **operator** which keys to populate for that handler via `cbl secret set rook slack SLACK_BOT_TOKEN=...` and tells the **handler author** what to read from `ctx.credentials`. It does **not** restrict what liminal injects — liminal always passes the full credential set Cabal Core returns for that `(persona, handler)`. This is forward-compatible: adding a new key via `cbl secret` propagates immediately without a card edit. The trade-off is that liminal itself sees all of a persona's secrets per handler; the trust boundary discussion is above under Handler runtime modes → Trust boundary.
 
-**Where the card lives at runtime.** The card is embedded in the handler's A2A AgentCard `metadata` field (per A2A v1.0 §4). One card, two consumers: liminal reads it to manage handler visibility and credential setup; A2A bulletin-board callers read it for capability discovery. Same source of truth.
+**Where the card lives at runtime.** The card is embedded in the handler's A2A AgentCard `metadata` field (per A2A v1.0 §4). One card, two consumers: liminal reads it to manage handler visibility and credential setup; A2A bulletin-board callers read it for capability discovery. Same source of truth. (Not built: liminal reads the card from `capability_card()` and builds no AgentCard.)
 
-**Failure posture.** Tool listing fails open (a broken card or transient registry error doesn't black-hole the agent's tool surface; the affected handler just doesn't appear). Security-critical operations (credential resolution, registration, `cbl discovery approve`) fail closed (refuse the operation on error rather than proceed with partial state).
+**Failure posture.** Tool listing fails open (a broken card or transient registry error doesn't black-hole the agent's tool surface; the affected handler just doesn't appear). Security-critical operations (credential resolution, registration, `cbl discovery approve`) fail closed (refuse the operation on error rather than proceed with partial state). Credential resolution as shipped is the exception: `CabalCoreCredentialResolver.fetch` is fail-soft, returning `{}` on a network error, a non-200 status, a non-JSON body or a wrong-shaped body, so the handler runs with empty credentials. Only a resolver that raises fails the call (`credential resolution failed`).
 
 ---
 
 ## Toolset Configuration
+
+> **Not built.** Nothing in liminal reads `toolset.yaml` or a persona's `identity.toml`. Per-caller handler filtering is the `liminal.allowed_handlers` list in the token's `cabal_tool_extras` (alias `tool_extras`) in single-cabal mode, or the policy grant's `allowed_handlers` in sovereign mode, where the token's list is ignored (`_allowed_handlers_for` in `server/routes.py`). Both `tools/list` and `tools/call` apply it.
 
 A `toolset.yaml` declares which handlers are active for a persona:
 
@@ -266,8 +277,8 @@ Tool scoping is the mechanism by which liminal decides which tools an agent sees
 **v1:**
 
 - **Capability cards** ship with every handler (schema and example above). All v1 handlers declare `activation: "always"` — every tool the handler provides shows up in every `list_tools` response that the caller's authorization allows. `tools/list` applies the same handler allowlist and per-tool scope gate as `tools/call`, so a persona never sees a tool it cannot call (#61).
-- **Fail-open invariant** for tool listing: a broken capability card or transient registry error doesn't black-hole the agent's tool surface; the missing handler simply doesn't appear, and other handlers stay reachable. Security-critical operations (credential resolution, registration, `cbl discovery approve`) fail-closed.
-- **QUARANTINED handlers** stay visible in `list_tools` but each `dispatch()` returns a structured `{error: "handler quarantined", retry_after: <seconds>}`. Fail-open on visibility, fail-fast on call — see Handler runtime modes above.
+- **Fail-open invariant** for tool listing: a broken capability card or transient registry error doesn't black-hole the agent's tool surface; the missing handler simply doesn't appear, and other handlers stay reachable. Security-critical operations (credential resolution, registration, `cbl discovery approve`) fail-closed. (As shipped, credential resolution is fail-soft unless the resolver raises; see Failure posture above.)
+- **QUARANTINED handlers** (not built: there is no crash-loop breaker or quarantine state, see the #72 correction under Handler runtime modes) stay visible in `list_tools` but each `dispatch()` returns a structured `{error: "handler quarantined", retry_after: <seconds>}`. Fail-open on visibility, fail-fast on call — see Handler runtime modes above.
 
 **v2:**
 
@@ -278,19 +289,19 @@ Tool scoping is the mechanism by which liminal decides which tools an agent sees
 
 ## Planned Handlers (v1 Cabal scope)
 
-All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see DTSP Integration above).
+All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see Tool Scoping → v2 above).
 
 | Handler | Notes |
 |---------|-------|
-| memory | Local techne queries (per-agent SQLite). No credentials required. |
-| files | Scoped file I/O. Each persona's `identity.toml` declares a `files.paths` allowlist (e.g., `["~/projects/cabal", "~/.cbl/scratch/rook"]`); reads and writes outside the allowlist return a structured error. Path traversal (`..`) is rejected before the allowlist check. |
+| memory | Local techne queries. No credentials required. A caller's `memory.db_path` (in `ctx.extra`) is used if it resolves inside an allowed directory (by default the directory of `LIMINAL_MEMORY_DB`) and refused if it does not; a caller with no override uses `LIMINAL_MEMORY_DB`; with that unset every call is refused. The rules live in `_resolve_db_path`, `MemoryConfig` and `get_handler()` in `handlers/memory.py`. |
+| files | Scoped file I/O. The allowlist is `files.allowed_paths` in `ctx.extra`, supplied by the token's `tool_extras` (single-cabal) or the trust registry's `[tool_extras]` (sovereign). `LIMINAL_FILES_ALLOWED_PATHS` is the allowlist for a caller with no such key; for a caller with one it is a ceiling the key can only narrow, and when it is unset the key is the allowlist; an empty or malformed key grants nothing. Reads and writes outside the allowlist return a structured error. Path traversal (`..`) is rejected before the allowlist check. Writes to protected paths (agent instruction files such as `CLAUDE.md` and `AGENTS.md`, code-execution paths such as `.mcp.json`, `.git/` and `.claude/`, hard-linked targets, and `LIMINAL_FILES_PROTECTED_PATTERNS`) are refused unless the sovereign grant holds `files:protected_writes` (#108, #110, #137). |
 | slack | Slack bot operations under the persona's Slack identity. Credentials: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` per persona. |
 | github | GitHub API (PRs, commits, search) under the persona's PAT. Credentials: `GITHUB_TOKEN` per persona. |
 | scratchpad | Per-agent ephemeral notes. No external credentials. |
-| patterns | Architect's pattern corpus surface (see a patterns handler (never built)). The handler is a thin MCP proxy to the Architect singleton-persona's data backend. No service-specific API key — the agent's A2A JWT is forwarded; Architect authenticates the caller against Cabal Core's JWKS the same way liminal does. |
+| patterns | Architect's pattern corpus surface, shipped by cabal as `cabal.handlers.patterns` (registered in cabal's `pyproject.toml`). Tools: `patterns.search` and `patterns.record` (`record` is operator-only). It calls techne's `techne.core.patterns` functions in-process against an `architect.db` file located by `patterns.db_path` in `ctx.extra`, falling back to `CABAL_ARCHITECT_DB`; with techne not installed every call fails with a structured error. No credentials. (This proposal described it as a thin MCP proxy to the Architect persona's backend, forwarding the caller's JWT.) |
 | datadog | Metrics queries. Credentials: `DATADOG_API_KEY`, `DATADOG_APP_KEY` per persona (typically only on personas that operate infra). |
 | atlassian | Jira / Confluence. Credentials per persona. |
-| web | Web search + fetch. **URL policy: allowlist by hostname**, declared per persona in `identity.toml` as `web.allowed_hosts = ["*"]` (broad) or specific domains. Default denies `localhost`, `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`, and link-local — explicit SSRF protection against pivoting through the agent to reach `http://cabal-core:8080`, `http://litellm:4000`, or cloud metadata services. Operators who genuinely need internal fetches whitelist hosts explicitly. |
+| web | HTTP fetch: `web.fetch` and `web.head`. **URL policy: allowlist by hostname** in `ctx.extra["web.allowed_hosts"]`, supplied by the token's `tool_extras` (single-cabal) or the trust registry's `[tool_extras]` (sovereign). An entry matches the host exactly, any subdomain of it, or `*` for everything. With the key absent or empty the handler uses its default of `["*"]`, and no environment variable narrows that default. Every resolved IP is checked against fixed deny ranges (`PRIVATE_NETWORKS` in `handlers/web.py`): loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `100.64.0.0/10`, `0.0.0.0/8`, `fc00::/7`, link-local, multicast and reserved space, with IPv4 addresses embedded in IPv6 checked too. That is SSRF protection against pivoting through the agent to reach `http://cabal-core:8080`, `http://litellm:4000`, or cloud metadata services. Allowlisting an internal host does not make it reachable, and no config knob opts out. In sovereign mode the handler also needs scope `web:fetch`. |
 
 ---
 
@@ -318,7 +329,7 @@ wanaku (evaluated 2026-06-07) is the enterprise/K8s answer to this exact problem
 |-----------|--------|-------------|
 | liminal core (handler loading via entry points; in-process call path; MCP Streamable HTTP server) | 3 days | Python module loadable into `cabal` daemon; MCP server for solo mode |
 | Subprocess transport (scale mode) — stdio JSON-RPC framing + spawn/cleanup lifecycle | 1.5 days | Subprocess handler runtime + cleanup-on-disconnect invariant + crash-loop circuit breaker |
-| Credential fetch (solo + scale) — in-process call vs mTLS to Cabal Core, 15-min cache, key rotation handling | 1 day | `cabal_core.secrets.get(persona, handler)` (solo); `GET /secrets/<persona>/<handler>` client (scale) |
+| Credential fetch (solo + scale) — in-process call vs mTLS to Cabal Core, 15-min cache, key rotation handling | 1 day | `cabal_core.secrets.get(persona, handler)` (solo); `GET /secrets/<persona>/<handler>` client (scale). Shipped as `CabalCoreCredentialResolver` against `/admin/secrets/{persona}/{handler}`, bearer token, no mTLS. |
 | Capability cards (v1: `always`-only, declared metadata, no on-demand wiring) | 1 day | Card schema, registry, fail-open invariant for tool listing |
 | First v1 handler set (memory, files, slack, github, patterns, scratchpad) | 2 days | Working handlers for rook + raven + architect with the security boundaries spelled out above (files allowlist, web allowlist) |
 | **Total** | **~8.5 days** | |
@@ -337,7 +348,7 @@ Federated MCP upstreams are declared in a versioned TOML file and loaded at star
 
 ```toml
 # targets.toml
-config_version = 1          # required; liminal will refuse version != 1 loudly
+config_version = 1          # recommended (absent loads with a warning); any value other than 1 is refused loudly
 
 # Minimal http target — the common case (two keys required)
 [[target]]
@@ -544,7 +555,7 @@ banner. Build on `_meta`.
 
 ## References
 
-- a patterns handler (never built) — Pattern Toolbox proposal (planned liminal handler)
+- Pattern Toolbox: shipped as cabal's `patterns` handler (`src/cabal/handlers/patterns.py` in the cabal repo), with direct `architect.db` access rather than a proxy
 
 ---
 
