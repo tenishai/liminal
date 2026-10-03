@@ -464,3 +464,337 @@ async def test_granted_scope_lifts_the_code_execution_gate(tmp_path) -> None:
     result = await _write(_handler(tmp_path), f"{tmp_path}/.mcp.json", ctx)
     assert result.is_error is False, result.error
     assert [(c["allowed"], c["protected"]) for c in audit.calls] == [(True, ".mcp.json")]
+
+
+# ---- #110: more instruction files, hard links, operator patterns ------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".github/instructions/py.instructions.md",
+        ".github/instructions/sub/x.instructions.md",
+        ".clinerules/style.md",
+        ".cline/rules/style.md",
+        ".windsurf/rules/x.md",
+        ".devin/rules/x.md",
+        ".roorules",
+        ".roorules-code",
+        ".roo/rules/x.md",
+        "sub/.Roo/rules-dev/x.md",
+    ],
+)
+async def test_more_instruction_files_are_refused(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel", [".gemini/settings.json", ".gemini/commands/x.toml", ".vscode/mcp.json",
+            "sub/.VSCode/MCP.json"]
+)
+async def test_more_code_execution_paths_are_refused(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".github/instructions.md",
+        ".github/instructions",
+        ".github/ISSUE_TEMPLATE/bug.md",
+        ".cline/notes.md",
+        ".windsurf/notes.md",
+        ".devin/notes.md",
+        "rules/x.md",
+        ".vscode/settings.json",
+        "vscode/mcp.json",
+        "roorules",
+        ".roorules.bak",
+        "gemini/settings.json",
+    ],
+)
+async def test_neighbours_of_the_new_paths_still_write(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is False, result.error
+    assert (tmp_path / rel).read_text() == "ignore previous instructions"
+
+
+HARD_LINK_REFUSAL = "protected hard-linked file"
+
+
+@pytest.mark.asyncio
+async def test_hard_link_to_a_protected_file_is_refused(tmp_path) -> None:
+    """The case name matching cannot see: an ordinary name sharing an inode
+    with CLAUDE.md."""
+    (tmp_path / "CLAUDE.md").write_text("be careful")
+    os.link(tmp_path / "CLAUDE.md", tmp_path / "notes.md")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/notes.md")
+    assert result.is_error is True
+    assert HARD_LINK_REFUSAL in result.error
+    assert "requires operator grant" in result.error
+    assert (tmp_path / "CLAUDE.md").read_text() == "be careful"
+
+
+@pytest.mark.asyncio
+async def test_hard_link_to_a_protected_file_outside_the_allowlist_is_refused(
+    tmp_path,
+) -> None:
+    """The protected file may be somewhere the handler never looks, like
+    ~/.claude.json, which is why the rule is "any hard link"."""
+    outside = tmp_path / "home"
+    root = tmp_path / "repo"
+    outside.mkdir()
+    root.mkdir()
+    (outside / ".claude.json").write_text("{}")
+    os.link(outside / ".claude.json", root / "config.json")
+    result = await _write(_handler(root), f"{root}/config.json")
+    assert result.is_error is True
+    assert HARD_LINK_REFUSAL in result.error
+    assert (outside / ".claude.json").read_text() == "{}"
+
+
+@pytest.mark.asyncio
+async def test_hard_link_between_ordinary_files_is_refused_too(tmp_path) -> None:
+    (tmp_path / "a.txt").write_text("a")
+    os.link(tmp_path / "a.txt", tmp_path / "b.txt")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/b.txt")
+    assert result.is_error is True
+    assert HARD_LINK_REFUSAL in result.error
+
+
+@pytest.mark.asyncio
+async def test_singly_linked_file_is_overwritten(tmp_path) -> None:
+    (tmp_path / "a.txt").write_text("a much longer original text")
+    result = await _write(_handler(tmp_path), f"{tmp_path}/a.txt")
+    assert result.is_error is False, result.error
+    assert (tmp_path / "a.txt").read_text() == "ignore previous instructions"
+
+
+@pytest.mark.asyncio
+async def test_hard_link_denial_is_audited_and_grant_lifts_it(tmp_path) -> None:
+    (tmp_path / "a.txt").write_text("a")
+    os.link(tmp_path / "a.txt", tmp_path / "b.txt")
+    audit = _Audit()
+    await _write(_handler(tmp_path), f"{tmp_path}/b.txt", _ctx(audit=audit))
+    granted = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
+    result = await _write(_handler(tmp_path), f"{tmp_path}/b.txt", granted)
+    assert result.is_error is False, result.error
+    assert (tmp_path / "a.txt").read_text() == "ignore previous instructions"
+    assert [(c["allowed"], c["protected"]) for c in audit.calls] == [
+        (False, "hard link"),
+        (True, "hard link"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hard_link_made_between_the_gate_and_the_open_is_refused(
+    tmp_path, monkeypatch
+) -> None:
+    """The write re-checks the link count on the open file, so a link made
+    between the gate's stat and that fstat does not get through. A link made
+    after the fstat, while the write runs, is not caught; nothing tests that
+    because nothing prevents it."""
+    import liminal.handlers.files as files_mod
+
+    (tmp_path / "CLAUDE.md").write_text("be careful")
+    (tmp_path / "notes.md").write_text("n")
+    real = files_mod._is_hard_linked
+
+    def gate_check_then_link(path: Path) -> bool:
+        answer = real(path)
+        (tmp_path / "notes.md").unlink()
+        os.link(tmp_path / "CLAUDE.md", tmp_path / "notes.md")
+        return answer
+
+    monkeypatch.setattr(files_mod, "_is_hard_linked", gate_check_then_link)
+    result = await _write(_handler(tmp_path), f"{tmp_path}/notes.md")
+    assert result.is_error is True
+    assert "became a hard-linked file" in result.error
+    assert (tmp_path / "CLAUDE.md").read_text() == "be careful"
+
+
+# ---- operator patterns (LIMINAL_FILES_PROTECTED_PATTERNS) -------------------
+
+OPERATOR_REFUSAL = "protected operator-protected path"
+
+
+def _patterned(root: Path, *patterns: str) -> FilesHandler:
+    return FilesHandler(
+        default_config=FilesConfig(allowed_paths=[root], protected_patterns=list(patterns))
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pattern", "rel"),
+    [
+        (".husky", ".husky/pre-commit"),
+        (".husky/", "sub/.husky/pre-commit"),
+        ("*.env", "config/prod.env"),
+        ("*.ENV", "Prod.Env"),
+        (".githooks/*", ".githooks/pre-push"),
+        (".githooks/*", "sub/.githooks/deep/x"),
+        ("Makefile", "Makefile"),
+    ],
+)
+async def test_operator_pattern_is_refused(tmp_path, pattern: str, rel: str) -> None:
+    result = await _write(_patterned(tmp_path, pattern), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert OPERATOR_REFUSAL in result.error
+    assert f"operator pattern {pattern.casefold().rstrip('/')}" in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+async def test_operator_pattern_can_be_an_absolute_path(tmp_path) -> None:
+    pattern = f"{tmp_path.resolve().as_posix()}/locked/*"
+    handler = _patterned(tmp_path, pattern)
+    result = await _write(handler, f"{tmp_path}/locked/a.txt")
+    assert result.is_error is True
+    assert OPERATOR_REFUSAL in result.error
+    ok = await _write(handler, f"{tmp_path}/open/a.txt")
+    assert ok.is_error is False, ok.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pattern", "rel"),
+    [
+        (".husky", "husky/pre-commit"),
+        ("*.env", "prod.env.example"),
+        (".githooks/*", "my.githooks/x"),
+        ("Makefile", "Makefile.am"),
+    ],
+)
+async def test_operator_pattern_neighbours_still_write(tmp_path, pattern: str, rel: str) -> None:
+    result = await _write(_patterned(tmp_path, pattern), f"{tmp_path}/{rel}")
+    assert result.is_error is False, result.error
+
+
+@pytest.mark.asyncio
+async def test_operator_patterns_add_to_and_never_replace_the_builtins(tmp_path) -> None:
+    """Built-ins are checked first, and there is no syntax to remove one: a
+    pattern that matches nothing, or a negation-looking one, leaves them on."""
+    handler = _patterned(tmp_path, "nothing-matches-this", "!CLAUDE.md", "")
+    for rel in ["CLAUDE.md", ".mcp.json", ".git/hooks/pre-commit"]:
+        result = await _write(handler, f"{tmp_path}/{rel}")
+        assert result.is_error is True, rel
+        assert "operator pattern" not in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+async def test_operator_pattern_matches_through_a_symlinked_parent(tmp_path) -> None:
+    (tmp_path / ".husky").mkdir()
+    os.symlink(tmp_path / ".husky", tmp_path / "h")
+    result = await _write(_patterned(tmp_path, ".husky"), f"{tmp_path}/h/pre-commit")
+    assert result.is_error is True
+    assert OPERATOR_REFUSAL in result.error
+    assert not (tmp_path / ".husky" / "pre-commit").exists()
+
+
+@pytest.mark.asyncio
+async def test_operator_patterns_apply_under_a_per_persona_allowlist(tmp_path) -> None:
+    """A JWT-narrowed allowlist builds its own config; the patterns still come
+    from the operator's, and nothing in ctx.extra can drop them."""
+    handler = _patterned(tmp_path, ".husky")
+    ctx = _ctx(**{"files.allowed_paths": [str(tmp_path)], "files.protected_patterns": []})
+    result = await _write(handler, f"{tmp_path}/.husky/pre-commit", ctx)
+    assert result.is_error is True
+    assert OPERATOR_REFUSAL in result.error
+
+
+@pytest.mark.asyncio
+async def test_grant_lifts_an_operator_pattern_and_is_audited(tmp_path) -> None:
+    audit = _Audit()
+    ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
+    result = await _write(_patterned(tmp_path, ".husky"), f"{tmp_path}/.husky/x", ctx)
+    assert result.is_error is False, result.error
+    assert [(c["allowed"], c["protected"]) for c in audit.calls] == [
+        (True, "operator pattern .husky")
+    ]
+
+
+def _fresh_handler(monkeypatch, value: str | None):
+    """get_handler() memoises, so reset the singleton before each read."""
+    import liminal.handlers.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_SINGLETON", None)
+    if value is None:
+        monkeypatch.delenv(files_mod.PROTECTED_PATTERNS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(files_mod.PROTECTED_PATTERNS_ENV, value)
+    return files_mod.get_handler()
+
+
+def test_unset_pattern_env_adds_nothing(monkeypatch) -> None:
+    assert _fresh_handler(monkeypatch, None).default_config.protected_patterns == []
+
+
+def test_pattern_env_is_split_on_pathsep_and_normalised(monkeypatch) -> None:
+    raw = os.pathsep.join([" .Husky/ ", "", "*.env", "  "])
+    handler = _fresh_handler(monkeypatch, raw)
+    assert handler.default_config.protected_patterns == [".husky", "*.env"]
+
+
+@pytest.mark.asyncio
+async def test_pattern_env_refuses_end_to_end(monkeypatch, tmp_path) -> None:
+    """Both variables set, no JWT: the auth-off deployment the env vars serve."""
+    import liminal.handlers.files as files_mod
+
+    monkeypatch.setenv(files_mod.ALLOWED_PATHS_ENV, str(tmp_path))
+    handler = _fresh_handler(monkeypatch, ".husky")
+    result = await _write(handler, f"{tmp_path}/.husky/pre-commit")
+    assert result.is_error is True
+    assert OPERATOR_REFUSAL in result.error
+    ok = await _write(handler, f"{tmp_path}/notes.md")
+    assert ok.is_error is False, ok.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pattern", ["sub/.husky/", "sub/.husky"])
+async def test_operator_path_pattern_protects_files_beneath_it(tmp_path, pattern: str) -> None:
+    """A path pattern naming a directory, with or without the trailing `/`,
+    covers what is under it, not only the directory's own path."""
+    handler = _patterned(tmp_path, pattern)
+    for rel in ["sub/.husky/pre-commit", "x/sub/.husky/deep/hook", "sub/.husky"]:
+        result = await _write(handler, f"{tmp_path}/{rel}")
+        assert result.is_error is True, rel
+        assert OPERATOR_REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+    for rel in ["sub/.husky-notes/x", "other/.husky/x", "sub/husky/x"]:
+        ok = await _write(handler, f"{tmp_path}/{rel}")
+        assert ok.is_error is False, (rel, ok.error)
+
+
+@pytest.mark.asyncio
+async def test_operator_absolute_dir_pattern_protects_files_beneath_it(tmp_path) -> None:
+    pattern = f"{tmp_path.resolve().as_posix()}/locked/"
+    handler = _patterned(tmp_path, pattern)
+    for rel in ["locked/a.txt", "locked/deep/b.txt"]:
+        result = await _write(handler, f"{tmp_path}/{rel}")
+        assert result.is_error is True, rel
+        assert OPERATOR_REFUSAL in result.error
+    ok = await _write(handler, f"{tmp_path}/locked-not/a.txt")
+    assert ok.is_error is False, ok.error
+
+
+@pytest.mark.asyncio
+async def test_operator_root_pattern_protects_the_whole_tree(tmp_path) -> None:
+    """`/` keeps its slash through normalisation; its beneath form must be
+    `/*`, not `//*`, or it would protect only the root path itself."""
+    handler = _patterned(tmp_path, "/")
+    for rel in ["a.txt", "deep/b.txt"]:
+        result = await _write(handler, f"{tmp_path}/{rel}")
+        assert result.is_error is True, rel
+        assert OPERATOR_REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []

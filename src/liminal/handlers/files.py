@@ -26,7 +26,10 @@ Defenses (applied before any disk operation):
      like, .mcp.json, .claude.json, .git/hooks/*, .git/config, or anywhere
      under a `.claude/` or `.cursor/` directory, is refused
      unless the server-side policy grant holds `files:protected_writes`.
-     See `_protected_match`.
+     So is a write to a hard-linked file (when the extra link exists at the
+     check; a link made after the open-time re-check and before the write
+     ends is not caught), and to anything matching the operator's
+     LIMINAL_FILES_PROTECTED_PATTERNS. See `_protected_match`.
 
 Allowlist source: constructor default (operator-wired at handler
 factory time, or from LIMINAL_FILES_ALLOWED_PATHS — see `get_handler`)
@@ -36,7 +39,9 @@ web handler's hostname allowlist.
 
 from __future__ import annotations
 
+import fnmatch
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,14 +69,19 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 #
 # Matched case-insensitively, in any directory, against the requested path AND
 # the resolved one, so neither case, `./`, a symlinked file nor a symlinked
-# parent reaches a protected file under a different name. A hard link can, and
-# is not handled: files.write cannot create one. Nor are `@path` imports
-# from a CLAUDE.md (#110). Shape follows the prior art
+# parent reaches a protected file under a different name. A hard link would,
+# so a hard-linked target is refused when the extra link exists at the check;
+# a link made after the open-time re-check and before the write ends is not
+# caught (see `_is_hard_linked`, `_write_unless_hard_linked`). Files a
+# CLAUDE.md pulls in through `@path` imports are NOT covered (#110): which
+# files those are depends on the content of every CLAUDE.md a later session
+# loads, including ones outside the allowlist and ones edited after this
+# write, so a write-time check cannot be complete. Shape follows the prior art
 # cited in #108 (hermes-agent's write guards, ported from Roo-Code).
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
     {
         "claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md",
-        ".windsurfrules", ".clinerules",
+        ".windsurfrules", ".clinerules", ".roorules",
         # Code execution (#110): these register MCP servers, i.e. commands an
         # agent starts on its next launch in the tree.
         ".mcp.json", ".claude.json", ".git",
@@ -84,17 +94,45 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
 # and `.git/worktrees/*/commondir` can redirect a worktree to another common
 # dir. (`.git/config` sets core.hooksPath, core.fsmonitor and core.sshCommand,
 # all of which run commands.) `.github/` and `.gitignore` are different names
-# and stay writable.
-PROTECTED_DIRS: frozenset[str] = frozenset({".claude", ".cursor", ".git"})
+# and stay writable. `.gemini/settings.json` registers MCP servers for Gemini
+# CLI, so `.gemini/` is a code-execution path too. `.clinerules/` (Cline's
+# directory form) and `.roo/` (Roo Code's `rules/` and `rules-<mode>/`) hold instructions.
+PROTECTED_DIRS: frozenset[str] = frozenset(
+    {".claude", ".cursor", ".git", ".gemini", ".clinerules", ".roo"}
+)
 # Exact parent/child pairs naming a single file.
 PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
-    {(".github", "copilot-instructions.md")}
+    {
+        (".github", "copilot-instructions.md"),
+        # VS Code's workspace MCP servers (code execution).
+        (".vscode", "mcp.json"),
+    }
 )
+# Parent/child directory pairs: anything beneath `<parent>/<child>/`. Copilot's
+# path-specific instructions, Cline's alternative rules dir, and Windsurf's
+# rules dirs (`.devin/rules` is its current name for `.windsurf/rules`). The
+# parents themselves hold other things and stay writable.
+PROTECTED_DIR_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {
+        (".github", "instructions"),
+        (".cline", "rules"),
+        (".windsurf", "rules"),
+        (".devin", "rules"),
+    }
+)
+# Built-in fnmatch patterns, checked like the operator's (see
+# `_pattern_match`): Roo Code's per-mode single-file rules.
+BUILTIN_PROTECTED_PATTERNS: tuple[str, ...] = (".roorules-*",)
 # Names above that are code-execution paths rather than instruction files; used
 # only to word the refusal. `.git` as a basename is the pointer file of a linked
 # worktree or submodule checkout (`gitdir: <path>`), which redirects git to
 # another gitdir and so to its config and hooks.
-_EXEC_NAMES: frozenset[str] = frozenset({".mcp.json", ".claude.json", ".git/", ".git"})
+_EXEC_NAMES: frozenset[str] = frozenset(
+    {".mcp.json", ".claude.json", ".git/", ".git", ".gemini/", ".vscode/mcp.json"}
+)
+
+# Reported as the match for a hard-linked target (see `_is_hard_linked`).
+HARD_LINK_MATCH = "hard link"
 
 # The one grant that lifts the gate. Checked against `ctx.granted_scopes`, which
 # only the server-side policy grant fills, so a token cannot grant it to itself.
@@ -132,12 +170,18 @@ class FilesConfig:
     max_read_bytes: int = DEFAULT_MAX_READ_BYTES
     max_write_bytes: int = DEFAULT_MAX_WRITE_BYTES
     max_list_entries: int = DEFAULT_MAX_LIST_ENTRIES
+    # Operator fnmatch patterns ADDED to the built-in protected set (#110).
+    # There is no way to remove a built-in: the gate checks the built-ins
+    # first and these only after. Read from `default_config` alone, never from
+    # a per-persona config, so a token cannot add or drop one.
+    protected_patterns: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.allowed_paths = [
             Path(p).expanduser().resolve()
             for p in self.allowed_paths
         ]
+        self.protected_patterns = _normalise_patterns(self.protected_patterns)
 
 
 @dataclass
@@ -222,10 +266,10 @@ class FilesHandler:
         if name == "read":
             return await self._read(resolved, payload, cfg)
         if name == "write":
-            refusal = await self._gate_protected_write(raw_path, resolved, ctx)
+            refusal, approved = await self._gate_protected_write(raw_path, resolved, ctx)
             if refusal is not None:
                 return refusal
-            return await self._write(resolved, payload, cfg)
+            return await self._write(resolved, payload, cfg, allow_hard_linked=approved)
         if name == "list":
             return await self._list(resolved, cfg)
         if name == "exists":
@@ -334,18 +378,34 @@ class FilesHandler:
 
     async def _gate_protected_write(
         self, raw_path: str, resolved: Path, ctx: Context
-    ) -> ToolResult | None:
+    ) -> tuple[ToolResult | None, bool]:
         """Refuse a write to a protected instruction file unless granted.
 
-        Returns None to let the write proceed. Every decision on a protected
-        path is audited: a denial, and a granted write before it happens.
+        Returns (refusal, approved). A None refusal lets the write proceed;
+        `approved` is True when a protected path matched and the grant holds,
+        which is what lets `_write` go through a hard link. Every decision on a
+        protected path is logged. It is also audited, a denial and a granted
+        write before it happens, when `ctx.audit` is set; routes.py sets it
+        only in sovereign mode (a grant and a policy store). With `ctx.audit`
+        None a granted write is still approved and only logged.
         """
-        match = _protected_target(raw_path, resolved)
+        match = _protected_target(
+            raw_path, resolved, self.default_config.protected_patterns
+        )
+        if match is None and await anyio.to_thread.run_sync(_is_hard_linked, resolved):
+            match = HARD_LINK_MATCH
         if match is None:
-            return None
+            return None, False
 
         allowed = PROTECTED_WRITE_SCOPE in ctx.granted_scopes
-        kind = "code-execution path" if match in _EXEC_NAMES else "instruction file"
+        if match in _EXEC_NAMES:
+            kind = "code-execution path"
+        elif match == HARD_LINK_MATCH:
+            kind = "hard-linked file"
+        elif match.startswith(_OPERATOR_PREFIX):
+            kind = "operator-protected path"
+        else:
+            kind = "instruction file"
         detail = {
             "tool": "files.write",
             "path": str(resolved),
@@ -363,17 +423,17 @@ class FilesHandler:
                 return ToolResult.failure(
                     f"protected {kind} {str(resolved)!r}: audit record "
                     "failed, refusing the write"
-                )
+                ), False
 
         if allowed:
-            return None
+            return None, True
         return ToolResult.failure(
             f"protected {kind} ({match}); requires operator grant. "
             f"{str(resolved)!r} is loaded or run by agent tools and git, so "
             "writing it needs the server-side "
             f"{PROTECTED_WRITE_SCOPE!r} grant. Report this rather than writing "
             "the content somewhere else."
-        )
+        ), False
 
     # ---- tools ------------------------------------------------------------
 
@@ -407,7 +467,12 @@ class FilesHandler:
         )
 
     async def _write(
-        self, path: Path, payload: dict[str, Any], cfg: FilesConfig
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        cfg: FilesConfig,
+        *,
+        allow_hard_linked: bool = False,
     ) -> ToolResult:
         content = payload.get("content")
         if not isinstance(content, str):
@@ -424,9 +489,20 @@ class FilesHandler:
                 await anyio.to_thread.run_sync(
                     lambda: path.parent.mkdir(parents=True, exist_ok=True)
                 )
-            await anyio.to_thread.run_sync(lambda: path.write_bytes(encoded))
+            linked = await anyio.to_thread.run_sync(
+                _write_unless_hard_linked, path, encoded, allow_hard_linked
+            )
         except OSError as exc:
             return ToolResult.failure(f"write failed: {exc}")
+        if linked:
+            # The gate saw one link; the open file has more. A link was made
+            # between the gate's stat and the fstat, so the gate's answer no
+            # longer holds.
+            log.warning("files.hard_link_appeared", path=str(path))
+            return ToolResult.failure(
+                f"write refused: {str(path)!r} became a hard-linked file "
+                "during the write; requires operator grant"
+            )
         return ToolResult.json({"path": str(path), "bytes_written": len(encoded)})
 
     async def _list(self, path: Path, cfg: FilesConfig) -> ToolResult:
@@ -471,17 +547,23 @@ class FilesHandler:
         )
 
 
-def _protected_target(raw_path: str, resolved: Path) -> str | None:
+def _protected_target(
+    raw_path: str, resolved: Path, extra_patterns: list[str] | None = None
+) -> str | None:
     """Check both the requested path (normalised, not resolved) and the
     resolved one. The first catches a protected name that is a symlink to an
     ordinary file; the second catches an ordinary name, or a parent directory,
     that is a symlink to a protected one."""
     requested = Path(os.path.normpath(Path(raw_path).expanduser()))
-    return _protected_match(requested) or _protected_match(resolved)
+    extra = extra_patterns or []
+    return _protected_match(requested, extra) or _protected_match(resolved, extra)
 
 
-def _protected_match(path: Path) -> str | None:
-    """The protected name `path` hits, or None. Case-insensitive, any depth."""
+def _protected_match(path: Path, extra_patterns: list[str] | None = None) -> str | None:
+    """The protected name `path` hits, or None. Case-insensitive, any depth.
+
+    Built-ins are checked first, so an operator pattern can only add to them.
+    """
     parts = [part.casefold() for part in path.parts]
     if parts and parts[-1] in PROTECTED_BASENAMES:
         return parts[-1]
@@ -490,7 +572,91 @@ def _protected_match(path: Path) -> str | None:
     for part in parts[:-1]:
         if part in PROTECTED_DIRS:
             return f"{part}/"
+    for pair in zip(parts[:-2], parts[1:-1], strict=True):
+        if pair in PROTECTED_DIR_PAIRS:
+            return f"{pair[0]}/{pair[1]}/"
+    whole = path.as_posix().casefold()
+    for pattern in BUILTIN_PROTECTED_PATTERNS:
+        if _pattern_match(pattern, parts, whole):
+            return pattern
+    for pattern in extra_patterns or []:
+        if _pattern_match(pattern, parts, whole):
+            return f"{_OPERATOR_PREFIX}{pattern}"
     return None
+
+
+# Prefix on an operator pattern's match, so the refusal says where it came from.
+_OPERATOR_PREFIX = "operator pattern "
+
+
+def _pattern_match(pattern: str, parts: list[str], whole: str) -> bool:
+    """fnmatch `pattern` (already casefolded) against casefolded `parts`
+    and the casefolded POSIX form of the whole path.
+
+    A pattern with no `/` is a NAME: it matches any component, the file or a
+    directory above it, so `.husky` protects everything under `.husky/` and
+    `*.env` protects every `.env` file. A pattern with a `/` is a PATH,
+    matched against the whole path; unless it starts with `/` or `*` it is
+    anchored at any directory, so `.husky/*` matches `<anything>/.husky/...`.
+    A PATH also protects everything beneath what it matches, the same as a
+    NAME does, so `sub/.husky` (or `sub/.husky/`, the trailing `/` having been
+    dropped by `_normalise_patterns`) covers `sub/.husky/pre-commit`.
+    `*` crosses `/` (plain fnmatch), so one `*` covers any depth.
+    """
+    if "/" not in pattern:
+        return any(fnmatch.fnmatchcase(part, pattern) for part in parts)
+    if not pattern.startswith(("/", "*")):
+        pattern = "*/" + pattern
+    return fnmatch.fnmatchcase(whole, pattern) or fnmatch.fnmatchcase(
+        whole, pattern.rstrip("/") + "/*"
+    )
+
+
+def _is_hard_linked(path: Path) -> bool:
+    """True if `path` is an existing regular file with more than one link.
+
+    THE RULE IS "ANY HARD LINK", NOT "A HARD LINK TO A PROTECTED FILE", because
+    the second cannot be decided correctly here. A link's other names are not
+    recorded on the inode; finding them means scanning every directory on the
+    filesystem, and the protected file it shares may sit outside the allowlist
+    (`~/.claude.json`, `~/.claude/CLAUDE.md`) where this handler does not look.
+    Name matching sees only the name the caller used. So any regular file with
+    st_nlink > 1 is treated as protected and needs the same grant. Hard links
+    are rare in a tree an agent writes to; the common case is a package
+    store's hard-linked install (pnpm, uv), where writing through the link
+    would also change the shared store, so refusing is right there too.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_nlink > 1
+
+
+def _write_unless_hard_linked(path: Path, data: bytes, allow_hard_linked: bool) -> bool:
+    """Write `data` to `path`; return True, writing nothing, if the open file
+    turns out hard-linked and that was not approved.
+
+    Opens WITHOUT truncating and checks the link count on the open descriptor,
+    so the inode checked is the inode written. This NARROWS the window left by
+    the gate's `_is_hard_linked`; it does not close it. A link made after the
+    fstat below and before the write loop ends is not seen, and the content
+    reaches the linked file. Closing that would need the check and the write
+    to be one atomic step, which POSIX does not offer for an in-place write.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o666)
+    try:
+        st = os.fstat(fd)
+        if stat.S_ISREG(st.st_mode) and st.st_nlink > 1 and not allow_hard_linked:
+            return True
+        os.ftruncate(fd, 0)
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+    finally:
+        os.close(fd)
+    return False
 
 
 def _is_under(candidate: Path, prefix: Path) -> bool:
@@ -546,6 +712,36 @@ def _paths_from_env(raw: str | None) -> list[Path]:
     return out
 
 
+PROTECTED_PATTERNS_ENV = "LIMINAL_FILES_PROTECTED_PATTERNS"
+
+
+def _normalise_patterns(raw: list[str]) -> list[str]:
+    """Strip, casefold, drop empties, and drop a trailing `/` (except on a lone `/`). That is safe
+    because every pattern already protects what lies beneath its match (see
+    `_pattern_match`). Matching is case-insensitive, like the built-ins."""
+    out: list[str] = []
+    for pattern in raw:
+        if not isinstance(pattern, str):
+            continue
+        pattern = pattern.strip().replace("\\", "/").casefold()
+        if len(pattern) > 1:
+            pattern = pattern.rstrip("/")
+        if pattern:
+            out.append(pattern)
+    return out
+
+
+def _patterns_from_env(raw: str | None) -> list[str]:
+    """Parse LIMINAL_FILES_PROTECTED_PATTERNS into fnmatch patterns.
+
+    os.pathsep-separated, like LIMINAL_FILES_ALLOWED_PATHS. These are added to
+    the built-in protected set and cannot remove from it; unset adds nothing.
+    """
+    if not raw:
+        return []
+    return _normalise_patterns(raw.split(os.pathsep))
+
+
 def get_handler() -> Handler:
     """Entry-point factory.
 
@@ -578,7 +774,10 @@ def get_handler() -> Handler:
     if _SINGLETON is None:
         _SINGLETON = FilesHandler(
             default_config=FilesConfig(
-                allowed_paths=_paths_from_env(os.environ.get(ALLOWED_PATHS_ENV))
+                allowed_paths=_paths_from_env(os.environ.get(ALLOWED_PATHS_ENV)),
+                protected_patterns=_patterns_from_env(
+                    os.environ.get(PROTECTED_PATTERNS_ENV)
+                ),
             )
         )
     return _SINGLETON
