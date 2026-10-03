@@ -1,8 +1,8 @@
 ---
 card: repo-card:liminal
 updated: 2026-10-03
-anchor: pyproject.toml sha=8b1aa2fb1f51d78beabece0bf9cc7f569204b9d9
-anchor: src/liminal/server/routes.py sha=221458c82d66576e9fd29841fe1739cf32e43c19
+anchor: pyproject.toml sha=a567ddf9a9b25c710591fae721d0149dee32e73d
+anchor: src/liminal/server/routes.py sha=b0af5e275de3e8c318d1326211812aa7fd01cbe8
 ---
 # liminal — repo card
 
@@ -15,12 +15,12 @@ ENTRY:
 - JSON-RPC route → src/liminal/server/routes.py (POST /mcp: initialize/ping/tools/list/tools/call; GET /healthz)
 - client lib → src/liminal/client/ (AsyncMCPClient/MCPClient read plain-JSON and Streamable-HTTP SSE replies; LibraryLiminalClient, ProxyLiminalClient, from_config)
 AUTH MODES (exclusive, cli.py): `--jwks-url` = single-cabal (token's `cabal_scope`/`scope` must contain `dispatch`; token `cabal_tool_extras`/`tool_extras` trusted) | `--trust-registry` + `--policy-db` = sovereign (multi-issuer; token scope/extras IGNORED, grant resolved server-side) | `LIMINAL_AUTH_DISABLED=1` = synthesized claims (identity `anonymous`, scope `[dispatch]`, issuer `local`) and NO JWT verification. With no grant and no token claims, the grant-based scope gate is skipped and the handler allowlist finds no `tool_extras` to restrict by (all handlers allowed). Still applied: the secret guard (routes.py; off only via `LIMINAL_SECRET_GUARD`, not by auth-disabled) and the operator-only gate, which refuses every `requires_operator` tool because no caller can prove operator scope. `--jwks-url` and `--trust-registry` together = CLI error exit 2.
-REQUEST PATH (routes.py:_handle_tools_call): auth → handler allowlist → per-tool scope gate (sovereign only) → operator-only gate (`requires_operator` tools, EVERY mode) → secret guard (write tools) → credential resolver → build Context → Multiplexer.dispatch → wire framing (+ `_meta["liminal/untrusted"]` for untrusted targets).
+REQUEST PATH (routes.py:_handle_tools_call): auth → handler allowlist → per-tool scope gate (sovereign only) → operator-only gate (`requires_operator` tools, EVERY mode) → secret guard (write tools) → credential resolver (sovereign: parent issuer's callers only) → build Context → Multiplexer.dispatch → wire framing (+ `_meta["liminal/untrusted"]` for untrusted targets).
 
 SEAMS → card:
 - handler-protocol  src/liminal/protocol/handler.py + registry/discover.py  (entry-point Handler contract; cabal ships handlers through it)  → docs/arch/handler-protocol.md
 - policy            src/liminal/server/policy.py + routes.py + admin.py  (sovereign authz: grants, parent rows, audit)  → docs/arch/policy.md
-- credentials       src/liminal/server/credentials.py  (per-(persona,handler) secrets from cabal /admin/secrets)  → docs/arch/credentials.md
+- credentials       src/liminal/server/credentials.py  (per-(issuer,persona,handler) cache of cabal /admin/secrets; sovereign mode resolves only for the parent issuer, #143)  → docs/arch/credentials.md
 - targets           src/liminal/dispatch/multiplexer.py + target/*  (namespacing, federated HTTP upstreams, untrusted framing)  → docs/arch/targets.md
 - client            src/liminal/client/mcp.py + library.py  (MCP client lib cabal imports)  → docs/arch/client.md
 - (uncarded) server/secret_guard.py: shape-based pre-dispatch scan of files.write/memory.commit/notify.send content; fail-closed, ON unless `LIMINAL_SECRET_GUARD` is falsey.
