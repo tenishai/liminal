@@ -120,13 +120,20 @@ class CabalCoreCredentialResolver:
             )
             return {}
 
-        creds = body.get("credentials") or {}
+        # A body that is not a JSON object (e.g. an array) is wrong-shape too.
+        creds = (body.get("credentials") or {}) if isinstance(body, dict) else None
         if not isinstance(creds, dict):
             log.warning(
                 "credentials.fetch_wrong_shape",
                 persona=persona,
                 handler=handler,
             )
+            return {}
+
+        # An empty answer is likely "not provisioned yet", not a settled
+        # fact; caching it would hide a secret added minutes later for
+        # the full TTL. Return it uncached so the next call asks again.
+        if not creds:
             return {}
 
         # Coerce to str→str for the handler contract.
