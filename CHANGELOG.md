@@ -85,6 +85,12 @@ Each line cites the pull request that made the change.
   returned uncached, so a secret added later is seen on the next call; a body that is not
   a JSON object now returns `{}` as a wrong-shape answer instead of raising
   `AttributeError`.
+- **The MCP client reuses its connection after an SSE reply** (tenishai/liminal#138, closes tenishai/liminal#132). Both
+  clients stopped reading at the reply, before the chunked terminator, so an
+  SSE-answered call almost never reused a connection: 13 requests on one client opened 12
+  connections against a local SSE server. They now drain the rest of the
+  stream for up to `sse_drain_timeout` seconds (default 0.5) and close the connection if
+  the server holds the stream open longer. Plain JSON replies are unchanged.
 - **A JSON reply that is not an object is a clean `MCPTransportError`** in both clients,
   instead of an `AttributeError` on `.get` (tenishai/liminal#129).
 - **The README quickstart runs as written on a fresh Ubuntu machine** (tenishai/liminal#128).

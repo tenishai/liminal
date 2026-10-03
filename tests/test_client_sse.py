@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -161,7 +162,13 @@ def test_comments_and_crlf_line_endings_are_tolerated():
     assert sync_client(Server(tools_body=crlf)).list_tools()[0].name == "get_me"
 
 
-# ---- the client stops reading at its reply --------------------------------
+# ---- the client does not wait for the stream to close ---------------------
+#
+# After its reply the client drains for at most sse_drain_timeout so the
+# connection can be reused (liminal#132). The sync drain needs a real socket, so
+# against MockTransport the sync client still stops at the reply; the async
+# client drains here too. The real-server cases, including a stream held open,
+# are in test_client_sse_pool.py.
 
 
 class _ThenFail(httpx.SyncByteStream, httpx.AsyncByteStream):
@@ -179,13 +186,25 @@ class _ThenFail(httpx.SyncByteStream, httpx.AsyncByteStream):
         raise AssertionError("client kept reading after its response arrived")
 
 
-def _open_stream_server(request: httpx.Request) -> httpx.Response:
+class _ThenHang(httpx.AsyncByteStream):
+    """Yields the reply, then never ends, as a server holding the stream open."""
+
+    def __init__(self, first: bytes):
+        self.first = first
+
+    async def __aiter__(self):
+        yield self.first
+        await asyncio.sleep(3600)
+        yield b""
+
+
+def _open_stream_server(request: httpx.Request, stream=_ThenFail) -> httpx.Response:
     payload = json.loads(request.content)
     if payload.get("method") == "notifications/initialized":
         return httpx.Response(202)
     result = INIT_RESULT if payload["method"] == "initialize" else TOOLS
     body = sse({"jsonrpc": "2.0", "id": payload["id"], "result": result})
-    return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=_ThenFail(body))
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream(body))
 
 
 def test_sync_client_does_not_wait_for_the_stream_to_close():
@@ -195,11 +214,20 @@ def test_sync_client_does_not_wait_for_the_stream_to_close():
 
 
 def test_async_client_does_not_wait_for_the_stream_to_close():
+    def server(request):
+        return _open_stream_server(request, stream=_ThenHang)
+
     async def go():
-        c = AsyncMCPClient("http://up", token_provider=lambda: "",
-                           http_client=httpx.AsyncClient(transport=httpx.MockTransport(_open_stream_server)))
-        return await asyncio.wait_for(c.list_tools(), timeout=5)
-    assert run(go())[0].name == "get_me"
+        c = AsyncMCPClient("http://up", token_provider=lambda: "", sse_drain_timeout=0.1,
+                           http_client=httpx.AsyncClient(transport=httpx.MockTransport(server)))
+        start = time.monotonic()
+        tools = await asyncio.wait_for(c.list_tools(), timeout=5)
+        return tools, time.monotonic() - start
+    tools, elapsed = run(go())
+    assert tools[0].name == "get_me"
+    # initialize + tools/list each drain for at most 0.1 s; well under a second
+    # means the drain gave up at its bound rather than waiting on the stream.
+    assert elapsed < 1.0, elapsed
 
 
 # ---- errors: same hardening on every path ----------------------------------
