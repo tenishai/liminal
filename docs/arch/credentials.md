@@ -1,15 +1,17 @@
 ---
 card: arch-card:liminal-credentials
-updated: 2026-09-28
+updated: 2026-10-03
 anchor: src/liminal/server/credentials.py sha=739bb1e6c33b9a00f45360a2a28fe6908bb7f52f
 ---
 # credentials — per-(persona, handler) secrets from cabal
 
 WHAT / SEAM: `CredentialResolver = Callable[[str, str], Awaitable[dict[str,str]]]` (identity, handler) → creds. Only implementation: `CabalCoreCredentialResolver` (server/credentials.py) → `GET {cabal_url}/admin/secrets/{persona}/{handler}` with `Authorization: Bearer <token_provider()>`; reads body `{"credentials": {...}}`, coerces to str→str.
-OPS / FLOW: wired only when `liminal serve --cabal-url` is set (cli.py); token from env `--cabal-token-env` (default `LIMINAL_CABAL_TOKEN`), re-read on EVERY fetch so rotation needs no restart. cabal mints it via `cbl token mint-service --scope secrets-fetch`. routes.py:457 calls `resolver(claims.identity, handler_name)` after authz + secret guard; result → `ctx.credentials`. `handler_name` is the tool prefix, so federated targets resolve under their target name too (HttpTarget `service-token` reads `ctx.credentials[credential_key]`).
+OPS / FLOW: wired only when `liminal serve --cabal-url` is set (cli.py); token from env `--cabal-token-env` (default `LIMINAL_CABAL_TOKEN`), re-read on EVERY fetch so rotation needs no restart. cabal mints it via `cbl token mint-service --scope secrets-fetch`. routes.py:_handle_tools_call calls `resolver(claims.identity, handler_name)` after authz + secret guard; result → `ctx.credentials`. `handler_name` is the tool prefix, so federated targets resolve under their target name too (HttpTarget `service-token` reads `ctx.credentials[credential_key]`).
 INVARIANTS:
 - Cache per (persona, handler), TTL `--cred-cache-ttl` (default 900s). Rotation reaches liminal within TTL unless `invalidate()`/`invalidate_all()` is called — and NOTHING in src calls them (tests only). So credential revocation is TTL-gated today; authority revocation (policy.md) is live. Different axes.
-- Fetch is FAIL-SOFT: network error, non-200, non-JSON, wrong shape → log + `{}`, never raise. WHY: an unreachable cabal must not black-hole every tool call. The handler must treat empty creds as a refusal (HttpTarget refuses a missing/whitespace service token, #80). Empty results are NOT cached.
+- Fetch is FAIL-SOFT: network error (httpx.HTTPError), non-200, non-JSON, or a `credentials` value that is not an object → log + `{}`, and these `{}` returns happen BEFORE the cache write, so a failure is never cached and the next call re-fetches. WHY: an unreachable cabal must not black-hole every tool call. The handler must treat empty creds as a refusal (HttpTarget refuses a missing/whitespace service token, #80).
+- An EMPTY SUCCESSFUL answer IS cached: a 200 whose `credentials` is `{}`, null, `[]` or missing becomes `{}` and is stored for the full TTL (`cache_ttl_seconds`, 900s default) like any other result. Until the TTL expires, or `invalidate()` is called, a persona that gets its secret added in cabal still resolves to `{}`.
+- Not covered by the fail-soft path: a 200 whose JSON body is not an object (e.g. a list) makes `body.get` raise AttributeError. The resolver does not catch it, so the route returns ERROR_INTERNAL "credential resolution failed" (nothing cached).
 - A resolver that RAISES (custom one) → JSON-RPC ERROR_INTERNAL "credential resolution failed" (routes.py), the call does not proceed.
 - No resolver wired → `ctx.credentials = {}`.
 - Card `credential_keys` is documentation; liminal injects whatever cabal returns, unfiltered.
