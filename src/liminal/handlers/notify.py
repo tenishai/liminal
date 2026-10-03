@@ -65,11 +65,6 @@ CARD = {
         {"name": "list_transports", "description": "List configured transports."},
     ],
     "activation": "always",
-    "relevance_signals": [
-        "notifying the operator about a long-running task result",
-        "alerting the operator to an unexpected condition",
-        "surfacing a result to a channel the operator monitors",
-    ],
     "credential_keys": [],
     "labels": {"tier": "builtin"},
 }

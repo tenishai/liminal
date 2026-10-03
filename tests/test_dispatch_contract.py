@@ -60,7 +60,6 @@ class _EchoHandler:
             "description": "echo for contract tests",
             "tools": [{"name": "ping", "description": "pong"}],
             "activation": "always",
-            "relevance_signals": [],
             "credential_keys": [],
             "labels": {"tier": "test"},
         }

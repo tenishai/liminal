@@ -140,6 +140,18 @@ def test_unknown_key_raises(tmp_path) -> None:
         _load_targets_file(path)
 
 
+def test_removed_relevance_signals_key_raises(tmp_path) -> None:
+    """relevance_signals was removed (liminal#116); a config still setting it must
+    fail loudly rather than be silently ignored."""
+    path = _write_targets(
+        tmp_path,
+        'config_version = 1\n\n[[target]]\nname = "jira"\naddress = "https://jira/mcp"\n'
+        'relevance_signals = ["tickets"]\n',
+    )
+    with pytest.raises((ValueError, TargetConfigError), match="unknown key"):
+        _load_targets_file(path)
+
+
 def test_http_missing_address_raises(tmp_path) -> None:
     """An http target with no address must be rejected."""
     path = _write_targets(

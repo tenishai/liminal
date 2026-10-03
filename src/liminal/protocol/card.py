@@ -54,7 +54,6 @@ class CapabilityCard(_Open):
     description: str
     tools: list[_ToolEntry] = Field(default_factory=list)
     activation: ActivationMode = ActivationMode.ALWAYS
-    relevance_signals: list[str] = Field(default_factory=list)
     credential_keys: list[str] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
     # The scope a sovereign grant must hold (or admin:*) to invoke this

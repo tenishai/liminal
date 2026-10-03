@@ -26,10 +26,6 @@ CARD = {
         {"name": "clear", "description": "Delete all keys for this agent"},
     ],
     "activation": "always",
-    "relevance_signals": [
-        "remembering a fact within a single working session",
-        "passing notes between sub-dispatches inside one Task",
-    ],
     "credential_keys": [],
     "labels": {"tier": "builtin", "persistence": "process-local"},
 }

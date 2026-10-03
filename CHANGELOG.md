@@ -66,6 +66,11 @@ Each line cites the pull request that made the change.
 - **The Docker image builds from a sibling techne checkout or a package index.** Pass
   `--build-context techne=../techne` or `--build-arg EXTRA_INDEX_URL=...`; with neither,
   the build stops and says which (tenishai/liminal#117).
+- **`relevance_signals` is removed from `CapabilityCard`, the built-in handler cards and
+  `TargetSpec`** (tenishai/liminal#136, closes tenishai/liminal#116). Nothing read it; it was plumbed for a routing layer
+  that does not exist. A `[[target]]` table that still sets it now fails with an unknown-key
+  error. Cards from other handler packages that still declare it keep validating, since
+  `CapabilityCard` allows extra fields, and the value is ignored.
 
 ### Fixed
 

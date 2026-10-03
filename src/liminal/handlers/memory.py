@@ -88,11 +88,6 @@ CARD = {
         },
     ],
     "activation": "always",
-    "relevance_signals": [
-        "recalling a prior decision or pattern the operator established",
-        "checking whether a fact has already been captured before suggesting it",
-        "persisting a useful conclusion so future dispatches can recall it",
-    ],
     "credential_keys": [],
     "labels": {"tier": "builtin", "backend": "techne"},
 }

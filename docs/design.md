@@ -84,7 +84,7 @@ class Handler(Protocol):
 
 - `tools()` — returns the tool definitions this handler provides.
 - `dispatch()` — executes a named tool call with the given payload and context. Async because real-world handlers (Slack, GitHub, web) make network calls; `asyncio.gather` of dispatches is how parallel handler use looks at the call site.
-- `capability_card()` — returns the handler's capability card (relevance signals, activation mode, declared tools, declared credential keys, labels). See the Capability cards section below for the schema. All v1 handlers declare `activation: "always"`; on-demand activation is a v2 polish.
+- `capability_card()` — returns the handler's capability card (activation mode, declared tools, declared credential keys, labels). See the Capability cards section below for the schema. All v1 handlers declare `activation: "always"`; on-demand activation is a v2 polish.
 
 The same protocol works in both deployment modes — the difference is *where* the calls land.
 
@@ -191,7 +191,7 @@ Tool result → liminal → agent
 
 ## Capability cards: documentation, not enforcement
 
-Each handler ships a capability card that declares its tools, activation mode, relevance signals, and the credential keys it expects. The schema:
+Each handler ships a capability card that declares its tools, activation mode, and the credential keys it expects. The schema:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -199,7 +199,6 @@ Each handler ships a capability card that declares its tools, activation mode, r
 | `description` | string | yes | Human-readable summary of what the handler covers |
 | `tools` | object[] | yes | Array of `{name, description}` for each tool the handler provides |
 | `activation` | enum | yes | `"always"` (visible in every `list_tools` response) \| `"on_demand"` (v2 — activated when the agent calls `liminal__activate` after a relevance match) |
-| `relevance_signals` | string[] | recommended | Natural-language descriptions of task contexts where these tools are useful. v1 uses them as documentation; v2's on-demand activation uses them as the matching surface for `liminal__discover` |
 | `credential_keys` | string[] | recommended | Keys the handler reads from `ctx.credentials`. Documentation for the operator (what to populate via `cbl secret`) and for the handler author (what to expect) — *not* enforced; liminal passes the whole set Cabal Core returns. |
 | `labels` | object | no | Free-form key/value labels (e.g., `tier: "core"`) |
 
@@ -214,10 +213,6 @@ CAPABILITY_CARD = {
         {"name": "search_messages", "description": "Search the bot's accessible history"},
     ],
     "activation": "always",
-    "relevance_signals": [
-        "notifying the operator about a long-running task result",
-        "fetching context from prior conversations in a channel",
-    ],
     "credential_keys": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
     "labels": {"tier": "core"},
 }
@@ -260,7 +255,7 @@ Per-identity overrides go in the persona's `identity.toml` (e.g., `raven` doesn'
 - **Same handler interface in solo and scale modes** — handlers are Python callables in solo, subprocesses in scale, same `dispatch(name, payload, ctx)` either way
 - **Handler pooling** across same-persona agents — rook-primus and rook-secundus share the rook slack runtime (and its rate-limit budget)
 - **Singleton-persona data backends reachable through liminal** — Architect's pattern corpus, Archivist's federated memory (v2), Librarian's docs index (v2) all expose MCP-tool surfaces fronted by their own liminal handlers; agents call `pattern_search` (or `memory_lookup`, or `doc_lookup`) like any other tool
-- **Scoping-ready** — capability cards already declare `activation` and `relevance_signals`; v2 splits handlers into `always` / `on_demand` for context-window savings without breaking the v1 card format
+- **Scoping-ready** — capability cards already declare `activation`; v2 splits handlers into `always` / `on_demand` for context-window savings without breaking the v1 card format
 
 ---
 
@@ -405,7 +400,6 @@ required_scope = "confluence:use"
 | `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
 | `timeout_seconds` | no | `30.0` | Per-call timeout. |
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
-| `relevance_signals` | no | `[]` | Routing hints (v2 on-demand activation). |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
 | `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
 | `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. Declaring it makes the target deny-by-default **only when no `required_scope` is set** — see precedence below. |
