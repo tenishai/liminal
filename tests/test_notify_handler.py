@@ -530,3 +530,124 @@ async def test_stdout_transport_selected_per_call() -> None:
     )
     assert webhook_calls["n"] == 0
     assert "via stdout" in buf.getvalue()
+
+
+# ---- liminal#149: the webhook URL (a credential) is never echoed -----------
+
+SECRET_URL = "https://hookuser:hookpass@hooks.example/services/T0/B0/s3cr3tPath?token=q5ecret"
+SECRET_PARTS = ("hookuser", "hookpass", "s3cr3tPath", "q5ecret", "/services/")
+
+
+def _assert_no_secret(text: str) -> None:
+    for part in SECRET_PARTS:
+        assert part not in text, f"{part!r} leaked in {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_webhook_success_result_carries_host_and_status_not_url() -> None:
+    handler = NotifyHandler(
+        transports={"webhook": _webhook(lambda req: httpx.Response(200))}
+    )
+    result = await handler.dispatch(
+        "send", {"message": "hi"}, _ctx(credentials={"NOTIFY_WEBHOOK_URL": SECRET_URL})
+    )
+    assert result.is_error is False
+    payload = result.content[0]["data"]
+    assert payload == {
+        "transport": "webhook", "host": "hooks.example", "status": 200, "ok": True,
+    }
+    _assert_no_secret(json.dumps(payload))
+
+
+@pytest.mark.asyncio
+async def test_webhook_unparseable_url_error_omits_the_url() -> None:
+    bad = "https://[hookuser:hookpass@bad/services/T0/B0/s3cr3tPath?token=q5ecret"
+    handler = NotifyHandler(
+        transports={"webhook": _webhook(lambda req: httpx.Response(200))}
+    )
+    result = await handler.dispatch(
+        "send", {"message": "hi"}, _ctx(credentials={"NOTIFY_WEBHOOK_URL": bad})
+    )
+    assert result.is_error is True
+    assert result.error == "unparseable webhook URL"
+    _assert_no_secret(result.error)
+
+
+@pytest.mark.parametrize(
+    ("exc_type", "reason"),
+    [
+        (httpx.ConnectError, "connection failed"),
+        (httpx.ConnectTimeout, "timed out"),
+        (httpx.RemoteProtocolError, "request failed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_webhook_post_failure_error_omits_exception_text(exc_type, reason) -> None:
+    """httpx exception text is free-form; here it carries the full URL, and
+    the caller must see only the class name and a fixed reason."""
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        raise exc_type(f"failed talking to {request.url}", request=request)
+
+    handler = NotifyHandler(transports={"webhook": _webhook(handler_fn)})
+    result = await handler.dispatch(
+        "send", {"message": "hi"}, _ctx(credentials={"NOTIFY_WEBHOOK_URL": SECRET_URL})
+    )
+    assert result.is_error is True
+    assert result.error == f"webhook POST failed: {exc_type.__name__} ({reason})"
+    _assert_no_secret(result.error)
+
+
+@pytest.mark.asyncio
+async def test_webhook_secret_url_never_appears_in_any_result_or_error() -> None:
+    """Every webhook outcome that can carry the URL: success, POST failure,
+    and each _check_url refusal (unparseable, scheme, missing hostname, per-persona allowlist,
+    server ceiling, could-not-resolve, invalid DNS IP, denied network). Each
+    credential URL carries the secret userinfo, path and query; none of those
+    parts may reach the caller."""
+    tail = "hookuser:hookpass@{host}/services/T0/B0/s3cr3tPath?token=q5ecret"
+    ok_url = "https://" + tail.format(host="hooks.example")
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201)
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"cannot reach {request.url}", request=request)
+
+    ceiling = _webhook(ok)
+    ceiling.server_allowed_hosts = ["other.example"]
+
+    # (label, transport, url, extra, expected error prefix or None for success)
+    cases = [
+        ("success", _webhook(ok), ok_url, {}, None),
+        ("post failure", _webhook(boom), ok_url, {}, "webhook POST failed"),
+        ("unparseable", _webhook(ok), "https://" + tail.format(host="[bad"), {},
+         "unparseable webhook URL"),
+        ("scheme", _webhook(ok), "ftp://" + tail.format(host="hooks.example"), {},
+         "scheme 'ftp' not allowed"),
+        ("missing hostname", _webhook(ok), "https://" + tail.format(host=""), {},
+         "URL missing hostname"),
+        ("allowlist", _webhook(ok), ok_url, {"notify.allowed_hosts": ["other.example"]},
+         "host 'hooks.example' not in allowlist"),
+        ("server ceiling", ceiling, ok_url, {},
+         "host 'hooks.example' not permitted by server configuration"),
+        ("could not resolve", _webhook(ok, dns_map={"hooks.example": []}), ok_url, {},
+         "could not resolve host"),
+        ("invalid DNS IP", _webhook(ok, dns_map={"hooks.example": ["not-an-ip"]}), ok_url, {},
+         "invalid IP 'not-an-ip' from DNS"),
+        ("denied network", _webhook(ok, dns_map={"hooks.example": ["127.0.0.1"]}), ok_url, {},
+         "host 'hooks.example' resolves to 127.0.0.1"),
+    ]
+    for label, transport, url, extra, expected in cases:
+        handler = NotifyHandler(transports={"webhook": transport})
+        result = await handler.dispatch(
+            "send", {"message": "hi"},
+            _ctx(credentials={"NOTIFY_WEBHOOK_URL": url}, extra=extra),
+        )
+        if expected is None:
+            assert result.is_error is False, (label, result.error)
+        else:
+            assert result.is_error is True, label
+            assert (result.error or "").startswith(expected), (label, result.error)
+            _assert_no_secret(result.error or "")
+        _assert_no_secret(json.dumps(result.content, default=str))
