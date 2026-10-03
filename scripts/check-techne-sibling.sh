@@ -13,7 +13,7 @@
 #
 # The pin is the Dockerfile's TECHNE_VERSION, read from there so there is one
 # place to change. TECHNE_ANY=1 skips the check, for building against whatever
-# ../techne has checked out (developing techne and cabal together).
+# ../techne has checked out (developing techne and liminal together).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"

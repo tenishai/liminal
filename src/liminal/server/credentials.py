@@ -8,9 +8,10 @@ request time and returns the dict. liminal ships no other resolver.
 
 This module provides the scale-mode adapter: `CabalCoreCredentialResolver`
 calls Cabal Core's `/admin/secrets/{persona}/{handler}` endpoint
-with a bearer token, caches the result per `(issuer, persona, handler)`
-with a TTL (15 minutes per the design doc), and re-fetches when stale or on
-explicit invalidation.
+with a bearer token, caches a non-empty result per
+`(issuer, persona, handler)` with a TTL (15 minutes per the design doc), and
+re-fetches when stale or on explicit invalidation. An empty answer is not
+cached, so it is asked again on the next dispatch (liminal#139).
 
 Wire it via `create_app(credential_resolver=resolver.fetch)`. The
 resolver hands an async callable to the route; the route awaits it.
