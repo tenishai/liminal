@@ -416,6 +416,9 @@ def main(argv: list[str] | None = None) -> int:
                 # because seeding is idempotent per (issuer, persona) while rows
                 # are immutable, so a dropped persona keeps answering. Widening
                 # to "*" is exempt: nothing can lose standing under a wildcard.
+                # ParentIssuerDemoted (a subclass) lands here too: the store
+                # holds parent rows for an issuer the registry no longer names
+                # as parent (liminal#87).
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             # Print the derived handler->scope map so an operator can reconcile

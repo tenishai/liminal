@@ -102,6 +102,24 @@ class ParentNarrowingConflict(ValueError):
     """
 
 
+class ParentIssuerDemoted(ParentNarrowingConflict):
+    """Raised when the policy DB holds parent rows for an issuer the trust
+    registry no longer names as the parent (liminal#87).
+
+    The persona check in _seed_parent compares sets WITHIN one issuer, so it could never
+    see this: demote the parent issuer (or drop it from the registry) and its
+    is_parent rows survived, `parents()` kept answering for it, and a persona it
+    minted still passed the guardian gate. Measured: 200 on GET /admin/policy
+    and a successful admin:* grant. Same shape as the round-2 Critical, one
+    dimension over.
+
+    A subclass, not a sibling, so every caller that already refuses to serve on
+    a no-op narrowing (the CLI's exit 2) refuses on this too without a second
+    except clause to forget. Refusing rather than retiring the rows follows the
+    persona precedent: parent rows are immutable by design, and the remedy for
+    any change that would need to mutate them is a new policy DB.
+    """
+
 
 class ParentImmutable(RuntimeError):
     """Attempt to modify or remove the parent's guardian grant."""
@@ -196,6 +214,7 @@ class SqlitePolicyStore:
         self._audit_max_rows = audit_max_rows
         self._audit_prune_interval = max(1, audit_prune_interval)
         self._audit_writes = 0
+        self._reconcile_parent_issuers(parent_issuer)
         if parent_issuer is not None:
             self._seed_parent(parent_issuer, set(parent_scopes), parent_personas)
         # Parent set is immutable after seeding; cache it for the sync parents().
@@ -205,6 +224,44 @@ class SqlitePolicyStore:
                 "SELECT issuer FROM policy_grants WHERE is_parent = 1"
             ).fetchall()
         )
+
+    def _reconcile_parent_issuers(self, parent_issuer: str | None) -> None:
+        """Refuse to open a store whose parent rows name an issuer other than
+        the configured parent (liminal#87). Runs before seeding, so a refusal
+        writes nothing."""
+        # COMPARE ACROSS ALL ISSUERS, not WHERE issuer = ?. _seed_parent's
+        # narrowing check is scoped to the issuer being seeded, so it only ever
+        # sees personas within that issuer; a demoted parent's rows are under a
+        # different issuer and were invisible to it. They kept answering on
+        # parents() and resolve_parent, and the guardian gate consults the
+        # store's parents(), not the verifier's, so the registry edit never
+        # reached the admin surface.
+        #
+        # No configured parent means nothing may hold parent standing, so ANY
+        # existing parent row is a demotion. Exactly one parent is enforced by
+        # build_multi_issuer_verifier, so "the configured set" is at most one.
+        configured = {parent_issuer} if parent_issuer is not None else set()
+        existing = {
+            r["issuer"]
+            for r in self._conn.execute(
+                "SELECT DISTINCT issuer FROM policy_grants WHERE is_parent = 1"
+            )
+        }
+        demoted = existing - configured
+        if demoted:
+            if parent_issuer is None:
+                configured_note, remedy = "no parent issuer is configured", "to run without one"
+            else:
+                configured_note = f"configured parent: {parent_issuer!r}"
+                remedy = "to adopt this parent"
+            raise ParentIssuerDemoted(
+                f"policy DB already holds parent row(s) for issuer(s) "
+                f"{sorted(demoted)!r}, which the trust registry no longer names "
+                f"as the parent ({configured_note}). Those "
+                f"rows are immutable by design and would keep admin standing on "
+                f"/admin/* regardless of the registry. Point --policy-db at a "
+                f"new database {remedy}."
+            )
 
     def _seed_parent(
         self, issuer: str, scopes: set[str], personas: tuple[str, ...]

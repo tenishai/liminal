@@ -97,6 +97,10 @@ Each line cites the pull request that made the change.
 
 ### Security
 
+- **Demoting the parent issuer in the trust registry left it a parent.** Its parent rows
+  survived, so its personas still passed the admin gate. `liminal serve` now refuses to
+  start (exit 2) when the policy DB holds parent rows for an issuer the registry no longer
+  names as parent (tenishai/liminal#134, closes tenishai/liminal#87).
 - **The sync `MCPClient` now coerces an upstream error `code` like the async client**
   (tenishai/liminal#129). It never received tenishai/liminal#82's guard, so a hostile
   upstream could put arbitrary text in `code`. Both clients now share one response parser,
