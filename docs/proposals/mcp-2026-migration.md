@@ -22,7 +22,7 @@ The MCP `2026-07-28` spec goes **stateless**: it removes the `initialize`/`initi
 
 Both assume the handshake that is going away.
 
-**liminal's current starting point:** it is pinned to `protocolVersion 2025-06-18` (`src/liminal/client/mcp.py:26`, `src/liminal/server/mcp_types.py:103`). The current *stable* spec is already **`2025-11-25`** — so liminal is **one stable revision behind today**, before the `2026-07-28` RC even lands.
+**liminal's current starting point:** it is pinned to `protocolVersion 2025-06-18` (`DEFAULT_PROTOCOL_VERSION` in `src/liminal/client/mcp.py`, the `protocolVersion` default in `src/liminal/server/mcp_types.py`). The current *stable* spec is already **`2025-11-25`** — so liminal is **one stable revision behind today**, before the `2026-07-28` RC even lands.
 
 The "**not urgent**" claim is therefore *contingent, not automatic*: MCP is version-negotiated, so old↔old keeps working **only while new clients keep negotiating down to `2025-06-18`**. Once clients floor their negotiation at `2025-11-25` (and, later, `2026-07-28`), the break arrives independent of anything in this proposal. Two practical consequences: (a) there is a **nearer-term, smaller task** — bring liminal current to `2025-11-25` — that is worth doing regardless of the stateless port; (b) the stateless port itself remains a deliberate, multi-session effort, but the runway is shorter than "new spec ships Monday" suggests, because liminal is already behind.
 
@@ -56,7 +56,7 @@ Because many good upstream MCP servers are unmaintained and will never port, **a
 
 ### Lower-impact — verify, don't assume
 - **MRTR** (SEP-2322) replaces server-initiated `roots`/`sampling`/`elicitation`. liminal likely does not rely on these (cf techne#463 — sampling was a dead end); **confirm** before assuming zero work.
-- **`Mcp-Session-Id`:** a grep found no session-id use in liminal today — likely little to change. Confirm no per-connection state is pinned.
+- **`Mcp-Session-Id`:** the server side issues no session id. The outbound client (`src/liminal/client/mcp.py`) can keep one: `SESSION_HEADER` is echoed after `initialize` when the client is built with `use_session=True`, which is off by default and which `HttpTarget` does not set. `Mcp-Session-Id` is also in `RESERVED_HEADERS` (`src/liminal/target/config.py`), so a target config cannot set it. That opt-in path and the reserved-header entry are what the port has to revisit. Confirm no other per-connection state is pinned.
 - **Subscriptions:** list-change notifications now come from a `subscriptions/listen` request with a persistent SSE response. Check whether liminal proxies list-change and adapt.
 - **Deprecated (12-month window, not removed):** Roots, Sampling, Logging (SEP-2577); HTTP+SSE transport (SEP-2596). No action required yet.
 

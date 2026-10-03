@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Proposal |
+| **Status** | Implemented (`SqlitePolicyStore` in `src/liminal/server/policy.py`, admin router in `src/liminal/server/admin.py`) |
 | **Authors** | Richard DiMartino + Raven (AI) |
 | **Created** | 2026-07-02 |
 | **Follows** | `docs/proposals/multi-issuer-trust-registry.md` (Part 2 referenced this) |
@@ -18,8 +18,9 @@ server-side policy table keyed on the verified `(issuer, persona)` that decides
 *what they may do* — owned by the sovereign service, not by any caller's cabal —
 plus the parent-only admin surface (`cbl federation …`) that manages it.
 
-This introduces liminal's **first local persistent store**. Today liminal is
-stateless: credentials come from Cabal Core over HTTP
+This introduces the liminal server's **first local persistent store**. Before it, the
+server kept no database of its own (the memory handler's techne DB belongs to that
+handler): credentials come from Cabal Core over HTTP
 (`CabalCoreCredentialResolver`), handlers from entry points. A sovereign service
 needs to remember its own grants, so it owns a small SQLite DB.
 

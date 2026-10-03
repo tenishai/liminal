@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Proposal — for sign-off before build |
+| **Status** | Implemented (`dispatch/multiplexer.py`, `target/http.py`), except the `stdio` transport (Stage B), which is config-validated but refused at startup |
 | **Authors** | Richard DiMartino + Raven (AI) |
 | **Created** | 2026-07-02 |
 | **Implements** | #12 (flagship, per the #5 standalone re-scope) |
@@ -68,7 +68,7 @@ Three implementations:
 
 ## Fold-in #13 — persona-header identity (kills the token-swap footgun)
 
-`MCPProxyHandler` today mutates a **shared** client's token in place per call (`mcp_proxy/handler.py:105-123`) — a cross-persona credential-leak footgun (#25). `HttpTarget` replaces it:
+Before implementation, `MCPProxyHandler` mutated a **shared** client's token in place per call (`mcp_proxy/handler.py`) — a cross-persona credential-leak footgun (#25). `MCPProxyHandler` is now retired. `HttpTarget` replaces it:
 
 - **Per-call request headers, never shared mutable state.** Each dispatch builds fresh headers: forward the caller's identity as `x-liminal-persona: {ctx.identity}` + `x-liminal-issuer: {ctx.issuer}`, and the backend **self-resolves its own creds** from that identity (the #7 model). Existing `service-token` auth stays (resolve `ctx.credentials[key]` per call) but as a per-call header, not a swapped shared token.
 - **Hard constraint (verified in the agentgateway eval):** a **`stdio` target cannot carry per-request identity** — stdio children discard per-request headers. So `StdioTarget` is for **identity-agnostic** backends only. Config validation **rejects** (loud `ValueError`, No Silent Failures) a `stdio` target configured with `service-token`/identity-forwarding.

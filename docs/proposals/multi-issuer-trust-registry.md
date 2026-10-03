@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Proposal |
+| **Status** | Implemented (`MultiIssuerJWKSVerifier` and `_aud_ok` in `src/liminal/server/auth.py`) |
 | **Authors** | Richard DiMartino + Raven (AI) |
 | **Created** | 2026-07-02 |
 | **Implements** | `cabal/docs/proposals/federated-singletons.md` "What's new #1" |
@@ -17,10 +17,10 @@ federated Archivist) accept callers from **multiple cabals**, each its own IdP,
 while keeping authorization owned by the sovereign service rather than by any
 caller's cabal.
 
-Today liminal trusts exactly one issuer (`URLJWKSVerifier` with a single
-`jwks_url`/`expected_issuer`, `auth.py:87`) and derives authorization from claims
-the token itself carries — `scope` (`routes.py:70`) and
-`tool_extras.liminal.allowed_handlers` (`routes.py:221`). That is correct only
+Before implementation, liminal trusted exactly one issuer (`URLJWKSVerifier` with a single
+`jwks_url`/`expected_issuer`) and derived authorization from claims
+the token itself carries — `scope` and
+`tool_extras.liminal.allowed_handlers`. That is correct only
 because, in the single-cabal case, **the token's issuer is also the policy
 authority**. Federation breaks that assumption: shaz's Cabal Core would happily
 mint shaz's agents any scope they ask for. So this spec has two halves:
@@ -98,7 +98,7 @@ if not _aud_ok(claims.get("aud"), expected_audience):
     raise AuthError("invalid_audience")
 ```
 
-This benefits the single-cabal path too (it's currently list-broken).
+This benefits the single-cabal path too (it was list-broken before `_aud_ok`).
 
 ### 1.3 The verifier — compose, don't rewrite
 

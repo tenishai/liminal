@@ -3,7 +3,7 @@
 The README's "Wiring a handler (custom)" section shows the mechanism: implement
 `Handler` (or match its protocol — `tools()`, `dispatch()`, `capability_card()`),
 register it via the `liminal.handlers` entry-point group. That covers how to get a
-handler running. This page covers five things an author needs that aren't in the
+handler running. This page covers the things an author needs that aren't in the
 README or `docs/design.md`, because they only show up in source.
 
 ## `ctx.extra` is the per-handler operator-config channel
@@ -19,8 +19,8 @@ for the pattern in place.
 
 **Security contract.** `ctx.extra` is populated differently depending on auth
 mode, and the difference matters if your handler uses `extra` to pick a
-*target* — a database, a path, a host. From `src/liminal/server/routes.py`
-(around line 430):
+*target* — a database, a path, a host. From `_handle_tools_call` in
+`src/liminal/server/routes.py`:
 
 > tool_extras carries per-persona SANDBOX config (memory.db_path,
 > files.allowed_paths, web/notify.allowed_hosts, ...) that bounds where a
@@ -33,8 +33,11 @@ mode, and the difference matters if your handler uses `extra` to pick a
 > token-embedded path (its issuer is also the policy authority).
 
 In other words: `ctx.extra` is safe for a handler to trust as operator
-config, but it is never caller input, and a handler must not treat it as
-if the calling agent chose it.
+config, and a handler must not treat it as if the calling agent chose it.
+The one exception is `correlation_id`: routes.py copies it from the
+caller's `x-correlation-id` header (clamped to 200 characters) on every
+HTTP `tools/call`, so it is caller input. Use it as a trace tag only, never as a path,
+host or authorization input.
 
 ## `ctx.granted_scopes` and `ctx.audit` are for decisions the token must not make
 
