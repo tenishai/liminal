@@ -550,3 +550,79 @@ async def test_every_access_deny_carries_the_handler_key(tmp_path) -> None:
     assert {d["handler"] for d in denies} == {"scratchpad", "echo"}
     scope_denies = [d for d in denies if d["handler"] == "scratchpad"]
     assert {d["tool"] for d in scope_denies} == {"scratchpad.set", "scratchpad.clear"}
+
+
+# ---- liminal#143: credentials are not resolved for a non-parent issuer ----
+
+
+class _EchoCredsHandler:
+    """Returns ctx.credentials so a test can see what the route resolved."""
+
+    def tools(self) -> list[ToolSpec]:
+        return [ToolSpec(name="dump", description="echo ctx.credentials")]
+
+    def capability_card(self) -> dict:
+        return {
+            "handler": "creds",
+            "description": "echoes ctx.credentials for tests",
+            "tools": [{"name": "dump", "description": "echo ctx.credentials"}],
+        }
+
+    async def dispatch(self, name: str, payload: dict, ctx: Context) -> ToolResult:
+        return ToolResult.json({"creds": dict(ctx.credentials)})
+
+
+@pytest.mark.asyncio
+async def test_foreign_issuer_same_persona_gets_no_home_credentials(tmp_path) -> None:
+    """A granted foreign issuer presenting the home persona's name ("rook")
+    must not receive the secrets Cabal holds for home rook: the route does not
+    call the resolver for a non-parent issuer. The parent issuer's rook still
+    gets them, and its fetch is keyed by issuer."""
+    import json
+
+    import httpx
+
+    from liminal.server.credentials import CabalCoreCredentialResolver
+
+    cabal_hits: list[str] = []
+
+    def cabal(request: httpx.Request) -> httpx.Response:
+        cabal_hits.append(request.url.path)
+        # Cabal keys secrets by persona name only: any "rook" gets home rook's.
+        return httpx.Response(
+            200, json={"credentials": {"NOTIFY_WEBHOOK_URL": "https://hooks.example/home-rook-secret"}}
+        )
+
+    resolver = CabalCoreCredentialResolver(
+        cabal_url="http://cabal-test",
+        token_provider=lambda: "t",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(cabal)),
+    )
+    kp, ks = _key(), _key()
+    store = SqlitePolicyStore(str(tmp_path / "p.db"), parent_issuer="rd-cabal")
+    reg = Registry()
+    register_explicit(reg, "creds", _EchoCredsHandler())
+    app = create_app(
+        jwt_verifier=_verifier(kp, ks), registry=reg, policy_store=store,
+        credential_resolver=resolver.fetch,
+    )
+    call = {"name": "creds.dump", "arguments": {}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Default issuer-wide grant shape (persona "*"), as in the issue.
+        await store.grant("shaz-cabal", "*", scopes=set(), allowed_handlers={"creds"})
+        await store.grant("rd-cabal", "rook", scopes=set(), allowed_handlers={"creds"})
+
+        foreign = (await _rpc(client, _mint(ks, iss="shaz-cabal", persona="rook"), "tools/call", call)).json()
+        assert foreign.get("error") is None, foreign
+        assert json.loads(foreign["result"]["content"][0]["text"])["creds"] == {}
+        assert cabal_hits == []  # the resolver never reached Cabal
+
+        home = (await _rpc(client, _mint(kp, iss="rd-cabal", persona="rook"), "tools/call", call)).json()
+        assert home.get("error") is None, home
+        assert json.loads(home["result"]["content"][0]["text"])["creds"] == {
+            "NOTIFY_WEBHOOK_URL": "https://hooks.example/home-rook-secret"
+        }
+        assert cabal_hits == ["/admin/secrets/rook/creds"]
+        assert set(resolver._cache) == {("rd-cabal", "rook", "creds")}
+    await resolver.aclose()
+    store.close()

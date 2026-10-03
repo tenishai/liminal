@@ -10,8 +10,8 @@ encrypted store and are fetched at handler-dispatch time:
 
 This module provides the scale-mode adapter: `CabalCoreCredentialResolver`
 calls Cabal Core's `/admin/secrets/{persona}/{handler}` HTTPS endpoint
-with a bearer token, caches the result per `(persona, handler)` with a
-TTL (15 minutes per the design doc), and re-fetches when stale or on
+with a bearer token, caches the result per `(issuer, persona, handler)`
+with a TTL (15 minutes per the design doc), and re-fetches when stale or on
 explicit invalidation.
 
 Wire it via `create_app(credential_resolver=resolver.fetch)`. The
@@ -34,7 +34,10 @@ DEFAULT_CACHE_TTL_SECONDS = 15 * 60  # 15 minutes per design.md
 
 
 # The signature `create_app` expects for credential_resolver. Awaitable
-# returning a dict[str, str] per (identity, handler).
+# returning a dict[str, str] per (identity, handler). In sovereign mode (a
+# policy grant authorized the call) the route also passes `issuer=` as a
+# keyword, so a resolver wired into a sovereign deployment must accept it;
+# single-cabal and auth-off calls stay two positional arguments.
 CredentialResolver = Callable[[str, str], Awaitable[dict[str, str]]]
 
 
@@ -50,7 +53,8 @@ class CabalCoreCredentialResolver:
         http_client: optional pre-built httpx.AsyncClient (tests pass
             an ASGITransport-backed client; production lets the resolver
             build its own).
-        cache_ttl_seconds: per-(persona, handler) TTL. 15-minute default.
+        cache_ttl_seconds: per-(issuer, persona, handler) TTL. 15-minute
+            default.
     """
 
     cabal_url: str
@@ -58,7 +62,9 @@ class CabalCoreCredentialResolver:
     http_client: httpx.AsyncClient | None = None
     cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS
 
-    _cache: dict[tuple[str, str], tuple[dict[str, str], float]] = field(
+    # Keyed (issuer, persona, handler) (liminal#143): a persona name is only
+    # unique within its issuer, so two cabals' "rook" must not share an entry.
+    _cache: dict[tuple[str, str, str], tuple[dict[str, str], float]] = field(
         default_factory=dict, init=False
     )
 
@@ -67,22 +73,28 @@ class CabalCoreCredentialResolver:
             self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
         return self.http_client
 
-    async def fetch(self, persona: str, handler: str) -> dict[str, str]:
+    async def fetch(
+        self, persona: str, handler: str, issuer: str = ""
+    ) -> dict[str, str]:
         """The function `create_app(credential_resolver=...)` invokes.
 
         Network failures + auth errors do NOT raise — they log and
         return an empty dict so a temporarily-unreachable Cabal Core
         doesn't black-hole every credentialed tool call. The handler
         decides what to do with empty creds (typically: refuse with a
-        structured error the agent can act on)."""
-        cached = self._cache.get((persona, handler))
+        structured error the agent can act on).
+
+        `issuer` only keys the cache; the Cabal URL is persona/handler as
+        before. "" is the key for callers that pass no issuer."""
+        key = (issuer, persona, handler)
+        cached = self._cache.get(key)
         now = time.monotonic()
         if cached is not None:
             creds, expires_at = cached
             if expires_at > now:
                 return creds
             # expired — fall through to re-fetch
-            del self._cache[(persona, handler)]
+            del self._cache[key]
 
         url = f"{self.cabal_url.rstrip('/')}/admin/secrets/{persona}/{handler}"
         token = self.token_provider()
@@ -138,16 +150,16 @@ class CabalCoreCredentialResolver:
 
         # Coerce to str→str for the handler contract.
         coerced = {str(k): str(v) for k, v in creds.items()}
-        self._cache[(persona, handler)] = (
+        self._cache[key] = (
             coerced,
             now + self.cache_ttl_seconds,
         )
         return coerced
 
-    def invalidate(self, persona: str, handler: str) -> None:
-        """Explicit cache-bust for one (persona, handler). Useful when
-        Cabal Core notifies a rotation event."""
-        self._cache.pop((persona, handler), None)
+    def invalidate(self, persona: str, handler: str, issuer: str = "") -> None:
+        """Explicit cache-bust for one (issuer, persona, handler). Useful
+        when Cabal Core notifies a rotation event."""
+        self._cache.pop((issuer, persona, handler), None)
 
     def invalidate_all(self) -> None:
         self._cache.clear()

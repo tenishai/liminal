@@ -363,3 +363,30 @@ async def test_resolver_credentials_reach_handler(
     creds = json.loads(body["result"]["content"][0]["text"])["creds"]
     assert creds == {"SECRET_KEY": "value-for-rook-echo-creds"}
     assert seen_persona_handler == [("rook", "echo-creds")]
+
+
+@pytest.mark.asyncio
+async def test_same_persona_under_two_issuers_does_not_share_a_cache_entry() -> None:
+    """liminal#143 defence in depth: a persona name is only unique within its
+    issuer, so ("bob-cabal", "rook") must not be served ("alice-cabal",
+    "rook")'s cached credentials."""
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(200, json={"credentials": {"X": str(call_count["n"])}})
+
+    resolver = _make_resolver(handler)
+    alice = await resolver.fetch("rook", "notify", issuer="alice-cabal")
+    bob = await resolver.fetch("rook", "notify", issuer="bob-cabal")
+    assert call_count["n"] == 2  # bob's lookup missed the cache
+    assert alice == {"X": "1"}
+    assert bob == {"X": "2"}
+    assert resolver.cache_size() == 2
+    # Each issuer's entry is served to that issuer only.
+    assert await resolver.fetch("rook", "notify", issuer="alice-cabal") == {"X": "1"}
+    assert await resolver.fetch("rook", "notify", issuer="bob-cabal") == {"X": "2"}
+    assert call_count["n"] == 2
+    resolver.invalidate("rook", "notify", issuer="alice-cabal")
+    assert resolver.cache_size() == 1
+    await resolver.aclose()
