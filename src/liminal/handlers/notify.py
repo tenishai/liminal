@@ -184,14 +184,22 @@ class WebhookTransport(Transport):
                 headers={"content-type": "application/json", **extra_headers},
             )
         except httpx.HTTPError as exc:
-            raise NotifyError(f"webhook POST failed: {exc}") from exc
+            # The webhook URL is a credential (its path/query/userinfo often
+            # carry the secret), and httpx exception text is free-form, so the
+            # caller gets the exception class and a fixed reason, never str(exc)
+            # (liminal#149).
+            raise NotifyError(
+                f"webhook POST failed: {type(exc).__name__} ({_post_failure_reason(exc)})"
+            ) from exc
         finally:
             if owned:
                 await client.aclose()
 
+        # No URL-derived field beyond the host: the full URL is the credential
+        # (liminal#149).
         return {
             "transport": "webhook",
-            "url": str(resp.url),
+            "host": urlparse(url).hostname,
             "status": resp.status_code,
             "ok": 200 <= resp.status_code < 300,
         }
@@ -416,6 +424,15 @@ class NotifyHandler:
         )
 
 
+def _post_failure_reason(exc: httpx.HTTPError) -> str:
+    """A fixed, URL-free reason for a failed webhook POST."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timed out"
+    if isinstance(exc, httpx.ConnectError):
+        return "connection failed"
+    return "request failed"
+
+
 # ---- URL safety (mirrors web handler's SSRF defense) ---------------------
 
 
@@ -431,7 +448,8 @@ async def _check_url(
     try:
         parsed = urlparse(url)
     except Exception:  # noqa: BLE001
-        return f"unparseable URL: {url!r}", None
+        # No URL in the message: it may be the NOTIFY_WEBHOOK_URL credential.
+        return "unparseable webhook URL", None
     if parsed.scheme not in {"http", "https"}:
         return f"scheme {parsed.scheme!r} not allowed; only http/https", None
     host = parsed.hostname
