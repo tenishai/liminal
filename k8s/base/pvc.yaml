@@ -1,0 +1,11 @@
+# The memory handler's techne DB (LIMINAL_MEMORY_DB=/data/memory.db). One
+# replica mounts it (gojira class: gateway).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: liminal-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,30 @@
+# Gojira deploy contract for liminal (docs: tenishai/gojira docs/design.md
+# "gojira.yaml"). Gojira generates the Deployment, Service, workflow and
+# per-environment overlays; k8s/base holds the one object it does not
+# generate (the memory PVC). The image's CMD is `liminal serve`; its knobs
+# arrive as LIMINAL_* env (see README "Running"), so each environment's
+# cabal is a value here, not a rebuilt image.
+app: liminal
+class: gateway                 # one replica: the memory handler's SQLite
+environments:
+  - name: dev
+    cluster: gojira-sandbox
+    namespace: liminal
+port: 9100
+health: /healthz
+# techne comes from a package index at build time (Dockerfile, techne
+# stage); the index token is added by the platform.
+build_args:
+  EXTRA_INDEX_URL: https://us-central1-python.pkg.dev/shaz-learning/tenish/simple/
+env:
+  # Single-cabal mode: verify caller JWTs against this cabal's JWKS and
+  # fetch credentialed handlers' secrets from it at dispatch time.
+  LIMINAL_JWKS_URL: http://cabal.cabal.svc.cluster.local/.well-known/jwks.json
+  LIMINAL_CABAL_URL: http://cabal.cabal.svc.cluster.local
+  LIMINAL_MEMORY_DB: /data/memory.db
+# LIMINAL_CABAL_TOKEN — a service JWT from `cbl token mint-service --scope
+# secrets-fetch`; created in the namespace out of band, never in git.
+secrets_from:
+  - liminal-secrets
+# /data: the memory handler's techne DB. The image runs as uid 10002.
+data_mount: { pvc: liminal-data, path: /data, fs_group: 10002 }
