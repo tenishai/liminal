@@ -249,7 +249,7 @@ and `techne`, install with `pip install -e ../liminal`.
 
 ## License
 
-Copyright (C) 2026 tenishai
+Copyright (C) 2026 tenish and the liminal contributors
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU Affero General Public License as published by the Free
