@@ -1,7 +1,7 @@
 ---
 card: repo-card:liminal
 updated: 2026-10-03
-anchor: pyproject.toml sha=f25431b6de4218bbdcaa3942644eb32b13a7e3b4
+anchor: pyproject.toml sha=515f4709fb5d515122ed229e95908ecb25b2af07
 anchor: src/liminal/server/routes.py sha=b0af5e275de3e8c318d1326211812aa7fd01cbe8
 ---
 # liminal — repo card
