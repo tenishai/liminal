@@ -11,14 +11,11 @@ refuse with a message naming the env var — proof the env-supplied
 
 from __future__ import annotations
 
-import importlib
-
 
 def _parser():
     import liminal.cli as cli
 
-    importlib.reload(cli)  # defaults are read when the parser is built
-    return cli
+    return cli  # defaults are read on each main() call, not at import
 
 
 def test_env_supplies_the_single_cabal_flags(monkeypatch) -> None:
@@ -28,7 +25,7 @@ def test_env_supplies_the_single_cabal_flags(monkeypatch) -> None:
     monkeypatch.setenv("LIMINAL_ISSUER", "cabal-dev")
     monkeypatch.setenv("LIMINAL_TARGETS", "/etc/liminal/targets.toml")
     cli = _parser()
-    args = _serve_args(cli, [])
+    args = _serve_args(cli, [], monkeypatch)
     assert args.jwks_url == "http://cabal/.well-known/jwks.json"
     assert args.cabal_url == "http://cabal"
     assert args.audience == "liminal-dev"
@@ -40,7 +37,7 @@ def test_the_flag_wins_over_the_env(monkeypatch) -> None:
     monkeypatch.setenv("LIMINAL_JWKS_URL", "http://from-env/jwks.json")
     monkeypatch.setenv("LIMINAL_AUDIENCE", "from-env")
     cli = _parser()
-    args = _serve_args(cli, ["--jwks-url", "http://from-flag/jwks.json", "--audience", "from-flag"])
+    args = _serve_args(cli, ["--jwks-url", "http://from-flag/jwks.json", "--audience", "from-flag"], monkeypatch)
     assert args.jwks_url == "http://from-flag/jwks.json"
     assert args.audience == "from-flag"
 
@@ -51,7 +48,7 @@ def test_unset_and_empty_env_keep_the_old_defaults(monkeypatch) -> None:
     monkeypatch.setenv("LIMINAL_ISSUER", "")  # empty means unset, not ""
     monkeypatch.setenv("LIMINAL_AUDIENCE", "")
     cli = _parser()
-    args = _serve_args(cli, [])
+    args = _serve_args(cli, [], monkeypatch)
     assert args.jwks_url is None and args.cabal_url is None and args.targets is None
     assert args.issuer == "cabal-core" and args.audience == "liminal"
 
@@ -69,7 +66,7 @@ def test_env_jwks_url_reaches_main_like_a_typed_flag(monkeypatch, capsys) -> Non
     assert "LIMINAL_AUTH_DISABLED" in capsys.readouterr().err
 
 
-def _serve_args(cli, extra: list[str]):
+def _serve_args(cli, extra: list[str], monkeypatch):
     """Parse `serve …` with the real parser without starting the server."""
     import argparse
 
@@ -77,16 +74,12 @@ def _serve_args(cli, extra: list[str]):
     real = argparse.ArgumentParser.parse_args
 
     def spy(self, argv=None, namespace=None):
-        ns = real(self, argv, namespace)
-        captured["ns"] = ns
+        captured["ns"] = real(self, argv, namespace)
         raise SystemExit(0)  # stop main() before it serves
 
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", spy)
     try:
-        argparse.ArgumentParser.parse_args = spy
-        try:
-            cli.main(["serve", *extra])
-        except SystemExit:
-            pass
-    finally:
-        argparse.ArgumentParser.parse_args = real
+        cli.main(["serve", *extra])
+    except SystemExit:
+        pass
     return captured["ns"]
