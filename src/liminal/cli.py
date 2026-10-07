@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -121,6 +122,15 @@ def _parse_trust_registry_extra(
     return policy_tool_extras, None
 
 
+def _env(name: str, fallback: str | None = None) -> str | None:
+    """A `serve` flag's default from the environment: a container image bakes
+    its CMD once, so where a deployment cannot change argv (a platform that
+    renders the Deployment, 2026-10-04) the same knobs arrive as
+    LIMINAL_* env. The flag on the command line still wins."""
+    value = os.environ.get(name, "")
+    return value if value else fallback
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="liminal", description=__doc__)
     sub = parser.add_subparsers(dest="cmd")
@@ -136,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     serve_p.add_argument("--port", type=int, default=9100)
     serve_p.add_argument(
         "--jwks-url",
-        default=None,
+        default=_env("LIMINAL_JWKS_URL"),
         help=(
             "URL of the JWKS to verify caller tokens against (single-cabal "
             "mode). Some verifier is required for tools/list and tools/call: "
@@ -145,11 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     serve_p.add_argument(
-        "--issuer", default="cabal-core", help="Expected `iss` claim (single-issuer mode)."
+        "--issuer",
+        default=_env("LIMINAL_ISSUER", "cabal-core"),
+        help="Expected `iss` claim (single-issuer mode).",
     )
     serve_p.add_argument(
         "--audience",
-        default="liminal",
+        default=_env("LIMINAL_AUDIENCE", "liminal"),
         help=(
             "Expected `aud` claim (single-issuer mode). Tokens minted for a "
             "different audience are rejected; this knob is what lets a "
@@ -199,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     serve_p.add_argument(
         "--cabal-url",
-        default=None,
+        default=_env("LIMINAL_CABAL_URL"),
         help=(
             "Base URL of Cabal Core (e.g. http://cabal-core:7400). When "
             "combined with --cabal-token-env, wires CabalCoreCredentialResolver "
@@ -227,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     serve_p.add_argument(
         "--targets",
-        default=None,
+        default=_env("LIMINAL_TARGETS"),
         metavar="PATH",
         help=(
             "Path to a versioned targets TOML file declaring federated MCP upstreams "

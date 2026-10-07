@@ -171,6 +171,20 @@ To have credentialed handlers fetch their secrets from Cabal at dispatch time, a
 `--cabal-url http://cabal-core:7400 --cabal-token-env LIMINAL_CABAL_TOKEN`. Federate
 extra MCP upstreams with `--targets targets.toml`.
 
+The single-cabal flags also read from the environment when absent — `LIMINAL_JWKS_URL`,
+`LIMINAL_ISSUER`, `LIMINAL_AUDIENCE`, `LIMINAL_CABAL_URL`, `LIMINAL_TARGETS` — so a
+container whose CMD is the bare `liminal serve` can be pointed at a cabal by its
+deployment without rebuilding. A flag on the command line wins over the variable.
+
+### Through Gojira
+
+`gojira.yaml` at the repo root is the deploy contract for
+[Gojira](https://github.com/tenishai/gojira): gateway class (one replica, the memory
+handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`,
+techne from a package index at build time, and the cabal it serves as `LIMINAL_*`
+env. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
+(`cbl token mint-service --scope secrets-fetch` on that cabal).
+
 ## Repository layout
 
 ```
