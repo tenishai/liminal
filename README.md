@@ -97,13 +97,13 @@ pip install -r requirements-sources.txt ".[memory]"
 If you work on techne and liminal together, install your techne checkout instead:
 `pip install -e ../techne`.
 
-The pinned techne is `v0.18.0`, stated in `requirements-sources.txt`, in the `memory`
+The pinned techne is `v0.18.2` (distribution `tenish-techne`), stated in `requirements-sources.txt`, in the `memory`
 extra's floor, and as the Dockerfile's `TECHNE_VERSION`; `tests/test_techne_pin.py`
 keeps the three in step. To build the image from a sibling checkout, clone techne at
 that tag and check it before building:
 
 ```bash
-git clone --branch v0.18.0 https://github.com/tenishai/techne.git ../techne
+git clone --branch v0.18.2 https://github.com/tenishai/techne.git ../techne
 bash scripts/check-techne-sibling.sh
 docker build --build-context techne=../techne -t liminal .
 ```

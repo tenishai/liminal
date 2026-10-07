@@ -43,7 +43,7 @@ dev = [
 # git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
 # Dev, and CI's manual integration job, use an editable techne instead:
 # `pip install -e ../techne`.
-memory = ["techne>=0.18.0"]
+memory = ["tenish-techne>=0.18.2"]
 
 [project.scripts]
 liminal = "liminal.cli:main"

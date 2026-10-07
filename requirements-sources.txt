@@ -1,7 +1,7 @@
 # Source pins for non-PyPI dependencies.
 #
 # liminal's abstract deps live in pyproject.toml. Its optional `memory` extra
-# needs `techne`, which is not published to a public index — this file supplies
+# needs techne (distribution `tenish-techne`), which is not published to a public index — this file supplies
 # the concrete git source so it can be installed on a clean machine (agents,
 # other hosts, containers) without a sibling checkout.
 #
@@ -13,8 +13,8 @@
 #       pip install -e ../techne
 #
 # Bump the pinned tag below when consumers should pick up a new techne release —
-# and lift the matching `techne>=X` floor in pyproject.toml's `memory` extra so the
+# and lift the matching `tenish-techne>=X` floor in pyproject.toml's `memory` extra so the
 # abstract floor and the concrete pin stay in step. The Dockerfile's
 # TECHNE_VERSION and TECHNE_WHEEL_SHA256 move with them; tests/test_techne_pin.py
 # fails when the three disagree.
-techne @ git+https://github.com/tenishai/techne.git@v0.18.0
+tenish-techne @ git+https://github.com/tenishai/techne.git@v0.18.2
