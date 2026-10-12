@@ -3,7 +3,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("tenishai-liminal")
+    __version__ = version("tenish-liminal")
 except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
