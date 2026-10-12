@@ -6,6 +6,15 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **techne 0.18.2, under its new distribution name `tenish-techne`.** The `memory` extra
+  needs `tenish-techne>=0.18.2`, `requirements-sources.txt` pins the `v0.18.2` tag, and
+  the Dockerfile's index path downloads `tenish-techne==0.18.2` and checks its wheel
+  hash. The import package and the `techne` command are unchanged. Run
+  `pip uninstall techne` first: pip treats the two names as unrelated projects and would
+  leave the old one installed beside the new one.
+
 ## [0.3.0] — 2026-10-03
 
 ### Upgrading

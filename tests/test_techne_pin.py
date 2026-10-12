@@ -31,7 +31,7 @@ def test_requirements_tag_matches_the_dockerfile() -> None:
 
 def test_memory_floor_matches_the_dockerfile() -> None:
     extras = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
-    floors = [re.fullmatch(r"techne>=(\S+)", d) for d in extras["memory"]]
+    floors = [re.fullmatch(r"tenish-techne>=(\S+)", d) for d in extras["memory"]]
     floors = [f[1] for f in floors if f]
     assert floors == [_dockerfile_arg("TECHNE_VERSION")], extras["memory"]
 
