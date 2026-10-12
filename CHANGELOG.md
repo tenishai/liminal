@@ -6,14 +6,66 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-12
+
 ### Upgrading
 
-- **techne 0.18.2, under its new distribution name `tenish-techne`.** The `memory` extra
-  needs `tenish-techne>=0.18.2`, `requirements-sources.txt` pins the `v0.18.2` tag, and
-  the Dockerfile's index path downloads `tenish-techne==0.18.2` and checks its wheel
-  hash. The import package and the `techne` command are unchanged. Run
+- **The distribution is now `tenish-liminal`** (was `tenishai-liminal`, tenishai/liminal#169). The import
+  package and the `liminal` command are unchanged. Run `pip uninstall tenishai-liminal`
+  before installing 0.4.0: pip treats the two names as unrelated projects and would leave
+  both installed. A dependency written as `tenishai-liminal>=0.3` becomes
+  `tenish-liminal>=0.4`. An editable checkout must be reinstalled
+  (`pip install -e ".[dev]"`); until then `liminal version` reports `0.0.0+unknown`,
+  because `liminal.__version__` looks up only the new name. `v0.4.0` is the first tag that
+  builds `tenish-liminal`; `v0.3.0` builds `tenishai-liminal`.
+- **techne 0.18.2, under its new distribution name `tenish-techne`** (tenishai/liminal#158).
+  The `memory` extra needs `tenish-techne>=0.18.2`, `requirements-sources.txt` pins the
+  `v0.18.2` tag, and the Dockerfile's index path downloads `tenish-techne==0.18.2` and
+  checks its wheel hash. The import package and the `techne` command are unchanged. Run
   `pip uninstall techne` first: pip treats the two names as unrelated projects and would
-  leave the old one installed beside the new one.
+  leave the old one installed beside the new one. A sibling-checkout image build wants
+  `../techne` at `v0.18.2`; `bash scripts/check-techne-sibling.sh` checks it.
+- **`liminal serve` reads `LIMINAL_JWKS_URL`, `LIMINAL_ISSUER`, `LIMINAL_AUDIENCE`,
+  `LIMINAL_CABAL_URL` and `LIMINAL_TARGETS` when the matching flag is absent**
+  (tenishai/liminal#153). A server whose environment already sets one of them now uses
+  it. `LIMINAL_JWKS_URL` set beside `--trust-registry` is the single-cabal/sovereign
+  conflict, and `liminal serve` exits 2. A flag on the command line still wins, and an
+  empty variable counts as unset.
+
+### Added
+
+- **`liminal serve` takes its single-cabal settings from the environment.** `--jwks-url`,
+  `--issuer`, `--audience`, `--cabal-url` and `--targets` default to `LIMINAL_JWKS_URL`,
+  `LIMINAL_ISSUER`, `LIMINAL_AUDIENCE`, `LIMINAL_CABAL_URL` and `LIMINAL_TARGETS`, so a
+  container whose CMD is the bare `liminal serve` can be pointed at a cabal by its
+  deployment without a rebuilt image (tenishai/liminal#153).
+- **Gojira deploy config.** `gojira.yaml` is the deploy contract for Gojira (gateway class,
+  port 9100, `/healthz`, techne from a package index at build time, the cabal as
+  `LIMINAL_*` env, `LIMINAL_CABAL_TOKEN` from the `liminal-secrets` Secret); `k8s/base`
+  holds the memory handler's `liminal-data` PVC beside the generated Deployment, Service,
+  PodMonitoring and rules, with a `dev` overlay and the generated
+  `.github/workflows/gojira-ci.yaml` (tenishai/liminal#153, tenishai/liminal#160,
+  tenishai/liminal#164). The README has a "Through Gojira" section.
+- **A caller with no policy grant is logged as well as audited.** In sovereign mode the
+  no-grant denial now logs a warning `access.denied` with the issuer, persona, agent and
+  reason (never the token) beside its `access_deny` audit row (tenishai/liminal#167, closes
+  tenishai/liminal#166).
+
+### Changed
+
+- **The distribution is named `tenish-liminal`** (was `tenishai-liminal`): every released
+  tenish Python distribution is named `tenish-<project>`, as techne is `tenish-techne`.
+  pyproject's `name`, `liminal.__version__`'s lookup, the README install line and the
+  repo card change; the import package, the CLI and the GitHub URL
+  (`github.com/tenishai/liminal`) do not (tenishai/liminal#169).
+- **techne is pinned at 0.18.2 under its new name, `tenish-techne`**, in pyproject's
+  `memory` extra, `requirements-sources.txt`, the Dockerfile (`TECHNE_VERSION`,
+  `TECHNE_WHEEL_SHA256`) and `tests/test_techne_pin.py` (tenishai/liminal#158).
+- **The copyright holder is "tenish and the liminal contributors"** in NOTICE and the
+  README, and pyproject's `authors` is `tenish`. The licence (AGPL-3.0-or-later) is
+  unchanged (tenishai/liminal#157).
+- **The README says how liminal was built, and CONTRIBUTING.md gives the policy for
+  AI-assisted contributions** (tenishai/liminal#162).
 
 ## [0.3.0] — 2026-10-03
 

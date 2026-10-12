@@ -113,16 +113,16 @@ techne's main from the tag; the script compares commits. `TECHNE_ANY=1` skips th
 script and `--build-arg TECHNE_ANY_VERSION=1` skips the build's check, for building
 against whatever `../techne` has checked out.
 
-The distribution is named `tenishai-liminal` (not yet published to PyPI); the
+The distribution is named `tenish-liminal` (not yet published to PyPI); the
 import package and the CLI command are still `liminal`. To install a tagged release
 straight from git (this needs access to `tenishai/liminal` until it is public):
 
 ```bash
-pip install "tenishai-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
+pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
 ```
 
-`v0.3.0` is the first tag that builds `tenishai-liminal`; `v0.2.0` builds the old `liminal`
-distribution and `v0.1.0` builds `limenal`.
+`v0.4.0` is the first tag that builds `tenish-liminal`; `v0.3.0` builds the old
+`tenishai-liminal` distribution, `v0.2.0` builds `liminal` and `v0.1.0` builds `limenal`.
 
 ## Run the gateway (`liminal serve`)
 
