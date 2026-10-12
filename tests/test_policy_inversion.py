@@ -11,6 +11,7 @@ import time
 
 import pytest
 import pytest_asyncio
+import structlog
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
@@ -140,6 +141,35 @@ async def test_no_grant_denied(sov) -> None:
     body = (await _rpc(client, tok, "tools/list")).json()
     assert body.get("error"), body
     assert "no policy grant" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_no_grant_denial_is_logged(sov) -> None:
+    """liminal#166: a denied caller gets one warning naming issuer, persona,
+    agent and reason, and the token appears in no field."""
+    client, _kp, ks, _store = sov
+    tok = _mint(ks, iss="shaz-cabal")
+    with structlog.testing.capture_logs() as logs:
+        await _rpc(client, tok, "tools/list")
+    denied = [e for e in logs if e["event"] == "access.denied"]
+    assert len(denied) == 1, logs
+    entry = denied[0]
+    assert entry["log_level"] == "warning"
+    assert entry["issuer"] == "shaz-cabal"
+    assert entry["persona"] == "rook"
+    assert entry["reason"] == "no grant"
+    assert "agent" in entry
+    assert all(tok not in str(v) for v in entry.values())
+
+
+@pytest.mark.asyncio
+async def test_granted_caller_logs_no_denial(sov) -> None:
+    client, _kp, ks, store = sov
+    await store.grant("shaz-cabal", "rook", scopes={"mem:query"}, allowed_handlers=None)
+    tok = _mint(ks, iss="shaz-cabal")
+    with structlog.testing.capture_logs() as logs:
+        await _rpc(client, tok, "tools/list")
+    assert not [e for e in logs if e["event"] == "access.denied"], logs
 
 
 @pytest.mark.asyncio
