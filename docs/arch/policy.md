@@ -2,7 +2,7 @@
 card: arch-card:liminal-policy
 updated: 2026-10-03
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
-anchor: src/liminal/server/routes.py sha=b0af5e275de3e8c318d1326211812aa7fd01cbe8
+anchor: src/liminal/server/routes.py sha=30fe35a21fa80dde27059522e703141ca4bafb25
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
 anchor: src/liminal/server/app.py sha=9da8cd590f343caa0de4972048ab95b348ac107f
 ---
@@ -11,7 +11,7 @@ anchor: src/liminal/server/app.py sha=9da8cd590f343caa0de4972048ab95b348ac107f
 WHAT / SEAM: `PolicyStore` Protocol + `SqlitePolicyStore` (server/policy.py). Keyed on VERIFIED (issuer, persona). Grant = `ScopeGrant(scopes: frozenset, allowed_handlers: frozenset|None)`; `has_scope(r)` = `admin:*` in scopes or r in scopes. FLAT scopes: no delegation, caveats, attenuation, or role union.
 WHY IT EXISTS: a sovereign liminal trusts several independently-owned cabals; any of them could mint itself generous `scope`/`tool_extras`. So in sovereign mode authz comes from this store, never from the token.
 OPS / FLOW (routes.py):
-- `_authenticate`: no store → single-cabal path (`_token_scopes`: token `cabal_scope`, falling back to `scope`, must contain `dispatch`; grant=None). Store → `resolve(iss, persona)`; None → record `access_deny` + AuthError.
+- `_authenticate`: no store → single-cabal path (`_token_scopes`: token `cabal_scope`, falling back to `scope`, must contain `dispatch`; grant=None). Store → `resolve(iss, persona)`; None → record `access_deny`, log warning `access.denied` (issuer, persona, agent, reason; #166), AuthError.
 - `_allowed_handlers_for`: grant present → grant.allowed_handlers (None=all, empty=deny all); else token `cabal_tool_extras|tool_extras["liminal.allowed_handlers"]`; malformed → empty set (deny).
 - `_missing_scope` via `app.state.policy_scope_for` (app.py:scope_for): exact `<t>.<tool>` rule → target rule → `DENY_SCOPE` ("liminal:deny", server/scopes.py) if target declares tool_scopes → None (open). Only runs when a grant exists.
 - `_operator_refusal` (cabal#233) runs in EVERY mode, after the scope gate: a tool whose card sets `requires_operator` (app.state.operator_only) needs `operator` in the GRANT when one exists (`admin:*` satisfies it), else in the verified token's scope in single-cabal mode; auth-disabled refuses outright. Denials under a grant are recorded as `access_deny` with `required_scope`=operator.

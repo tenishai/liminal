@@ -100,6 +100,12 @@ async def _authenticate(
             issuer=claims.issuer, persona=claims.identity,
             agent=claims.agent_name, allowed=False, detail={"reason": "no grant"},
         )
+        # The audit row is not where an operator looks first; the log is
+        # (liminal#166). Never log the token.
+        log.warning(
+            "access.denied", issuer=claims.issuer, persona=claims.identity,
+            agent=claims.agent_name, reason="no grant",
+        )
         raise AuthError(
             f"no policy grant for ({claims.issuer!r}, {claims.identity!r})"
         )
