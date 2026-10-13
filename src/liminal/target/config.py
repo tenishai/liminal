@@ -216,6 +216,14 @@ class TargetSpec:
                 f"target {self.name!r}: bearer_token_env must name an "
                 f"environment variable, got {self.bearer_token_env!r}"
             )
+        if self.bearer_token_env is not None and self.auth_method != "bearer":
+            # The key exists to move a secret out of the file; set without
+            # auth_method="bearer" it was read by nothing, and the target
+            # called its upstream anonymously.
+            raise TargetConfigError(
+                f"target {self.name!r}: bearer_token_env is set but auth_method "
+                f"is {self.auth_method!r}; it is read only for auth_method='bearer'"
+            )
         if self.auth_method == "bearer" and self.bearer_token and self.bearer_token_env:
             raise TargetConfigError(
                 f"target {self.name!r}: bearer_token and bearer_token_env are "

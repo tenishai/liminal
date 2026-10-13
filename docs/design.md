@@ -429,7 +429,7 @@ required_scope = "confluence:use"
 | `identity` | no | `"none"` | `"forward"` (http only) sends caller persona as headers. Rejected for stdio. |
 | `auth_method` | no | `"none"` | `"bearer"`, `"service-token"`, or `"none"`. |
 | `bearer_token` | if bearer, unless `bearer_token_env` | — | Static credential, inline. Sent on every call (`initialize` included), encoded per `auth_scheme`. Mutually exclusive with `bearer_token_env`. |
-| `bearer_token_env` | if bearer, unless `bearer_token` | — | Name of an env var holding the static credential, read when the target starts. Keeps the secret out of a reviewed, image-baked config file. Unset or empty fails the target's startup with an error naming the variable. |
+| `bearer_token_env` | if bearer, unless `bearer_token` | — | Name of an env var holding the static credential, read when the target starts. Keeps the secret out of a reviewed, image-baked config file. Unset or empty fails the target's startup with an error naming the variable. Refused at load unless `auth_method = "bearer"`. |
 | `auth_scheme` | no | `"bearer"` | How the credential rides `Authorization`, for `bearer` and `service-token` alike. `"bearer"`: `Bearer <value>`. `"basic"`: the value is `user:secret` and is sent as `Basic base64(user:secret)`; store the readable form, not a pre-encoded one. `"basic"` needs `auth_method` `"bearer"` or `"service-token"`. |
 | `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
 | `timeout_seconds` | no | `30.0` | Per-call timeout. |

@@ -247,3 +247,12 @@ def test_sync_client_sends_basic_on_every_call():
     http.close()
     assert [m for m, _ in seen] == ALL_METHODS
     assert all(auth == BASIC for _, auth in seen), seen
+
+
+@pytest.mark.parametrize("method", ["none", "service-token"])
+def test_bearer_token_env_without_bearer_auth_is_refused(method):
+    """bearer_token_env is read only for auth_method='bearer'; anywhere else it
+    would be ignored and the target would call its upstream anonymously."""
+    extra = {"credential_key": "k"} if method == "service-token" else {}
+    with pytest.raises(TargetConfigError, match="bearer_token_env is set but auth_method"):
+        _basic_env_spec(auth_method=method, auth_scheme="bearer", **extra)
