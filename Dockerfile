@@ -5,7 +5,10 @@
 # Two ways in, same image either way:
 #   --build-context techne=../techne                       (compose, dev: unchanged)
 #   --build-arg EXTRA_INDEX_URL=https://<index>/simple/    (a package index)
-#     [--build-arg AR_TOKEN=…]  for a private Artifact Registry index; the
+#     [--secret id=ar_token,env=AR_TOKEN]  for a private Artifact Registry index
+#     (a BuildKit secret: never in the image or the build log; the deploy
+#     platform's generated CI passes it this way). --build-arg AR_TOKEN=… still
+#     works for a local build, but lands in the build log; the
 #     token Gojira's generated CI passes to every build (2026-09-30).
 # techne itself is fetched from that index ALONE, then installed as a file, so
 # only its dependencies come from PyPI. The name `techne` on PyPI belongs to
@@ -70,7 +73,8 @@ ARG TECHNE_ANY_VERSION=""
 # so the build system is satisfied), then copy the real source last so a
 # code-only change doesn't bust the dependency install layer.
 COPY pyproject.toml README.md LICENSE ./
-RUN python3 -m venv /venv \
+RUN --mount=type=secret,id=ar_token \
+    python3 -m venv /venv \
  && if [ -f /build/techne/pyproject.toml ]; then \
       sib="$(sed -n 's/^version = "\(.*\)"/\1/p' /build/techne/pyproject.toml | head -1)"; \
       if [ "$sib" != "$TECHNE_VERSION" ] && [ "$TECHNE_ANY_VERSION" != "1" ]; then \
@@ -78,7 +82,8 @@ RUN python3 -m venv /venv \
       fi \
       && /venv/bin/pip install --no-cache-dir /build/techne; \
     elif [ -n "$EXTRA_INDEX_URL" ]; then \
-      if [ -n "$AR_TOKEN" ]; then EXTRA_INDEX_URL="$(echo "$EXTRA_INDEX_URL" | sed "s#://#://oauth2accesstoken:${AR_TOKEN}@#")"; fi; \
+      if [ -r /run/secrets/ar_token ] && [ -s /run/secrets/ar_token ]; then AR_TOKEN="$(cat /run/secrets/ar_token)"; fi; \
+      if [ -n "$AR_TOKEN" ]; then EXTRA_INDEX_URL="$(echo "$EXTRA_INDEX_URL" | sed "s#://#://oauth2accesstoken:${AR_TOKEN}@#")"; unset AR_TOKEN; fi; \
       /venv/bin/pip download --no-cache-dir --no-deps --only-binary :all: --index-url "$EXTRA_INDEX_URL" -d /tmp/techne-dist "tenish-techne==${TECHNE_VERSION}" \
       && echo "${TECHNE_WHEEL_SHA256}  /tmp/techne-dist/tenish_techne-${TECHNE_VERSION}-py3-none-any.whl" | sha256sum -c - \
       && /venv/bin/pip install --no-cache-dir /tmp/techne-dist/tenish_techne-${TECHNE_VERSION}-py3-none-any.whl \
