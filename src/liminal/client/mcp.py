@@ -16,6 +16,7 @@ shared state). Tests and simple integrations can pass `lambda: "static-token"`.
 
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 import socket
@@ -108,9 +109,33 @@ class ToolCallOutcome:
         return "".join(out)
 
 
-def _auth_header(token: str) -> dict[str, str]:
-    """A ``{"Authorization": "Bearer <token>"}`` header — OMITTED when the token
-    is falsy (liminal#32).
+AUTH_SCHEMES = ("bearer", "basic")
+
+
+def authorization_value(scheme: str, token: str) -> str:
+    """The ``Authorization`` header value for ``token`` under ``scheme``.
+
+    The one encoding rule for every upstream call liminal makes: the client's
+    base header (``_auth_header``) and ``HttpTarget``'s per-call service-token
+    header both go through here.
+
+    ``"bearer"`` sends the token verbatim as ``Bearer <token>``. ``"basic"``
+    treats it as ``user:secret`` and base64-encodes it here -- upstreams like
+    Atlassian's hosted MCP authenticate service accounts as
+    ``Basic base64(email:api_token)``, and the credential store should hold
+    the readable form, never a pre-encoded blob. Any other scheme raises
+    ``ValueError`` rather than falling back to bearer.
+    """
+    if scheme == "basic":
+        return "Basic " + base64.b64encode(token.encode()).decode()
+    if scheme == "bearer":
+        return f"Bearer {token}"
+    raise ValueError(f"auth scheme {scheme!r} must be one of {list(AUTH_SCHEMES)}")
+
+
+def _auth_header(token: str, scheme: str = "bearer") -> dict[str, str]:
+    """An ``Authorization`` header (see ``authorization_value``) — OMITTED when
+    the token is falsy (liminal#32).
 
     A no-auth deployment (``LIMINAL_AUTH_DISABLED=1``) naturally passes an empty
     token. Emitting ``Authorization: Bearer `` (trailing space, empty value)
@@ -119,7 +144,7 @@ def _auth_header(token: str) -> dict[str, str]:
     in-process tests pass while real-network calls fail. Omitting the header
     keeps no-auth mode symmetric on both ends.
     """
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    return {"Authorization": authorization_value(scheme, token)} if token else {}
 
 
 def _base_headers() -> dict[str, str]:
@@ -300,6 +325,7 @@ class _RequestHeaders:
     """Header assembly shared by both clients."""
 
     _token: Callable[[], str]
+    _auth_scheme: str
     _use_session: bool
     _session_id: str | None
     _static_headers: dict[str, str]
@@ -307,7 +333,7 @@ class _RequestHeaders:
     def _headers(self, auth: bool) -> dict[str, str]:
         headers = _base_headers()
         if auth:
-            headers.update(_auth_header(self._token()))
+            headers.update(_auth_header(self._token(), self._auth_scheme))
         if self._session_id:
             headers[SESSION_HEADER] = self._session_id
         # The headers the client owns always win. Header names are
@@ -353,6 +379,10 @@ class AsyncMCPClient(_RequestHeaders):
             reply so the connection can be reused (liminal#132). If the server
             has not ended the stream by then, the connection is closed instead.
             0 stops at the reply and never reuses the connection.
+        auth_scheme: how the token rides ``Authorization`` on every request,
+            the handshake and notifications included -- ``"bearer"`` (default,
+            verbatim) or ``"basic"`` (token is ``user:secret``, base64-encoded
+            at the wire). See ``authorization_value``.
     """
 
     def __init__(
@@ -367,10 +397,14 @@ class AsyncMCPClient(_RequestHeaders):
         use_session: bool = False,
         static_headers: dict[str, str] | None = None,
         sse_drain_timeout: float = DEFAULT_SSE_DRAIN_TIMEOUT,
+        auth_scheme: str = "bearer",
     ) -> None:
+        if auth_scheme not in AUTH_SCHEMES:
+            raise ValueError(f"auth_scheme {auth_scheme!r} must be one of {list(AUTH_SCHEMES)}")
         self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
+        self._auth_scheme = auth_scheme
         self._owned_client = http_client is None
         self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(30.0))
         self._use_session = use_session
@@ -557,10 +591,14 @@ class MCPClient(_RequestHeaders):
         use_session: bool = False,
         static_headers: dict[str, str] | None = None,
         sse_drain_timeout: float = DEFAULT_SSE_DRAIN_TIMEOUT,
+        auth_scheme: str = "bearer",
     ) -> None:
+        if auth_scheme not in AUTH_SCHEMES:
+            raise ValueError(f"auth_scheme {auth_scheme!r} must be one of {list(AUTH_SCHEMES)}")
         self._static_headers = dict(static_headers or {})
         self._base_url = base_url.rstrip("/")
         self._token = token_provider
+        self._auth_scheme = auth_scheme
         self._owned_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(30.0))
         self._use_session = use_session

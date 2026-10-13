@@ -365,6 +365,16 @@ trust       = "trusted"
 on_untrusted = "strip"      # only matters when trust = "untrusted"
 identity    = "forward"     # forward caller persona as x-liminal-persona header
 
+# Basic auth with the credential in the environment. Atlassian's hosted MCP
+# authenticates service accounts as Basic base64(email:api_token); set
+# ATLASSIAN_BASIC="svc@example.com:<api_token>" (readable form, not encoded).
+[[target]]
+name             = "atlassian"
+address          = "https://atlassian-mcp.example.com/v1"   # the upstream's /v1/mcp, minus /mcp
+auth_method      = "bearer"
+auth_scheme      = "basic"
+bearer_token_env = "ATLASSIAN_BASIC"
+
 # Static request headers (http only, liminal#130). GitHub's hosted MCP server
 # reads X-MCP-Readonly to restrict itself server-side.
 [[target]]
@@ -418,7 +428,9 @@ required_scope = "confluence:use"
 | `on_untrusted` | no | `"flag"` | `"flag"`, `"strip"`, or `"block"` — how to handle suspicious tools from untrusted targets. |
 | `identity` | no | `"none"` | `"forward"` (http only) sends caller persona as headers. Rejected for stdio. |
 | `auth_method` | no | `"none"` | `"bearer"`, `"service-token"`, or `"none"`. |
-| `bearer_token` | if bearer | — | Static token sent as `Authorization: Bearer`. |
+| `bearer_token` | if bearer, unless `bearer_token_env` | — | Static credential, inline. Sent on every call (`initialize` included), encoded per `auth_scheme`. Mutually exclusive with `bearer_token_env`. |
+| `bearer_token_env` | if bearer, unless `bearer_token` | — | Name of an env var holding the static credential, read when the target starts. Keeps the secret out of a reviewed, image-baked config file. Unset or empty fails the target's startup with an error naming the variable. |
+| `auth_scheme` | no | `"bearer"` | How the credential rides `Authorization`, for `bearer` and `service-token` alike. `"bearer"`: `Bearer <value>`. `"basic"`: the value is `user:secret` and is sent as `Basic base64(user:secret)`; store the readable form, not a pre-encoded one. `"basic"` needs `auth_method` `"bearer"` or `"service-token"`. |
 | `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
 | `timeout_seconds` | no | `30.0` | Per-call timeout. |
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
