@@ -40,12 +40,14 @@ Trust = Literal["trusted", "untrusted"]
 OnUntrusted = Literal["flag", "strip", "block"]
 Identity = Literal["forward", "none"]
 AuthMethod = Literal["bearer", "service-token", "none"]
+AuthScheme = Literal["bearer", "basic"]
 
 _TRANSPORTS = frozenset(get_args(Transport))
 _TRUSTS = frozenset(get_args(Trust))
 _ON_UNTRUSTED = frozenset(get_args(OnUntrusted))
 _IDENTITIES = frozenset(get_args(Identity))
 _AUTH_METHODS = frozenset(get_args(AuthMethod))
+_AUTH_SCHEMES = frozenset(get_args(AuthScheme))
 
 # Header names liminal sets itself (lowercase; names are case-insensitive).
 # Per-call identity headers (HttpTarget) -- defined here, not in http.py, so
@@ -95,7 +97,23 @@ class TargetSpec:
         auth_method: Upstream auth — ``"bearer"`` (static token),
             ``"service-token"`` (per-call ``ctx.credentials[credential_key]``),
             or ``"none"``.
-        bearer_token: Required when ``auth_method == "bearer"``.
+        bearer_token: The static credential, inline. When
+            ``auth_method == "bearer"`` exactly one of ``bearer_token`` and
+            ``bearer_token_env`` is required.
+        bearer_token_env: Name of an env var holding the static credential,
+            read when the target starts. Config files are reviewed and often
+            baked into images, so a literal secret in ``bearer_token`` is a
+            leak with a commit hash. An unset or empty variable fails the
+            target's startup with an error naming the variable.
+        auth_scheme: How the credential rides the ``Authorization`` header,
+            for the static credential and for ``service-token`` alike.
+            ``"bearer"`` (default) sends it verbatim as ``Bearer <value>``.
+            ``"basic"`` treats the value as ``user:secret`` and base64-encodes
+            it at the wire (``Basic base64(user:secret)``, as Atlassian's
+            hosted MCP expects for service accounts), so the credential store
+            holds the readable form, never a pre-encoded blob. ``"basic"``
+            needs a credential (``auth_method`` ``"bearer"`` or
+            ``"service-token"``).
         credential_key: Required when ``auth_method == "service-token"``.
         timeout_seconds: Per-call timeout for forwarded requests.
         refresh_tools_interval_seconds: Background catalog re-fetch cadence.
@@ -139,7 +157,9 @@ class TargetSpec:
     identity: Identity = "none"
     auth_method: AuthMethod = "none"
     bearer_token: str | None = None
+    bearer_token_env: str | None = None
     credential_key: str | None = None
+    auth_scheme: AuthScheme = "bearer"
     timeout_seconds: float = 30.0
     refresh_tools_interval_seconds: int = 300
     client_name: str = "liminal-target"
@@ -179,9 +199,32 @@ class TargetSpec:
                 f"target {self.name!r}: auth_method {self.auth_method!r} must be "
                 f"one of {sorted(_AUTH_METHODS)}"
             )
-        if self.auth_method == "bearer" and not self.bearer_token:
+        if self.auth_scheme not in _AUTH_SCHEMES:
             raise TargetConfigError(
-                f"target {self.name!r}: auth_method='bearer' requires bearer_token"
+                f"target {self.name!r}: auth_scheme {self.auth_scheme!r} must "
+                f"be one of {sorted(_AUTH_SCHEMES)}"
+            )
+        if self.auth_scheme == "basic" and self.auth_method == "none":
+            raise TargetConfigError(
+                f"target {self.name!r}: auth_scheme='basic' needs a credential "
+                "(auth_method 'bearer' or 'service-token')"
+            )
+        if self.bearer_token_env is not None and (
+            not isinstance(self.bearer_token_env, str) or not self.bearer_token_env.strip()
+        ):
+            raise TargetConfigError(
+                f"target {self.name!r}: bearer_token_env must name an "
+                f"environment variable, got {self.bearer_token_env!r}"
+            )
+        if self.auth_method == "bearer" and self.bearer_token and self.bearer_token_env:
+            raise TargetConfigError(
+                f"target {self.name!r}: bearer_token and bearer_token_env are "
+                "mutually exclusive -- pick where the credential lives"
+            )
+        if self.auth_method == "bearer" and not (self.bearer_token or self.bearer_token_env):
+            raise TargetConfigError(
+                f"target {self.name!r}: auth_method='bearer' requires "
+                "bearer_token or bearer_token_env"
             )
         if self.auth_method == "service-token" and not self.credential_key:
             raise TargetConfigError(

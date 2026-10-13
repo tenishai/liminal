@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import http.cookiejar
+import os
 import uuid
 from typing import Any
 
@@ -54,6 +55,7 @@ from liminal.client.mcp import (
     MCPError,
     MCPRemoteError,
     ToolCallOutcome,
+    authorization_value,
 )
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
@@ -76,6 +78,11 @@ log = structlog.get_logger(__name__)
 # Per-call header names live in target.config (imported above) so config
 # validation can reserve them.
 CORRELATION_ID_KEY = "correlation_id"
+
+
+# The per-call Authorization value. The same function the client uses for its
+# base header, so bearer vs basic has one encoding rule.
+_authorization = authorization_value
 
 
 class _MissingCredential(Exception):
@@ -208,8 +215,30 @@ class HttpTarget(Target):
 
     # ---- lifecycle --------------------------------------------------------
 
+    def _static_token(self) -> str:
+        """The static credential for ``auth_method="bearer"``, else ``""``.
+
+        ``bearer_token_env`` is read here, at startup. A named variable that
+        is unset or empty is a wiring error, not a no-auth deployment: it
+        raises, naming the variable, before anything is opened or sent."""
+        if self.spec.auth_method != "bearer":
+            return ""
+        env_name = self.spec.bearer_token_env
+        if env_name:
+            token = (os.environ.get(env_name) or "").strip()
+            if not token:
+                raise RuntimeError(
+                    f"target {self.spec.name!r}: bearer_token_env "
+                    f"${env_name} is unset or empty"
+                )
+            return token
+        return self.spec.bearer_token or ""
+
     async def startup(self) -> None:
         """Connect, initialize, fetch + inspect the catalog, schedule refresh."""
+        # Resolve the static credential first so an unset bearer_token_env
+        # fails before a client is built or a request leaves.
+        base_token = self._static_token()
         if self._http_client is None:
             # The owned client REJECTS every cookie (liminal#76): dispatches
             # for different personas share this one client, and an upstream
@@ -230,11 +259,9 @@ class HttpTarget(Target):
         # the catalog fetch (initialize authenticates like everything else
         # since liminal#75); for service-token / none the base token stays
         # empty, those base calls go out unauthenticated by design, and the
-        # per-call Authorization is built fresh in dispatch (#13).
-        if self.spec.auth_method == "bearer" and self.spec.bearer_token:
-            base_token = self.spec.bearer_token
-        else:
-            base_token = ""
+        # per-call Authorization is built fresh in dispatch (#13). base_token
+        # was resolved by _static_token() above; auth_scheme decides how the
+        # client encodes it on every base call.
 
         def _base_token_provider() -> str:
             return base_token
@@ -245,6 +272,7 @@ class HttpTarget(Target):
             http_client=self._http_client,
             client_name=self.spec.client_name,
             static_headers=self.spec.headers,
+            auth_scheme=self.spec.auth_scheme,
         )
 
         await self._refresh_tools_once(initialize=True)
@@ -337,7 +365,7 @@ class HttpTarget(Target):
             token = (ctx.credentials.get(key) or "").strip() if key else ""
             if not token:
                 raise _MissingCredential(key or "(no credential_key configured)")
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = _authorization(self.spec.auth_scheme, token)
 
         # #27 correlation-id — carry an inbound one or generate, persist on the
         # context, and forward on every call for end-to-end traceability.
