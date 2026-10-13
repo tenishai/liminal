@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-client
 updated: 2026-10-13
-anchor: src/liminal/client/mcp.py sha=eef859b57bfecfd6d48b28bf0e4ad9ee27059c03
+anchor: src/liminal/client/mcp.py sha=e98f666410078d8994b764f7a23d3a6468b962ff
 anchor: src/liminal/client/library.py sha=bdd50eae29e0bb949cbe4b5d1d55c00fbdb2382f
 ---
 # client — MCP client library other repos import

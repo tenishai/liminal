@@ -59,9 +59,11 @@ class MCPTransportError(MCPError):
 class MCPSessionExpired(MCPTransportError):
     """The server answered 404 to a request carrying an ``Mcp-Session-Id``.
 
-    The streamable-HTTP spec uses 404 for "that session is gone". The client
-    has already dropped the session and marked itself uninitialized, so the
-    caller can initialize again and retry once."""
+    The streamable-HTTP spec uses 404 for "that session is gone". If that
+    session was still the client's current one, the client has dropped it and
+    marked itself uninitialized. If a concurrent call already replaced it, the
+    client keeps the new session and stays initialized. Either way the caller
+    can retry once: it initializes first only when ``initialized`` is False."""
 
 
 class MCPRemoteError(MCPError):
