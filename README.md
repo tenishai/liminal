@@ -134,7 +134,8 @@ handlers register automatically next to liminal's own five.
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
-# health check: curl http://127.0.0.1:9100/healthz
+# health check: curl http://127.0.0.1:9100/healthz (always 200 while serving)
+# readiness:    curl http://127.0.0.1:9100/readyz  (503 while any target is degraded)
 #
 # The `files` handler starts with an EMPTY allowlist and refuses every call
 # until you grant it something. In auth-off mode there is no JWT to carry a
@@ -180,7 +181,9 @@ deployment without rebuilding. A flag on the command line wins over the variable
 
 `gojira.yaml` at the repo root is the deploy contract for
 [Gojira](https://github.com/tenishai/gojira): gateway class (one replica, the memory
-handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`,
+handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`
+(Gojira's gateway class uses one path for liveness and readiness, so the contract keeps
+`/healthz`; `/readyz` is there for a deployment that probes readiness separately),
 techne from a package index at build time, and the cabal it serves as `LIMINAL_*`
 env. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
 (`cbl token mint-service --scope secrets-fetch` on that cabal).

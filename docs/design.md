@@ -386,6 +386,16 @@ bearer_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
 [target.headers]
 X-MCP-Readonly = "true"
 
+# Stateful upstream (liminal#172): the server returns an Mcp-Session-Id on
+# initialize and refuses later requests without it. Each calling persona gets
+# its own upstream session, opened with its own credential.
+[[target]]
+name           = "vendor"
+address        = "https://vendor-mcp.example.com"
+auth_method    = "service-token"
+credential_key = "VENDOR_TOKEN"
+session        = "per-persona"
+
 # Scope-gated target, DENY-BY-DEFAULT (liminal#78).
 # NOTE there is no target-level `required_scope` here. That is deliberate --
 # see the precedence note below; adding one would DISABLE deny-by-default.
@@ -437,7 +447,12 @@ required_scope = "confluence:use"
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
 | `required_scope` | no | — | Sovereign scope a grant must hold to call ANY tool on this target. |
 | `tool_scopes` | no | `{}` | Table of UNprefixed tool name → scope. Overrides `required_scope` per tool. Declaring it makes the target deny-by-default **only when no `required_scope` is set** — see precedence below. |
-| `headers` | no | `{}` | Table of static request headers (http only; a `stdio` target with `headers` is refused). Sent on every call to the target: `initialize`, `tools/list` and `tools/call`. Values must be strings. Names are case-insensitive, and the config is refused if two names differ only by case or if one is `Authorization`, `Mcp-Session-Id`, `Accept`, `Content-Type`, `X-Liminal-Persona`, `X-Liminal-Issuer` or `X-Correlation-Id`: liminal owns these: it sets `Accept`, `Content-Type` and the correlation id per call, the identity headers per call when the target's `identity` is `forward`, `Authorization` when the target authenticates, and `Mcp-Session-Id` only on a client that opts into sessions (`HttpTarget` does not), so a target config must not set any of them. |
+| `headers` | no | `{}` | Table of static request headers (http only; a `stdio` target with `headers` is refused). Sent on every call to the target: `initialize`, `tools/list` and `tools/call`. Values must be strings with no CR, LF or NUL. Names must be valid HTTP field names (letters, digits and ``!#$%&'*+-.^_`|~``; no spaces, not even surrounding ones), checked at load rather than on the first request (liminal#141). Names are case-insensitive, and the config is refused if two names differ only by case or if one is `Authorization`, `Mcp-Session-Id`, `Accept`, `Content-Type`, `X-Liminal-Persona`, `X-Liminal-Issuer` or `X-Correlation-Id`: liminal owns these: it sets `Accept`, `Content-Type` and the correlation id per call, the identity headers per call when the target's `identity` is `forward`, `Authorization` when the target authenticates, and `Mcp-Session-Id` when the target's `session` is `per-persona`, so a target config must not set any of them. |
+| `session` | no | `"none"` | `"none"` or `"per-persona"` (http only). Set `"per-persona"` for a stateful upstream: one that returns an `Mcp-Session-Id` on `initialize` and refuses later requests without it (the symptom is `catalog fetch failed (startup)` with `-32600 Request must be an initialize request if no session ID is provided` in the log). Each calling persona, keyed by verified issuer and identity, gets its own upstream session, opened on its first call with that call's credential and identity headers. The catalog fetch has a separate session no persona call uses, so a session id never rides another persona's call (liminal#76). A 404 on a session (expired, or the upstream restarted) reopens it and retries once. Shutdown ends each session with an HTTP `DELETE`. A target keeps at most 256 persona sessions and drops the least recently used. A credential that changes mid-session (a rotated service token) keeps the old session until the upstream expires it. `"none"` keeps the gateway stateless: no session id is kept or sent. |
+
+### Health and readiness
+
+`GET /healthz` and `GET /readyz` return the same body: `{"status": "ok" | "degraded", "targets": {name: status}}`, where a target's status is `ready` or a fixed description of what failed (`catalog fetch failed (startup)`, `startup failed`, and so on; never upstream text, because neither path is authenticated). `/healthz` always answers 200 and is the liveness probe: restarting liminal doesn't fix a dead upstream. `/readyz` answers 503 while any target is degraded and is the readiness probe (liminal#159).
 
 ### Version handling
 

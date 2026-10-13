@@ -34,7 +34,10 @@ with a failure naming the missing key, never sent upstream unauthenticated
 Two deployment notes. The owned HTTP client rejects every cookie (a blocking
 cookie policy): upstream ``Set-Cookie`` never persists, so one persona's
 upstream session can never ride another persona's call (liminal#76) — an
-injected ``http_client`` is the injector's responsibility. And because this
+injected ``http_client`` is the injector's responsibility. A stateful
+upstream (``session = "per-persona"``, liminal#172) gets the same guarantee
+for ``Mcp-Session-Id`` by structure: each persona has its own client object
+holding its own session id, and the catalog fetch has another. And because this
 gateway holds credentials for its targets, its pod's egress should be
 allowlisted to exactly the declared target addresses (liminal#80).
 """
@@ -45,6 +48,7 @@ import asyncio
 import http.cookiejar
 import os
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -54,6 +58,7 @@ from liminal.client.mcp import (
     AsyncMCPClient,
     MCPError,
     MCPRemoteError,
+    MCPSessionExpired,
     ToolCallOutcome,
     authorization_value,
 )
@@ -79,6 +84,11 @@ log = structlog.get_logger(__name__)
 # validation can reserve them.
 CORRELATION_ID_KEY = "correlation_id"
 
+
+# How many per-persona upstream sessions one target keeps (liminal#172). The
+# least recently used is dropped past this, and that persona opens a new one
+# on its next call. Personas are operator-granted, so this is a backstop.
+MAX_PERSONA_SESSIONS = 256
 
 # The per-call Authorization value. The same function the client uses for its
 # base header, so bearer vs basic has one encoding rule.
@@ -115,6 +125,11 @@ class HttpTarget(Target):
         self._tools: list[ToolSpec] = []
         self._refresh_task: asyncio.Task[None] | None = None
         self._protocol_version: str | None = None
+        # session="per-persona" only: (issuer, identity) -> that persona's own
+        # client, holding that persona's Mcp-Session-Id and nothing else
+        # (liminal#172). The lock serialises opening a session, not calls.
+        self._sessions: OrderedDict[tuple[str, str], AsyncMCPClient] = OrderedDict()
+        self._session_locks: dict[tuple[str, str], asyncio.Lock] = {}
         # Surfaced by /healthz (liminal#75): "not started" -> "ready" on a
         # successful catalog fetch, or "catalog fetch failed: ..." -- a failed
         # target is visible, never a silently-empty tool list.
@@ -156,9 +171,14 @@ class HttpTarget(Target):
             correlation_id=headers.get(HEADER_CORRELATION_ID),
         )
         try:
-            outcome: ToolCallOutcome = await self._client.call_tool(
-                tool, payload, extra_headers=headers
-            )
+            if self.spec.session == "per-persona":
+                outcome: ToolCallOutcome = await self._call_in_session(
+                    ctx, tool, payload, headers
+                )
+            else:
+                outcome = await self._client.call_tool(
+                    tool, payload, extra_headers=headers
+                )
         except MCPRemoteError as exc:
             return self._error_result(
                 reason=f"upstream {self.name!r} returned error [{exc.code}]",
@@ -266,19 +286,26 @@ class HttpTarget(Target):
         def _base_token_provider() -> str:
             return base_token
 
-        self._client = AsyncMCPClient(
-            base_url=self.spec.address,
-            token_provider=_base_token_provider,
-            http_client=self._http_client,
-            client_name=self.spec.client_name,
-            static_headers=self.spec.headers,
-            auth_scheme=self.spec.auth_scheme,
-        )
+        self._base_token_provider = _base_token_provider
+        # With session="per-persona" this client's session is the catalog
+        # fetch's alone: dispatches go through _call_in_session instead.
+        self._client = self._new_client()
 
         await self._refresh_tools_once(initialize=True)
 
         if self.spec.refresh_tools_interval_seconds > 0:
             self._refresh_task = asyncio.create_task(self._refresh_loop())
+
+    def _new_client(self) -> AsyncMCPClient:
+        return AsyncMCPClient(
+            base_url=self.spec.address,
+            token_provider=self._base_token_provider,
+            http_client=self._http_client,
+            client_name=self.spec.client_name,
+            static_headers=self.spec.headers,
+            auth_scheme=self.spec.auth_scheme,
+            use_session=self.spec.session == "per-persona",
+        )
 
     async def shutdown(self) -> None:
         if self._refresh_task is not None:
@@ -288,6 +315,12 @@ class HttpTarget(Target):
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             self._refresh_task = None
+        # End the upstream sessions while the HTTP client is still open.
+        for client in [*self._sessions.values(), self._client]:
+            if client is not None and self.spec.session == "per-persona":
+                await client.terminate_session()
+        self._sessions.clear()
+        self._session_locks.clear()
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -377,6 +410,43 @@ class HttpTarget(Target):
 
         return headers
 
+    async def _call_in_session(
+        self, ctx: Context, tool: str, payload: dict[str, Any], headers: dict[str, str]
+    ) -> ToolCallOutcome:
+        """Call ``tool`` inside this persona's own upstream session.
+
+        The session is opened with this call's headers, so it carries this
+        persona's credential and identity. A 404 on a session (expired, or the
+        upstream restarted) reopens it and retries once; a second 404 is an
+        error like any other."""
+        key = (ctx.issuer, ctx.identity)
+        for attempt in (1, 2):
+            client = self._sessions.get(key)
+            if client is None:
+                client = self._sessions[key] = self._new_client()
+                self._session_locks[key] = asyncio.Lock()
+                while len(self._sessions) > MAX_PERSONA_SESSIONS:
+                    old, _ = self._sessions.popitem(last=False)
+                    self._session_locks.pop(old, None)
+            self._sessions.move_to_end(key)
+            async with self._session_locks[key]:
+                if not client.initialized:
+                    await client.initialize(extra_headers=headers)
+                    log.debug(
+                        "http_target.session_opened",
+                        target=self.name, persona=ctx.identity,
+                    )
+            try:
+                return await client.call_tool(tool, payload, extra_headers=headers)
+            except MCPSessionExpired:
+                if attempt == 2:
+                    raise
+                log.info(
+                    "http_target.session_expired",
+                    target=self.name, persona=ctx.identity,
+                )
+        raise AssertionError("unreachable")
+
     async def _refresh_tools_once(self, *, initialize: bool = False) -> None:
         if self._client is None:
             return
@@ -384,7 +454,12 @@ class HttpTarget(Target):
             if initialize:
                 init_result = await self._client.initialize()
                 self._protocol_version = init_result.get("protocolVersion")
-            tools_from_upstream = await self._client.list_tools()
+            try:
+                tools_from_upstream = await self._client.list_tools()
+            except MCPSessionExpired:
+                # The catalog's own session expired between refreshes. The
+                # client has dropped it, so list_tools initializes a new one.
+                tools_from_upstream = await self._client.list_tools()
         except Exception as exc:  # noqa: BLE001
             # ANY fetch failure marks the status, deliberately (liminal#75):
             # /healthz reads degraded until a fetch succeeds again. A stale

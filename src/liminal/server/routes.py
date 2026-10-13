@@ -17,6 +17,7 @@ import functools
 
 import structlog
 from fastapi import APIRouter, Header, Request, Response
+from fastapi.responses import JSONResponse
 
 from liminal import __version__
 from liminal.dispatch import DispatchError, Multiplexer, UnknownTool
@@ -115,8 +116,7 @@ async def _authenticate(
 def build_router() -> APIRouter:
     router = APIRouter()
 
-    @router.get("/healthz")
-    async def healthz(request: Request) -> dict:
+    def _health(request: Request) -> dict:
         # Per-target catalog status (liminal#75): a federated target whose
         # catalog fetch failed serves zero tools -- that must read as
         # "degraded" here, never as a healthy gateway with a quiet surface.
@@ -134,6 +134,23 @@ def build_router() -> APIRouter:
             "status": "degraded" if degraded else "ok",
             "targets": targets,
         }
+
+    @router.get("/healthz")
+    async def healthz(request: Request) -> dict:
+        # Liveness: 200 while the process serves, degraded or not. Restarting
+        # liminal does not fix a dead upstream, and a probe that restarted it
+        # for one would loop.
+        return _health(request)
+
+    @router.get("/readyz", response_model=None)
+    async def readyz(request: Request) -> dict | JSONResponse:
+        # Readiness (liminal#159): the same body, but 503 while any target is
+        # degraded, so a probe can take the pod out of service instead of
+        # letting callers find out from tool errors.
+        body = _health(request)
+        if body["status"] != "ok":
+            return JSONResponse(body, status_code=503)
+        return body
 
     @router.post("/mcp", response_model=None)
     async def mcp(
