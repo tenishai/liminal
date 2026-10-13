@@ -6,6 +6,36 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-12
+
+### Upgrading
+
+- **The old distribution names get no further releases.** liminal is published only as
+  `tenish-liminal` from 0.4.0 on; `liminal` (0.2.0 and earlier) and `tenishai-liminal`
+  (0.3.0) stop where they are. A requirement on either old name, from git or from a
+  private index, has to change to `tenish-liminal`; uninstall the old name first, because
+  pip treats the names as unrelated projects. The import package and the `liminal`
+  command are unchanged.
+
+### Added
+
+- **A target can send its credential as HTTP Basic, and read it from the environment**
+  (tenishai/liminal#170, a port of Kyle Greiner's tenishai/liminal#89). `auth_scheme`
+  is `"bearer"` (the default, unchanged behaviour) or `"basic"`, which sends
+  `Authorization: Basic base64(<value>)` with the value as `user:secret`, on every call
+  to the upstream: initialize, notifications, the tool catalog and tool calls, and the
+  per-call header of a `service-token` target. `bearer_token_env` names an environment
+  variable that holds the static credential, so it stays out of the targets file; it is
+  mutually exclusive with `bearer_token`. An unset, empty or whitespace-only variable
+  stops `liminal serve` at startup with a message naming it, and an unknown
+  `auth_scheme` is refused. A v0.4.0 server refused both keys as unknown.
+
+### Changed
+
+- **`bearer_token_env` without `auth_method = "bearer"` is refused at load**
+  (tenishai/liminal#171). It is read only for bearer targets, so before this a target
+  that set it and left `auth_method` at `"none"` called its upstream anonymously.
+
 ## [0.4.0] — 2026-10-12
 
 ### Upgrading

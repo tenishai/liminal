@@ -8,8 +8,10 @@ Both expose the same three primary methods: `initialize`, `list_tools`,
 `call_tool`. The handshake-on-first-call is automatic; callers can also
 call `initialize` explicitly when they want to advertise capabilities.
 
-The Bearer token is provided via a `token_provider` callable so callers
-that mint short-lived JWTs can refresh transparently.
+The credential is provided via a `token_provider` callable so callers
+that mint short-lived JWTs can refresh transparently. It goes out as
+`Bearer <token>` by default, or as `Basic base64(<token>)` with
+`auth_scheme="basic"`.
 """
 
 from liminal.client.factory import from_config
