@@ -15,6 +15,7 @@ One ``TargetSpec`` describes one federated target:
     on_untrusted = "flag"       # flag | strip | block
     identity = "forward"        # forward | none  (http only)
     required_scope = "jira:use"  # scope a grant must hold for ANY tool here
+    session = "none"            # none | per-persona (stateful upstreams, liminal#172)
 
     [target.tool_scopes]         # per-tool refinement (liminal#78)
     "create_issue" = "jira:write"
@@ -41,6 +42,7 @@ OnUntrusted = Literal["flag", "strip", "block"]
 Identity = Literal["forward", "none"]
 AuthMethod = Literal["bearer", "service-token", "none"]
 AuthScheme = Literal["bearer", "basic"]
+Session = Literal["none", "per-persona"]
 
 _TRANSPORTS = frozenset(get_args(Transport))
 _TRUSTS = frozenset(get_args(Trust))
@@ -48,6 +50,15 @@ _ON_UNTRUSTED = frozenset(get_args(OnUntrusted))
 _IDENTITIES = frozenset(get_args(Identity))
 _AUTH_METHODS = frozenset(get_args(AuthMethod))
 _AUTH_SCHEMES = frozenset(get_args(AuthScheme))
+_SESSIONS = frozenset(get_args(Session))
+
+# RFC 9110 field-name: a token. Anything else (spaces, colons, controls) is
+# refused by the HTTP library on the first request, so it is refused here, at
+# load (liminal#141).
+_TOKEN_CHARS = frozenset(
+    "!#$%&'*+-.^_`|~0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
 
 # Header names liminal sets itself (lowercase; names are case-insensitive).
 # Per-call identity headers (HttpTarget) -- defined here, not in http.py, so
@@ -124,6 +135,16 @@ class TargetSpec:
             itself (``RESERVED_HEADERS``) are refused so a config can't
             override per-call credentials or forwarded identity.
         client_name: Advertised in the upstream ``initialize`` handshake.
+        session: ``"none"`` (default) or ``"per-persona"`` (``http`` only).
+            For a stateful upstream: one that returns an ``Mcp-Session-Id`` on
+            ``initialize`` and refuses later requests without it. With
+            ``"per-persona"`` each calling persona (issuer + identity) gets its
+            own upstream session, opened with that persona's credential on its
+            first call, and the catalog fetch gets a separate one that no
+            persona call uses, so a session never rides another persona's call
+            (liminal#76, liminal#172). An expired session (404) is reopened
+            once. ``"none"`` keeps the gateway stateless: no session id is
+            ever kept or sent.
         required_scope: The sovereign scope a grant must hold to invoke ANY
             tool on this target. ``None`` = no target-level gate. This is the
             federated analogue of ``CapabilityCard.required_scope``, but it is
@@ -166,6 +187,7 @@ class TargetSpec:
     required_scope: str | None = None
     tool_scopes: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
+    session: Session = "none"
 
     def validate(self) -> None:
         """Raise ``TargetConfigError`` on any invalid combination."""
@@ -203,6 +225,11 @@ class TargetSpec:
             raise TargetConfigError(
                 f"target {self.name!r}: auth_scheme {self.auth_scheme!r} must "
                 f"be one of {sorted(_AUTH_SCHEMES)}"
+            )
+        if self.session not in _SESSIONS:
+            raise TargetConfigError(
+                f"target {self.name!r}: session {self.session!r} must be one of "
+                f"{sorted(_SESSIONS)}"
             )
         if self.auth_scheme == "basic" and self.auth_method == "none":
             raise TargetConfigError(
@@ -291,7 +318,21 @@ class TargetSpec:
                     f"target {self.name!r}: headers[{hname!r}] must be a string, "
                     f"got {type(hvalue).__name__!r}"
                 )
-            folded = hname.strip().lower()
+            # The name is sent exactly as written, so it is checked exactly as
+            # written: no strip, which used to let " X-Foo " load and then
+            # fail inside the HTTP library (liminal#141).
+            if not set(hname) <= _TOKEN_CHARS:
+                raise TargetConfigError(
+                    f"target {self.name!r}: header name {hname!r} is not a valid "
+                    "HTTP field name (letters, digits and !#$%&'*+-.^_`|~ only, "
+                    "no spaces)"
+                )
+            if any(c in hvalue for c in "\r\n\0"):
+                raise TargetConfigError(
+                    f"target {self.name!r}: headers[{hname!r}] contains a CR, LF "
+                    "or NUL character"
+                )
+            folded = hname.lower()
             if folded in seen_headers:
                 raise TargetConfigError(
                     f"target {self.name!r}: headers names {seen_headers[folded]!r} "
@@ -316,6 +357,11 @@ class TargetSpec:
             if not self.command:
                 raise TargetConfigError(
                     f"target {self.name!r}: stdio transport requires a command"
+                )
+            if self.session != "none":
+                raise TargetConfigError(
+                    f"target {self.name!r}: session applies to http targets "
+                    "only; a stdio child is one process with one session"
                 )
             if self.headers:
                 raise TargetConfigError(

@@ -1,18 +1,18 @@
 ---
 card: repo-card:liminal
-updated: 2026-10-12
-anchor: pyproject.toml sha=27e5de8180007d44f0e1d72f1e84076f817e3db8
-anchor: src/liminal/server/routes.py sha=30fe35a21fa80dde27059522e703141ca4bafb25
+updated: 2026-10-13
+anchor: pyproject.toml sha=8f818332466205e50af5c408a95372404e395371
+anchor: src/liminal/server/routes.py sha=d1046cd2bb21ffcacd1f5cf91e6b63ca197db116
 ---
 # liminal — repo card
 
 WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal. The PyPI-style distribution name is `tenish-liminal` since v0.4.0 (`tenishai-liminal` in v0.3.0; pyproject `name`; `liminal.__version__` reads it); the import package and CLI stay `liminal`.
-STATE: main, v0.4.1 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, parent-issuer demotion refusal #87). CHANGELOG [0.4.1] describes this release; later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
+STATE: main, v0.5.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, per-persona upstream sessions #172, parent-issuer demotion refusal #87). CHANGELOG [0.5.0] describes this release; later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
 STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = `tenish-techne>=0.18.2` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree; the Dockerfile also pins TECHNE_WHEEL_SHA256, and scripts/check-techne-sibling.sh compares commits, run before a sibling-checkout build). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
 - CLI `liminal` → src/liminal/cli.py:main (`version`, `list-handlers [--cards]`, `serve`)
 - server factory → src/liminal/server/app.py:create_app (data plane) + create_admin_app (admin plane on `--admin-port`)
-- JSON-RPC route → src/liminal/server/routes.py (POST /mcp: initialize/ping/tools/list/tools/call; GET /healthz)
+- JSON-RPC route → src/liminal/server/routes.py (POST /mcp: initialize/ping/tools/list/tools/call; GET /healthz liveness, GET /readyz 503 while degraded)
 - client lib → src/liminal/client/ (AsyncMCPClient/MCPClient read plain-JSON and Streamable-HTTP SSE replies; LibraryLiminalClient, ProxyLiminalClient, from_config)
 AUTH MODES (exclusive, cli.py): `--jwks-url` = single-cabal (token's `cabal_scope`/`scope` must contain `dispatch`; token `cabal_tool_extras`/`tool_extras` trusted) | `--trust-registry` + `--policy-db` = sovereign (multi-issuer; token scope/extras IGNORED, grant resolved server-side) | `LIMINAL_AUTH_DISABLED=1` = synthesized claims (identity `anonymous`, scope `[dispatch]`, issuer `local`) and NO JWT verification. With no grant and no token claims, the grant-based scope gate is skipped and the handler allowlist finds no `tool_extras` to restrict by (all handlers allowed). Still applied: the secret guard (routes.py; off only via `LIMINAL_SECRET_GUARD`, not by auth-disabled) and the operator-only gate, which refuses every `requires_operator` tool because no caller can prove operator scope. `--jwks-url` and `--trust-registry` together = CLI error exit 2.
 REQUEST PATH (routes.py:_handle_tools_call): auth → handler allowlist → per-tool scope gate (sovereign only) → operator-only gate (`requires_operator` tools, EVERY mode) → secret guard (write tools) → credential resolver (sovereign: parent issuer's callers only) → build Context → Multiplexer.dispatch → wire framing (+ `_meta["liminal/untrusted"]` for untrusted targets).

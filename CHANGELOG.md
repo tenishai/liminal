@@ -6,6 +6,39 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-13
+
+### Upgrading
+
+- **Target `headers` are checked against HTTP's rules at load** (tenishai/liminal#141).
+  A header name with spaces (surrounding ones included), a colon or another character
+  outside the RFC 9110 token set, or a value containing CR, LF or NUL, now stops
+  `liminal serve` at startup with a message naming the header. Such a config used to load
+  and then fail on the first request to that target, so no working config is refused.
+
+### Added
+
+- **Stateful upstream MCP servers can be targets** (tenishai/liminal#172). A server that
+  returns an `Mcp-Session-Id` on `initialize` and refuses later requests without it used
+  to leave its target with no tools and `catalog fetch failed (startup)` on `/healthz`.
+  Set `session = "per-persona"` on the target: each calling persona, keyed by verified
+  issuer and identity, gets its own upstream session opened with its own credential, and
+  the catalog fetch gets a separate one, so a session id never rides another persona's
+  call. An expired session (404) is reopened once, and shutdown ends every session. The
+  default, `session = "none"`, is unchanged: no session id is kept or sent.
+- **`GET /readyz`** (tenishai/liminal#159) returns the `/healthz` body with status 503
+  while any target is degraded, for a readiness probe that should take the gateway out of
+  service when an upstream is down. `/healthz` still answers 200 for liveness.
+- `AsyncMCPClient.initialize(extra_headers=)`, `AsyncMCPClient.terminate_session()`, the
+  `initialized` property, and `MCPSessionExpired` (a subclass of `MCPTransportError`,
+  raised on a 404 to a request that carried a session) in `liminal.client`.
+
+### Tests
+
+- A sentinel-credential test asserts that no request made for one persona carries
+  another persona's credential or session id (tenishai/liminal#93). The issue's audit of
+  every pattern match on the authorization boundary is recorded in `docs/arch/policy.md`.
+
 ## [0.4.1] — 2026-10-12
 
 ### Upgrading
@@ -33,8 +66,9 @@ Each line cites the pull request that made the change.
 ### Changed
 
 - **`bearer_token_env` without `auth_method = "bearer"` is refused at load**
-  (tenishai/liminal#171). It is read only for bearer targets, so before this a target
-  that set it and left `auth_method` at `"none"` called its upstream anonymously.
+  (tenishai/liminal#171). The key is read only for bearer targets, so accepting it with
+  any other `auth_method` would have left the target calling its upstream anonymously.
+  No release accepted it that way: 0.4.0 refused the key as unknown.
 
 ## [0.4.0] — 2026-10-12
 

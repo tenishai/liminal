@@ -56,6 +56,14 @@ class MCPTransportError(MCPError):
     """Network / HTTP failure before we got a JSON-RPC envelope back."""
 
 
+class MCPSessionExpired(MCPTransportError):
+    """The server answered 404 to a request carrying an ``Mcp-Session-Id``.
+
+    The streamable-HTTP spec uses 404 for "that session is gone". The client
+    has already dropped the session and marked itself uninitialized, so the
+    caller can initialize again and retry once."""
+
+
 class MCPRemoteError(MCPError):
     """The server returned a JSON-RPC error response."""
 
@@ -352,6 +360,23 @@ class _RequestHeaders:
         if self._use_session and method == "initialize" and resp.headers.get(SESSION_HEADER):
             self._session_id = resp.headers[SESSION_HEADER]
 
+    def _expired(self, sent: str | None, resp: httpx.Response) -> MCPSessionExpired | None:
+        """The error for a 404 on a request that carried session ``sent``.
+
+        Only the session that was sent is dropped: a concurrent call may
+        already have opened a new one, and clearing that would make the two
+        calls take turns expiring each other."""
+        if resp.status_code != 404 or not sent:
+            return None
+        if self._session_id == sent:
+            self._session_id = None
+            self._initialized = False
+        return MCPSessionExpired(f"server 404: session {SESSION_HEADER} expired")
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
 
 # ---- Async client ---------------------------------------------------------
 
@@ -427,14 +452,20 @@ class AsyncMCPClient(_RequestHeaders):
         if self._owned_client:
             await self._http.aclose()
 
-    async def initialize(self) -> dict[str, Any]:
+    async def initialize(
+        self, *, extra_headers: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """Explicit handshake. Sets ``server_capabilities`` from the result.
 
         Authenticated like every other call (liminal#75): an upstream that
         gates its whole surface behind a bearer would otherwise reject the
         handshake and the target would degrade to a zero-tool catalog. A
         no-auth deployment still sends nothing -- ``_auth_header`` omits the
-        header entirely for an empty token (liminal#32)."""
+        header entirely for an empty token (liminal#32).
+
+        ``extra_headers`` ride the handshake and the ``initialized``
+        notification the way they ride ``call_tool``: a session opened for one
+        caller is opened with that caller's credential."""
         result = await self._rpc(
             "initialize",
             {
@@ -446,12 +477,28 @@ class AsyncMCPClient(_RequestHeaders):
                 "capabilities": {},
             },
             auth=True,
+            extra_headers=extra_headers,
         )
         self._server_capabilities = result.get("capabilities", {})
         self._initialized = True
         # Per MCP spec, the client sends an initialized notification next.
-        await self._notify("notifications/initialized", {})
+        await self._notify("notifications/initialized", {}, extra_headers=extra_headers)
         return result
+
+    async def terminate_session(self) -> None:
+        """Best effort: tell the server to end this client's session (HTTP
+        DELETE, per the streamable-HTTP spec) and forget it. A server that
+        doesn't support it answers 405; any failure is ignored, because the
+        session expires on the server's own clock anyway."""
+        sid, self._session_id, self._initialized = self._session_id, None, False
+        if not sid:
+            return
+        headers = self._headers(auth=True)
+        headers[SESSION_HEADER] = sid
+        try:
+            await self._http.delete(f"{self._base_url}/mcp", headers=headers)
+        except httpx.HTTPError:
+            pass
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -526,10 +573,15 @@ class AsyncMCPClient(_RequestHeaders):
         if extra_headers:
             headers.update(extra_headers)
         rid = envelope["id"]
+        sent = headers.get(SESSION_HEADER)
         try:
             async with self._http.stream(
                 "POST", f"{self._base_url}/mcp", json=envelope, headers=headers
             ) as resp:
+                expired = self._expired(sent, resp)
+                if expired is not None:
+                    await resp.aread()
+                    raise expired
                 if resp.status_code >= 500:
                     await resp.aread()
                     raise _server_error(resp)
@@ -559,10 +611,18 @@ class AsyncMCPClient(_RequestHeaders):
             raise MCPTransportError(_describe_http_error(exc)) from exc
         return _result_or_raise(body)
 
-    async def _notify(self, method: str, params: dict[str, Any]) -> None:
+    async def _notify(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         """One-way notify; no id field, no response body expected."""
         envelope = {"jsonrpc": "2.0", "method": method, "params": params}
         headers = self._headers(auth=True)
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             await self._http.post(
                 f"{self._base_url}/mcp", json=envelope, headers=headers
@@ -686,10 +746,15 @@ class MCPClient(_RequestHeaders):
         }
         headers = self._headers(auth)
         rid = envelope["id"]
+        sent = headers.get(SESSION_HEADER)
         try:
             with self._http.stream(
                 "POST", f"{self._base_url}/mcp", json=envelope, headers=headers
             ) as resp:
+                expired = self._expired(sent, resp)
+                if expired is not None:
+                    resp.read()
+                    raise expired
                 if resp.status_code >= 500:
                     resp.read()
                     raise _server_error(resp)

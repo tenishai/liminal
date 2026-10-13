@@ -1,8 +1,8 @@
 ---
 card: arch-card:liminal-policy
-updated: 2026-10-03
+updated: 2026-10-13
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
-anchor: src/liminal/server/routes.py sha=30fe35a21fa80dde27059522e703141ca4bafb25
+anchor: src/liminal/server/routes.py sha=d1046cd2bb21ffcacd1f5cf91e6b63ca197db116
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
 anchor: src/liminal/server/app.py sha=9da8cd590f343caa0de4972048ab95b348ac107f
 ---
@@ -29,5 +29,6 @@ INVARIANTS:
 - Audit = `policy_audit` ring buffer (audit_max_rows=50k, pruned every 500 writes) to stop a hostile partner filling the DB. NOT tamper-evident, no hash chain. Actions: access_allow/access_deny/grant/revoke; the three tool-level deny paths in routes.py (handler allowlist, scope gate, operator gate) record a `handler` key in the deny row (#44); the no-grant deny in `_authenticate` records only `{"reason": "no grant"}`.
 - Authority revocation is LIVE per call (revoke deletes the row; resolve reads the DB each request). Credential staleness is a separate axis: docs/arch/credentials.md.
 - All SQLite access serialized by an asyncio.Lock + to_thread on one connection.
+- Every pattern match on this boundary, and what it excludes (#93). (1) `resolve` falls back to persona `"*"` only within the SAME verified issuer and only among non-parent rows: it never matches another issuer's grant or a parent row. (2) `admin:*` satisfies every scope, `DENY_SCOPE` and `operator` included; it is held only by parent rows, which the data plane never resolves, or by an explicit grant. (3) Credentials (server/credentials.py) match nothing by pattern: the cache key is exact `(issuer, persona, handler)`. Note the fetch URL is `/admin/secrets/{persona}/{handler}` with no issuer, so two issuers' personas with the same name receive the same secrets from the one configured cabal; the cache keeps them apart but the source does not. (4) Federated tool scopes match exact `<target>.<tool>` names, then the target rule (app.py:scope_for); no globs. The three modules don't overlap: scopes.py holds constants only, policy.py decides authority, credentials.py fetches secrets for an identity policy has already admitted.
 CONSUMERS: server/routes.py (data plane), server/admin.py (`_admin_auth`: issuer in store.parents() AND resolve_parent has admin:*), handlers/files.py (`files:protected_writes` via ctx.granted_scopes + ctx.audit), cli.py (builds store from `--trust-registry`/`--policy-db`). Tests: test_policy_store.py, test_policy_inversion.py, test_multi_issuer_auth.py, test_federated_tool_scopes.py.
 API: admin routes (admin.py, parent-issuer token with admin:*): POST /admin/policy/grant {issuer, persona="*", scopes, allowed_handlers}, POST /admin/policy/revoke {issuer, persona}, GET /admin/policy, GET /admin/policy/audit. Mounted on the data app unless `--admin-port` moves it to create_admin_app (#74).
