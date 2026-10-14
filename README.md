@@ -40,6 +40,12 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
   the event loop via `anyio.to_thread`.
 - **MCP client lib** — `MCPClient` (sync) and `AsyncMCPClient` (async) in
   `liminal.client` for downstream consumers (Cabal, third-party agents).
+- **Federated targets** — `liminal serve --targets targets.toml` adds upstream MCP
+  servers behind the same endpoint. A target can send static headers, a bearer or HTTP
+  Basic credential (inline or from an environment variable), or a per-persona service
+  token, and can hold one upstream session per calling persona for a stateful server
+  (`session = "per-persona"`). The keys are in the `[[target]]` table in
+  `docs/design.md`.
 
 ## Why
 
@@ -185,7 +191,8 @@ handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`
 (Gojira's gateway class uses one path for liveness and readiness, so the contract keeps
 `/healthz`; `/readyz` is there for a deployment that probes readiness separately),
 techne from a package index at build time, and the cabal it serves as `LIMINAL_*`
-env. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
+env. The generated CI passes the index token as a BuildKit secret
+(`--secret id=ar_token`), which the Dockerfile prefers over `--build-arg AR_TOKEN`. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
 (`cbl token mint-service --scope secrets-fetch` on that cabal).
 
 ## Repository layout
