@@ -6,6 +6,16 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Docker image reads the private index token from a BuildKit secret**
+  (tenishai/liminal#177). The generated `gojira-ci.yaml` now passes it as
+  `--secret id=ar_token` instead of a build arg, which the build log prints
+  (tenishai/liminal#176). The Dockerfile only read the build arg, so every Gojira build
+  since that change had no credential for the index and stopped at pip's password
+  prompt. The venv step now mounts the secret and prefers it; `--build-arg AR_TOKEN=…`
+  still works for a local build.
+
 ## [0.5.0] — 2026-10-13
 
 ### Upgrading
@@ -24,7 +34,7 @@ Each line cites the pull request that made the change.
   Set `session = "per-persona"` on the target: each calling persona, keyed by verified
   issuer and identity, gets its own upstream session opened with its own credential, and
   the catalog fetch gets a separate one, so a session id never rides another persona's
-  call. An expired session (404) is reopened once, and shutdown ends every session. The
+  call. An expired session (404) is reopened once, and shutdown ends every session the target still holds. The
   default, `session = "none"`, is unchanged: no session id is kept or sent.
 - **`GET /readyz`** (tenishai/liminal#159) returns the `/healthz` body with status 503
   while any target is degraded, for a readiness probe that should take the gateway out of
@@ -32,6 +42,14 @@ Each line cites the pull request that made the change.
 - `AsyncMCPClient.initialize(extra_headers=)`, `AsyncMCPClient.terminate_session()`, the
   `initialized` property, and `MCPSessionExpired` (a subclass of `MCPTransportError`,
   raised on a 404 to a request that carried a session) in `liminal.client`.
+
+### Known limitations
+
+- A persona session evicted by the 256-session cap is not ended with `DELETE`; it
+  expires on the upstream's own clock (tenishai/liminal#174).
+- Shutdown sends its `DELETE`s one after another, each bounded by the target's
+  `timeout_seconds`, so an upstream that accepts connections and then hangs can slow
+  shutdown (tenishai/liminal#174).
 
 ### Tests
 
@@ -130,6 +148,15 @@ Each line cites the pull request that made the change.
   unchanged (tenishai/liminal#157).
 - **The README says how liminal was built, and CONTRIBUTING.md gives the policy for
   AI-assisted contributions** (tenishai/liminal#162).
+
+### Tests
+
+- **Every workflow is checked for fork access to the self-hosted runner**
+  (tenishai/liminal#163, a port of tenishai/cabal#262). A self-hosted job must carry the
+  fork guard unless its workflow triggers only on push and `workflow_dispatch`, and a
+  runner label that is not a GitHub-hosted one counts as self-hosted. This replaced a
+  check that failed on any second workflow, which Gojira's generated `gojira-ci.yaml`
+  (tenishai/liminal#160) had broken.
 
 ## [0.3.0] — 2026-10-03
 
