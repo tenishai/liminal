@@ -70,9 +70,10 @@ the fail-closed default and it has not moved.
 
 - `handlers/files.py` ships with an **empty** allowlist: every read and write is refused
   until an operator supplies one. The empty default is the safe default.
-- `handlers/web.py` denies the private ranges in `PRIVATE_NETWORKS` (10/8, 127/8,
-  172.16/12, 192.168/16, fc00::/7, link-local) as SSRF defence, including the
-  `::ffff:0:0/96` IPv4-mapped form.
+- `handlers/web.py` denies every range in `PRIVATE_NETWORKS` as SSRF defence: loopback
+  (127/8, ::1), 10/8, 172.16/12, 192.168/16, 169.254/16 (cloud metadata), 100.64/10
+  (CGNAT), 0/8, multicast 224/4, reserved 240/4, broadcast, ::/128, fc00::/7, fe80::/10,
+  and the `::ffff:0:0/96` IPv4-mapped form. The list in the module is the authority.
 - Untrusted tool results are wrapped, and the authority is `_meta["liminal/untrusted"]` —
   **not** the `[BEGIN UNTRUSTED TOOL RESULT]` banner text. The banner is what a human
   reads; the meta flag is what code must check. Do not "tidy" the wrapping logic without
