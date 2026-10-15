@@ -6,6 +6,13 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Changed
+
+- **The generated Gojira CI checks the manifests build before it applies them**
+  (tenishai/liminal#182). `gojira-ci.yaml` runs `kubectl kustomize .` first, so a
+  manifest that does not build fails once with kustomize's message instead of going
+  through the apply retries meant for a cold cluster.
+
 ### Fixed
 
 - **The Docker image reads the private index token from a BuildKit secret**
