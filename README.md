@@ -52,8 +52,8 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 - **One MCP connection per agent**, not N.
 - **Persona-scoped credentials** — liminal fetches the credential set for
   `(persona, handler)` at dispatch time. No `.env` files on disk.
-- **Handler pooling** — personas share one runtime per handler, so `rook-primus`
-  and `rook-secundus` reach the same `web` handler instance. A credentialed
+- **Handler pooling** — personas share one runtime per handler, so `mason-primus`
+  and `mason-secundus` reach the same `web` handler instance. A credentialed
   handler, such as a hypothetical `slack` one (none ships), could keep one
   rate-limit budget for both.
 - **Same handler interface everywhere** — in-process Python callables today, with a

@@ -16,7 +16,7 @@ Three problems compound as the tool surface grows:
 
 1. **Process sprawl.** Each MCP server is a separate process with its own startup, health monitoring, and failure modes. Debugging "which server crashed?" means checking each one individually.
 
-2. **Credential management is per-server and fragile.** Each server resolves its own credentials — env vars, config files, service account keys — with no shared abstraction. Adding a new server means wiring up another set of secrets. For a multi-persona platform like Cabal where rook's Slack token differs from raven's, the per-server pattern doesn't scale cleanly.
+2. **Credential management is per-server and fragile.** Each server resolves its own credentials — env vars, config files, service account keys — with no shared abstraction. Adding a new server means wiring up another set of secrets. For a multi-persona platform like Cabal where mason's Slack token differs from wright's, the per-server pattern doesn't scale cleanly.
 
 3. **No dynamic scoping.** Every registered server's tools load into context on every turn, whether relevant or not. Microsoft Research documented this as "tool-space interference" — adding tools *reduces* overall task performance. RAG-MCP (arXiv:2505.03275) measured tool selection accuracy at 13.62% with large tool sets, tripling to 43.13% with retrieval-based filtering. The more services we add, the worse every agent gets at using any of them.
 
@@ -116,8 +116,8 @@ The `Context` object carries identity and resolved credentials into each handler
 
 ```python
 class Context:
-    identity: str           # persona name (rook, raven, architect)
-    agent_name: str         # specific agent (rook-primus, rook-secundus)
+    identity: str           # persona name (mason, wright, architect)
+    agent_name: str         # specific agent (mason-primus, mason-secundus)
     credentials: dict       # full credential set for this (identity, handler)
 ```
 
@@ -164,26 +164,26 @@ Agents address liminal as `http://liminal:9100` on the network; 9100 is the `lim
 ## Credential Flow
 
 ```
-Agent (rook-primus)
+Agent (mason-primus)
   │
   │  MCP call: slack.send_message(channel, text)
-  │  Authorization: Bearer <A2A JWT, sub=rook-primus, persona=rook>
+  │  Authorization: Bearer <A2A JWT, sub=mason-primus, persona=mason>
   ▼
 liminal
-  │  1. Validate JWT against Cabal Core's JWKS → extract persona ("rook")
+  │  1. Validate JWT against Cabal Core's JWKS → extract persona ("mason")
   │  2. Match tool call to handler prefix ("slack")
-  │  3. Look up handler runtime for (rook, slack):
+  │  3. Look up handler runtime for (mason, slack):
   │       solo  mode → in-process callable, may already be initialized
   │       scale mode → subprocess (spawn if absent)
   │  4. If credentials not cached (or TTL expired):
-  │       solo  mode → cabal_core.secrets.get(rook, slack)  ←  direct call
-  │       scale mode → GET https://cabal-core/secrets/rook/slack  ←  mTLS
+  │       solo  mode → cabal_core.secrets.get(mason, slack)  ←  direct call
+  │       scale mode → GET https://cabal-core/secrets/mason/slack  ←  mTLS
   │     Returns the full {SLACK_BOT_TOKEN, SLACK_APP_TOKEN, ...} dict.
-  │  5. Dispatch the tool call with Context{identity=rook, credentials=…}
+  │  5. Dispatch the tool call with Context{identity=mason, credentials=…}
   ▼
 Handler.dispatch(name, payload, ctx)
-  │  ctx.identity = "rook"
-  │  ctx.agent_name = "rook-primus"
+  │  ctx.identity = "mason"
+  │  ctx.agent_name = "mason-primus"
   │  ctx.credentials = {SLACK_BOT_TOKEN: ..., SLACK_APP_TOKEN: ...}
   ▼
 Tool result → liminal → agent
@@ -191,7 +191,7 @@ Tool result → liminal → agent
 
 As shipped, step 4 runs only when `liminal serve` is given `--cabal-url`: `GET {cabal_url}/admin/secrets/{persona}/{handler}` with a bearer token during the `tools/call`, with non-empty answers cached for the TTL per `(issuer, persona, handler)` (the issuer is empty outside sovereign mode). Without `--cabal-url` no resolver is wired and handlers get empty credentials. In sovereign mode (a policy grant authorized the call) the fetch runs only when the caller's issuer is one of the policy store's `parents()`; a caller from any other issuer gets empty credentials and liminal logs `credential.skipped_non_parent_issuer`, because the secrets path carries no issuer and a foreign issuer can mint any persona name (#143). There is no direct function call and no mTLS.
 
-**Handler pooling** (the unbuilt subprocess design): keyed by `(persona, handler)`. Two rook-* agents (rook-primus and rook-secundus) share one slack handler runtime — same persona, same credentials. raven's slack runtime is separate. Cross-persona isolation is structural: rook's runtime sees rook's credential dict; raven's runtime sees raven's; liminal never mixes them. What shipped is one handler instance per liminal process, shared by every persona; isolation is per call, through the `ctx.credentials` resolved for that call's caller.
+**Handler pooling** (the unbuilt subprocess design): keyed by `(persona, handler)`. Two mason-* agents (mason-primus and mason-secundus) share one slack handler runtime — same persona, same credentials. wright's slack runtime is separate. Cross-persona isolation is structural: mason's runtime sees mason's credential dict; wright's runtime sees wright's; liminal never mixes them. What shipped is one handler instance per liminal process, shared by every persona; isolation is per call, through the `ctx.credentials` resolved for that call's caller.
 
 ---
 
@@ -227,7 +227,7 @@ CAPABILITY_CARD = {
 }
 ```
 
-`credential_keys` tells the **operator** which keys to populate for that handler via `cbl secret set rook slack SLACK_BOT_TOKEN=...` and tells the **handler author** what to read from `ctx.credentials`. It does **not** restrict what liminal injects — liminal always passes the full credential set Cabal Core returns for that `(persona, handler)`. This is forward-compatible: adding a new key via `cbl secret` propagates immediately without a card edit. The trade-off is that liminal itself sees all of a persona's secrets per handler; the trust boundary discussion is above under Handler runtime modes → Trust boundary.
+`credential_keys` tells the **operator** which keys to populate for that handler via `cbl secret set mason slack SLACK_BOT_TOKEN=...` and tells the **handler author** what to read from `ctx.credentials`. It does **not** restrict what liminal injects — liminal always passes the full credential set Cabal Core returns for that `(persona, handler)`. This is forward-compatible: adding a new key via `cbl secret` propagates immediately without a card edit. The trade-off is that liminal itself sees all of a persona's secrets per handler; the trust boundary discussion is above under Handler runtime modes → Trust boundary.
 
 **Where the card lives at runtime.** The card is embedded in the handler's A2A AgentCard `metadata` field (per A2A v1.0 §4). One card, two consumers: liminal reads it to manage handler visibility and credential setup; A2A bulletin-board callers read it for capability discovery. Same source of truth. (Not built: liminal reads the card from `capability_card()` and builds no AgentCard.)
 
@@ -253,7 +253,7 @@ handlers:
   always: [memory, files]
 ```
 
-Per-identity overrides go in the persona's `identity.toml` (e.g., `raven` doesn't get `slack`; `architect` doesn't get any operator-action handlers).
+Per-identity overrides go in the persona's `identity.toml` (e.g., `wright` doesn't get `slack`; `architect` doesn't get any operator-action handlers).
 
 **v1 ships all handlers as `activation: always`.** The on-demand activation surface (separating handlers into `always` and `on_demand` sections, plus the `liminal__discover` / `liminal__activate` meta-tools) ships in v2 once handler count justifies the context-window optimization. Capability cards already declare `activation` per handler so the v2 transition is non-breaking — operators just split the list.
 
@@ -262,9 +262,9 @@ Per-identity overrides go in the persona's `identity.toml` (e.g., `raven` doesn'
 ## What This Enables in Cabal
 
 - **One MCP connection per agent** instead of N — each Cabal persona agent talks to liminal, not to 8+ individual MCP servers
-- **Persona-scoped credentials** from a single encrypted store — Cabal Core's secrets table is canonical; rook's tokens are decrypted only when liminal needs them for a rook-handler call, never on disk in plaintext
+- **Persona-scoped credentials** from a single encrypted store — Cabal Core's secrets table is canonical; mason's tokens are decrypted only when liminal needs them for a mason-handler call, never on disk in plaintext
 - **Same handler interface in solo and scale modes** — handlers are Python callables in solo, subprocesses in scale, same `dispatch(name, payload, ctx)` either way
-- **Handler pooling** across same-persona agents — rook-primus and rook-secundus share the rook slack runtime (and its rate-limit budget)
+- **Handler pooling** across same-persona agents — mason-primus and mason-secundus share the mason slack runtime (and its rate-limit budget)
 - **Singleton-persona data backends reachable through liminal** — Architect's pattern corpus, Archivist's federated memory (v2), Librarian's docs index (v2) all expose MCP-tool surfaces fronted by their own liminal handlers; agents call `pattern_search` (or `memory_lookup`, or `doc_lookup`) like any other tool
 - **Scoping-ready** — capability cards already declare `activation`; v2 splits handlers into `always` / `on_demand` for context-window savings without breaking the v1 card format
 
@@ -307,13 +307,13 @@ All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see Tool
 
 ## Open Questions
 
-1. **Cohort rate-limit sharing.** Two rook-* agents share one slack handler runtime, which means they share Slack's rate limit budget for the rook bot identity. If rook-primus and rook-secundus are both posting at high frequency, one will throttle the other. Acceptable in v1 because they're conceptually the same actor to the world; revisit if cohort sizes grow.
+1. **Cohort rate-limit sharing.** Two mason-* agents share one slack handler runtime, which means they share Slack's rate limit budget for the mason bot identity. If mason-primus and mason-secundus are both posting at high frequency, one will throttle the other. Acceptable in v1 because they're conceptually the same actor to the world; revisit if cohort sizes grow.
 
 2. **Handler packaging.** Mono-repo (handlers live in the `cabal` package as `cabal.handlers.*`) vs per-handler repos. Entry-point mechanism supports both. Lean: mono-repo for v1; split a handler out only if it grows its own release cadence or gets independent contributors.
 
-3. **Credential cache invalidation on rotation.** When the operator runs `cbl secret rotate slack rook` to change a token, liminal's 15-minute cache is stale until TTL. Acceptable at solo scale (operator can `cbl liminal flush-creds rook slack` if needed). At scale, Cabal Core could push a cache-bust event over the event bus — defer unless it bites.
+3. **Credential cache invalidation on rotation.** When the operator runs `cbl secret rotate slack mason` to change a token, liminal's 15-minute cache is stale until TTL. Acceptable at solo scale (operator can `cbl liminal flush-creds mason slack` if needed). At scale, Cabal Core could push a cache-bust event over the event bus — defer unless it bites.
 
-4. **Solo-mode shared-process security model.** In solo / dev mode, liminal, all handlers, Cabal Core, and the agents all run in one Python process — there is no OS-level isolation between rook's credentials and raven's at the process level. The structural property is *in-process discipline*: liminal never passes raven's credential dict into a rook-targeted dispatch. A handler that introspects the parent process's memory could see other personas' creds. At solo scale (single-operator, in-house handler code) this is acceptable. At scale (where handlers may be third-party), use scale mode for real OS-level isolation.
+4. **Solo-mode shared-process security model.** In solo / dev mode, liminal, all handlers, Cabal Core, and the agents all run in one Python process — there is no OS-level isolation between mason's credentials and wright's at the process level. The structural property is *in-process discipline*: liminal never passes wright's credential dict into a mason-targeted dispatch. A handler that introspects the parent process's memory could see other personas' creds. At solo scale (single-operator, in-house handler code) this is acceptable. At scale (where handlers may be third-party), use scale mode for real OS-level isolation.
 
 ---
 
@@ -331,7 +331,7 @@ wanaku (evaluated 2026-06-07) is the enterprise/K8s answer to this exact problem
 | Subprocess transport (scale mode) — stdio JSON-RPC framing + spawn/cleanup lifecycle | 1.5 days | Subprocess handler runtime + cleanup-on-disconnect invariant + crash-loop circuit breaker |
 | Credential fetch (solo + scale) — in-process call vs mTLS to Cabal Core, 15-min cache, key rotation handling | 1 day | `cabal_core.secrets.get(persona, handler)` (solo); `GET /secrets/<persona>/<handler>` client (scale). Shipped as `CabalCoreCredentialResolver` against `/admin/secrets/{persona}/{handler}`, bearer token, no mTLS. |
 | Capability cards (v1: `always`-only, declared metadata, no on-demand wiring) | 1 day | Card schema, registry, fail-open invariant for tool listing |
-| First v1 handler set (memory, files, slack, github, patterns, scratchpad) | 2 days | Working handlers for rook + raven + architect with the security boundaries spelled out above (files allowlist, web allowlist) |
+| First v1 handler set (memory, files, slack, github, patterns, scratchpad) | 2 days | Working handlers for mason + wright + architect with the security boundaries spelled out above (files allowlist, web allowlist) |
 | **Total** | **~8.5 days** | |
 
 DTSP on-demand activation (`liminal__discover`, `liminal__activate`, federated `.well-known/dtsp` discovery with operator approval) is v2 work — not in this estimate.
