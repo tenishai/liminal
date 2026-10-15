@@ -3,7 +3,7 @@
 |  |  |
 | --- | --- |
 | **Status** | Implemented (`MultiIssuerJWKSVerifier` and `_aud_ok` in `src/liminal/server/auth.py`) |
-| **Authors** | Richard DiMartino + Raven (AI) |
+| **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-02 |
 | **Implements** | `cabal/docs/proposals/federated-singletons.md` "What's new #1" |
 | **Touches** | `src/liminal/server/auth.py`, `src/liminal/server/routes.py`, `src/liminal/cli.py` |

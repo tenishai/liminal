@@ -3,7 +3,7 @@
 |  |  |
 | --- | --- |
 | **Status** | **Draft — first pass, not for build.** Refresh when work begins. |
-| **Authors** | Richard DiMartino + Poe (AI) |
+| **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-25 |
 | **Tracks** | [#62](https://github.com/tenishai/liminal/issues/62) |
 | **Co-design with** | cabal#109 (keyless federation identity) — auth models overlap |

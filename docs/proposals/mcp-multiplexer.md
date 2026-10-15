@@ -3,7 +3,7 @@
 |  |  |
 | --- | --- |
 | **Status** | Implemented (`dispatch/multiplexer.py`, `target/http.py`), except the `stdio` transport (Stage B), which is config-validated but refused at startup |
-| **Authors** | Richard DiMartino + Raven (AI) |
+| **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-02 |
 | **Implements** | #12 (flagship, per the #5 standalone re-scope) |
 | **Folds in** | #16 (tool-description inspection), #13 (persona-header identity), #27 (correlation-id + per-target protocol version) |
