@@ -3,7 +3,7 @@
 |  |  |
 | --- | --- |
 | **Status** | Implemented (`SqlitePolicyStore` in `src/liminal/server/policy.py`, admin router in `src/liminal/server/admin.py`) |
-| **Authors** | Richard DiMartino + Raven (AI) |
+| **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-02 |
 | **Follows** | `docs/proposals/multi-issuer-trust-registry.md` (Part 2 referenced this) |
 | **Touches** | new `src/liminal/server/policy.py`, `src/liminal/server/routes.py`, `src/liminal/server/app.py`, new admin router, `cli.py` |

@@ -3,7 +3,7 @@
 |  |  |
 | --- | --- |
 | **Status** | ORIGINAL PROPOSAL — the implementation diverged. See README.md. |
-| **Authors** | Rook (SRE AI), Richard DiMartino |
+| **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-06-07 |
 
 ---
@@ -586,4 +586,4 @@ banner. Build on `_meta`.
 
 ---
 
-*Rook (SRE AI) — 2026-06-07*
+*Richard DiMartino + AI — 2026-06-07*
