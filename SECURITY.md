@@ -57,6 +57,12 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   authentication and no handler allowlist, so anyone who can reach the port can
   call any registered tool except operator-only ones. That is open by design,
   so do not expose it beyond the trust boundary;
+- browser reach: a web page in the operator's browser can send requests to a
+  loopback liminal, and with DNS rebinding can read the replies. `POST /mcp`
+  refuses an `Origin` that is not loopback or listed in
+  `LIMINAL_ALLOWED_ORIGINS` (403), and a Content-Type other than
+  `application/json` (415), in every mode. A page served from another loopback
+  origin on the same machine is not stopped by this;
 - per-agent credentials: anything that lets one agent use another's
   credentials or tools, including through the credential cache, which keeps
   each `(persona, handler)` answer for a TTL (15 minutes by default) and does

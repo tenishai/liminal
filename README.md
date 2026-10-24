@@ -160,6 +160,11 @@ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 # So on a JWT deployment, setting this grants it to every token WITHOUT the
 # claim — it is not only a ceiling. `web`, `scratchpad` and `notify` need no
 # such grant.
+#
+# POST /mcp refuses browser-shaped requests in every mode: an Origin that is not
+# loopback gets 403, a Content-Type other than application/json gets 415. To let a
+# browser UI on another origin through, list it (comma-separated, exact match):
+#   LIMINAL_ALLOWED_ORIGINS=https://ui.example:8443
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host).
 # --host defaults to 127.0.0.1; 0.0.0.0 listens on every interface:
