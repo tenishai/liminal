@@ -247,7 +247,8 @@ def create_app(
                 "liminal.AUTH_DISABLED",
                 msg=(
                     "JWT enforcement disabled via LIMINAL_AUTH_DISABLED. Every "
-                    "request will be accepted. Only use this for trusted-network "
+                    "request is accepted without a token; only browser-origin and "
+                    "non-JSON requests are refused. Only use this for trusted-network "
                     "deployments (single operator, localhost client). UNSET in "
                     "production."
                 ),
