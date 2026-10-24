@@ -42,6 +42,7 @@ from liminal.server.mcp_types import (
     make_success,
 )
 from liminal.server.policy import PolicyStore, ScopeGrant
+from liminal.server.request_guard import content_type_refusal, origin_refusal
 from liminal.server.scopes import DENY_SCOPE, OPERATOR_SCOPE
 from liminal.server.secret_guard import scan_tool_call
 from liminal.wire import to_spec_result_content as _to_spec_result_content
@@ -158,6 +159,18 @@ def build_router() -> APIRouter:
         response: Response,
         authorization: str | None = Header(default=None),
     ):
+        # Browser guard (liminal#190), before the body is read: a cross-origin
+        # page must not reach the tools, least of all under auth-off.
+        refusal = origin_refusal(
+            request.headers.get("origin"),
+            getattr(request.app.state, "allowed_origins", frozenset()),
+        )
+        if refusal is not None:
+            return _guard_refusal(403, refusal)
+        refusal = content_type_refusal(request.headers.get("content-type"))
+        if refusal is not None:
+            return _guard_refusal(415, refusal)
+
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
@@ -232,6 +245,11 @@ def build_router() -> APIRouter:
         )
 
     return router
+
+
+def _guard_refusal(status: int, message: str) -> JSONResponse:
+    err = make_error(id=None, code=ERROR_INVALID_REQUEST, message=message)
+    return JSONResponse(err.model_dump(), status_code=status)
 
 
 # ---- method handlers ------------------------------------------------------

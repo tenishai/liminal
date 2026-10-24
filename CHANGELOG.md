@@ -15,6 +15,14 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **`POST /mcp` refuses requests from a browser page** (tenishai/liminal#190). A page
+  in the operator's browser could call every tool on a loopback liminal running with
+  `LIMINAL_AUTH_DISABLED=1`, by posting a `text/plain` body (no CORS preflight) or by
+  rebinding its own domain to 127.0.0.1. The route now answers 403 to an `Origin` that
+  is not loopback or listed in the new `LIMINAL_ALLOWED_ORIGINS`, including `null`, and
+  415 to a Content-Type other than `application/json`. Clients that send no `Origin`
+  (Claude Code, cabal, curl with `-H 'Content-Type: application/json'`) are unaffected.
+
 - **The Docker image reads the private index token from a BuildKit secret**
   (tenishai/liminal#177). The generated `gojira-ci.yaml` now passes it as
   `--secret id=ar_token` instead of a build arg, which the build log prints

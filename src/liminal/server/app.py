@@ -28,6 +28,7 @@ from liminal.registry import Registry, discover_handlers
 from liminal.server.admin import build_admin_router
 from liminal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
 from liminal.server.policy import PolicyStore
+from liminal.server.request_guard import allowed_origins_from_env
 from liminal.server.routes import build_router
 from liminal.server.scopes import DENY_SCOPE
 from liminal.target import (
@@ -273,6 +274,7 @@ def create_app(
     app.state.server_name = server_name
     app.state.auth_disabled = auth_disabled
     app.state.secret_guard_enabled = _secret_guard_enabled_from_env()
+    app.state.allowed_origins = allowed_origins_from_env()
     app.state.policy_store = policy_store
     # Scope map has two sources, both server-side: each CapabilityCard's
     # required_scope for in-process handlers (liminal#26/#42), and each

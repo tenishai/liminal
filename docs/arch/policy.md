@@ -2,15 +2,16 @@
 card: arch-card:liminal-policy
 updated: 2026-10-13
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
-anchor: src/liminal/server/routes.py sha=d1046cd2bb21ffcacd1f5cf91e6b63ca197db116
+anchor: src/liminal/server/routes.py sha=c454719c2771f94a8e6e8e7b7e2476185aa6959e
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
-anchor: src/liminal/server/app.py sha=9da8cd590f343caa0de4972048ab95b348ac107f
+anchor: src/liminal/server/app.py sha=cbff5c6de0578e6a2e3b5ced3bc035fb9b0a74ed
 ---
 # policy — sovereign (multi-issuer) authorization
 
 WHAT / SEAM: `PolicyStore` Protocol + `SqlitePolicyStore` (server/policy.py). Keyed on VERIFIED (issuer, persona). Grant = `ScopeGrant(scopes: frozenset, allowed_handlers: frozenset|None)`; `has_scope(r)` = `admin:*` in scopes or r in scopes. FLAT scopes: no delegation, caveats, attenuation, or role union.
 WHY IT EXISTS: a sovereign liminal trusts several independently-owned cabals; any of them could mint itself generous `scope`/`tool_extras`. So in sovereign mode authz comes from this store, never from the token.
 OPS / FLOW (routes.py):
+- Before any of this, the browser guard (Origin, Content-Type; ARCHITECTURE.md, #190) refuses with 403/415. It is not authorization and reads no grant.
 - `_authenticate`: no store → single-cabal path (`_token_scopes`: token `cabal_scope`, falling back to `scope`, must contain `dispatch`; grant=None). Store → `resolve(iss, persona)`; None → record `access_deny`, log warning `access.denied` (issuer, persona, agent, reason; #166), AuthError.
 - `_allowed_handlers_for`: grant present → grant.allowed_handlers (None=all, empty=deny all); else token `cabal_tool_extras|tool_extras["liminal.allowed_handlers"]`; malformed → empty set (deny).
 - `_missing_scope` via `app.state.policy_scope_for` (app.py:scope_for): exact `<t>.<tool>` rule → target rule → `DENY_SCOPE` ("liminal:deny", server/scopes.py) if target declares tool_scopes → None (open). Only runs when a grant exists.
