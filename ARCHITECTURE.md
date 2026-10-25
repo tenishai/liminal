@@ -1,13 +1,13 @@
 ---
 card: repo-card:liminal
 updated: 2026-10-25
-anchor: pyproject.toml sha=aa39cd42d96978afc8c604fbd8edd6aa46b247b9
+anchor: pyproject.toml sha=066f653bb012b2f55422be7b7d74f76f83c14f3c
 anchor: src/liminal/server/routes.py sha=929cf2cd79a2ba84eff7600f7e80b1a1cbf74de8
 ---
 # liminal — repo card
 
 WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal. The PyPI-style distribution name is `tenish-liminal` since v0.4.0 (`tenishai-liminal` in v0.3.0; pyproject `name`; `liminal.__version__` reads it); the import package and CLI stay `liminal`.
-STATE: main, v0.5.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, per-persona upstream sessions #172, parent-issuer demotion refusal #87). CHANGELOG [0.5.0] describes this release; later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
+STATE: main, v0.6.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, per-persona upstream sessions #172, parent-issuer demotion refusal #87). CHANGELOG [0.6.0] describes this release (the aws handler, tenishai/liminal#209); later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
 STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extras: `[aws]` = `botocore>=1.35` (the `aws` handler imports it lazily and refuses calls without it); `[memory]` = `tenish-techne>=0.18.2` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree; the Dockerfile also pins TECHNE_WHEEL_SHA256, and scripts/check-techne-sibling.sh compares commits, run before a sibling-checkout build). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
 - CLI `liminal` → src/liminal/cli.py:main (`version`, `list-handlers [--cards]`, `serve`)
