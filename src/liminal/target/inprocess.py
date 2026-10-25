@@ -66,4 +66,10 @@ class InProcessTarget(Target):
         config (an empty files allowlist, no memory db) says so here, and
         /healthz shows it instead of "ready"."""
         status = getattr(self._handler, "status", None)
-        return status() if callable(status) else None
+        if not callable(status):
+            return None
+        try:
+            return status()
+        except Exception as exc:  # noqa: BLE001 — a probe must not 500 on a handler bug
+            log.warning("inprocess_target.status_failed", target=self.name, error=str(exc))
+            return f"status() failed: {type(exc).__name__}"

@@ -43,7 +43,11 @@ async def test_files_with_an_allowlist_reads_ready(monkeypatch, tmp_path: Path):
 def test_memory_without_a_db_says_unconfigured():
     from liminal.handlers.memory import MemoryConfig, MemoryHandler
 
-    assert MemoryHandler().status().startswith("unconfigured: LIMINAL_MEMORY_DB")
+    assert MemoryHandler().status() == (
+        "unconfigured: LIMINAL_MEMORY_DB is unset, so every call is refused"
+    )
+    with_dirs = MemoryHandler(default_config=MemoryConfig(allowed_db_dirs=[Path("/srv/m")]))
+    assert "only a per-caller memory.db_path under /srv/m" in with_dirs.status()
     assert MemoryHandler(default_config=MemoryConfig(db_path=Path("/x.db"))).status() is None
 
 
@@ -52,3 +56,16 @@ def test_a_handler_without_status_is_ready():
     from liminal.target.inprocess import InProcessTarget
 
     assert InProcessTarget("scratchpad", ScratchpadHandler()).config_status is None
+
+
+def test_a_status_that_raises_does_not_break_the_probe():
+    from liminal.target.inprocess import InProcessTarget
+
+    class Broken:
+        def tools(self):
+            return []
+
+        def status(self):
+            raise RuntimeError("boom")
+
+    assert InProcessTarget("x", Broken()).config_status == "status() failed: RuntimeError"

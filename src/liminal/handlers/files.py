@@ -201,8 +201,8 @@ class FilesHandler:
         if self.default_config.allowed_paths:
             return None
         return (
-            f"unconfigured: {ALLOWED_PATHS_ENV} is unset (only a token's "
-            "files.allowed_paths claim can grant paths)"
+            f"unconfigured: {ALLOWED_PATHS_ENV} is unset (only per-caller config, a "
+            "token claim or the trust registry's [tool_extras], can grant paths)"
         )
 
     def tools(self) -> list[ToolSpec]:

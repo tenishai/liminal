@@ -121,9 +121,14 @@ class MemoryHandler:
         memory.db_path override is refused, so say so instead of ready."""
         if self.default_config.db_path is not None:
             return None
+        if not self.default_config.allowed_db_dirs:
+            # Without a default there are no allowed_db_dirs either, so
+            # _resolve_db_path rejects every override too (PR 207 review).
+            return "unconfigured: LIMINAL_MEMORY_DB is unset, so every call is refused"
+        dirs = ", ".join(str(d) for d in self.default_config.allowed_db_dirs)
         return (
-            "unconfigured: LIMINAL_MEMORY_DB is unset (only a token's memory.db_path "
-            "override can name a store)"
+            "unconfigured: no default store; only a per-caller memory.db_path "
+            f"under {dirs} can name one"
         )
 
     def tools(self) -> list[ToolSpec]:
