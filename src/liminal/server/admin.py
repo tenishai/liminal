@@ -14,6 +14,7 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from liminal.handlers import aws as aws_handler
 from liminal.server.auth import AuthError, VerifiedClaims
 from liminal.server.policy import ADMIN_SCOPE, ParentImmutable, PolicyStore
 from liminal.server.routes import _bearer
@@ -31,6 +32,11 @@ class GrantBody(BaseModel):
 class RevokeBody(BaseModel):
     issuer: str
     persona: str = "*"
+
+
+class AwsProbeBody(BaseModel):
+    role_arn: str
+    audience: str = aws_handler.DEFAULT_AUDIENCE
 
 
 async def _admin_auth(
@@ -113,6 +119,35 @@ def build_admin_router() -> APIRouter:
                 for r in rows
             ]
         }
+
+    @router.get("/admin/aws/identity")
+    async def aws_identity(
+        request: Request,
+        audience: str = aws_handler.DEFAULT_AUDIENCE,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, str]:
+        """The gateway's own Google identity, as an account owner's trust
+        policy must name it: issuer, subject (the service account's unique
+        id) and the audience the token carries. Read from a token minted
+        for the purpose; the token itself never leaves the gateway."""
+        await _admin_auth(request, authorization)
+        try:
+            token = await aws_handler.web_identity_token(audience)
+            return aws_handler.identity_from_token(token)
+        except aws_handler.AwsError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.post("/admin/aws/probe")
+    async def aws_probe(
+        request: Request, body: AwsProbeBody, authorization: str | None = Header(default=None)
+    ) -> dict[str, str]:
+        """Assume a role once as the room, so a set-up page can say
+        "connected" only after AWS has agreed."""
+        claims, _store = await _admin_auth(request, authorization)
+        try:
+            return await aws_handler.probe(body.role_arn, body.audience, who=claims.identity)
+        except aws_handler.AwsError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/admin/policy/audit")
     async def audit(

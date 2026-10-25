@@ -6,6 +6,25 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Added
+
+- **An `aws` handler: read-only AWS calls through a role the account owner granted the
+  gateway** (tenishai/liminal#202, first kind). No access key anywhere: the owner creates
+  one IAM role per account (tenishai/cloud-access `KoboAccess-Role`) whose trust policy names
+  the gateway's own Google service account through OIDC; per call the gateway mints a Google
+  ID token for itself, trades it for a one-hour session with `AssumeRoleWithWebIdentity`
+  tagged with the agent's name as `SourceIdentity`, and runs the read. Accounts are
+  operator config, `[tool_extras."aws.roles".<name>]` with `role_arn` (and an optional
+  `audience`, default `sts.amazonaws.com`); an agent reaches an account when its grant holds
+  `<name>:read`. Only read verbs are forwarded and a short list of data-plane reads (object
+  bodies, secret and parameter values, table rows, queue messages) is refused by name,
+  whatever the role allows. Tools `aws.whoami` and `aws.call`; scope `aws:read`. Installs
+  botocore through the new `[aws]` extra; without it the handler registers and refuses calls
+  with a sentence naming the extra. Two admin routes for a set-up page: `GET
+  /admin/aws/identity` says the issuer, subject and audience a trust policy must name, and
+  `POST /admin/aws/probe {role_arn, audience?}` assumes a role once as the room so
+  "connected" is said only after AWS agreed.
+
 ### Changed
 
 - **The generated Gojira CI checks the manifests build before it applies them**

@@ -219,7 +219,7 @@ src/liminal/
   server/          MCP HTTP server (POST /mcp), JWT verifiers, credential resolver,
                    policy store, admin surface, secret guard
   target/          Federated targets — the machinery behind `--targets`
-  handlers/        scratchpad, files, web, memory, notify
+  handlers/        scratchpad, files, web, memory, notify, aws
   client/          LiminalClient protocol, LibraryLiminalClient (in-process),
                    ProxyLiminalClient (HTTP, wraps AsyncMCPClient), from_config,
                    MCPClient (sync) + AsyncMCPClient (async)
