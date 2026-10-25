@@ -278,7 +278,6 @@ async def test_max_bytes_payload_cap_capped_by_handler_config() -> None:
     assert payload["bytes"] <= 2000
 
 
-
 def _text_handler(body: bytes) -> WebHandler:
     def handler_fn(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

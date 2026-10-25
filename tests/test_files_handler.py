@@ -339,7 +339,6 @@ async def test_write_content_must_be_string(tmp_path) -> None:
     assert "'content'" in result.error
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("create_parents", ["false", 0, None])
 async def test_non_boolean_create_parents_is_refused_naming_the_field(

@@ -142,7 +142,6 @@ async def test_commit_rejects_non_string_tags(techne_db) -> None:
     assert result.is_error is True
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("limit", ["abc", "10", 2.5, True])
 async def test_recall_rejects_non_integer_limit_naming_the_field(
