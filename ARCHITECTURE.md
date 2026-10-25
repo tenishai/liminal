@@ -2,7 +2,7 @@
 card: repo-card:liminal
 updated: 2026-10-13
 anchor: pyproject.toml sha=8f818332466205e50af5c408a95372404e395371
-anchor: src/liminal/server/routes.py sha=c454719c2771f94a8e6e8e7b7e2476185aa6959e
+anchor: src/liminal/server/routes.py sha=d9349a088b19c7ae89d0ccb8336052e2816b6dc1
 ---
 # liminal — repo card
 
@@ -14,7 +14,7 @@ ENTRY:
 - server factory → src/liminal/server/app.py:create_app (data plane) + create_admin_app (admin plane on `--admin-port`)
 - JSON-RPC route → src/liminal/server/routes.py (POST /mcp: initialize/ping/tools/list/tools/call; GET /healthz liveness, GET /readyz 503 while degraded)
 - client lib → src/liminal/client/ (AsyncMCPClient/MCPClient read plain-JSON and Streamable-HTTP SSE replies; LibraryLiminalClient, ProxyLiminalClient, from_config)
-AUTH MODES (exclusive, cli.py): `--jwks-url` = single-cabal (token's `cabal_scope`/`scope` must contain `dispatch`; token `cabal_tool_extras`/`tool_extras` trusted) | `--trust-registry` + `--policy-db` = sovereign (multi-issuer; token scope/extras IGNORED, grant resolved server-side) | `LIMINAL_AUTH_DISABLED=1` = synthesized claims (identity `anonymous`, scope `[dispatch]`, issuer `local`) and NO JWT verification. With no grant and no token claims, the grant-based scope gate is skipped and the handler allowlist finds no `tool_extras` to restrict by (all handlers allowed). Still applied: the secret guard (routes.py; off only via `LIMINAL_SECRET_GUARD`, not by auth-disabled) and the operator-only gate, which refuses every `requires_operator` tool because no caller can prove operator scope. `--jwks-url` and `--trust-registry` together = CLI error exit 2.
+AUTH MODES (exclusive, cli.py): `--jwks-url` = single-cabal (token's `cabal_scope`/`scope` must contain `dispatch`; token `cabal_tool_extras`/`tool_extras` trusted) | `--trust-registry` + `--policy-db` = sovereign (multi-issuer; token scope/extras IGNORED, grant resolved server-side) | `LIMINAL_AUTH_DISABLED=1` = synthesized claims (identity `anonymous`, scope `[dispatch]`, issuer `local`) and NO JWT verification. With no grant and no token claims, the grant-based scope gate is skipped and the handler allowlist finds no `tool_extras` to restrict by (all handlers allowed). Under auth-off only, `initialize` answers with a fresh `Mcp-Session-Id` header and `tools/call` copies a client's header into `ctx.extra["mcp.session_id"]` (routes.py, #192); the scratchpad keys on it, and it is ignored under auth. Still applied: the secret guard (routes.py; off only via `LIMINAL_SECRET_GUARD`, not by auth-disabled) and the operator-only gate, which refuses every `requires_operator` tool because no caller can prove operator scope. `--jwks-url` and `--trust-registry` together = CLI error exit 2.
 BROWSER GUARD (server/request_guard.py, #190): POST /mcp, every mode, before the body is read. `Origin` absent, loopback (localhost/127.0.0.1/[::1], any port) or listed in `LIMINAL_ALLOWED_ORIGINS`, else 403; `null` refused. Content-Type media type `application/json`, else 415. Residual: a page on another loopback origin passes.
 REQUEST PATH (routes.py:_handle_tools_call): auth → handler allowlist → per-tool scope gate (sovereign only) → operator-only gate (`requires_operator` tools, EVERY mode) → secret guard (write tools) → credential resolver (sovereign: parent issuer's callers only) → build Context → Multiplexer.dispatch → wire framing (+ `_meta["liminal/untrusted"]` for untrusted targets).
 

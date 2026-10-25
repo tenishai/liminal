@@ -158,8 +158,16 @@ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 #   an empty or malformed claim   -> nothing is granted
 #
 # So on a JWT deployment, setting this grants it to every token WITHOUT the
-# claim — it is not only a ceiling. `web`, `scratchpad` and `notify` need no
-# such grant.
+# claim — it is not only a ceiling. `web` and `scratchpad` need no such grant.
+# With auth off, liminal issues an Mcp-Session-Id on initialize and keeps each
+# session's scratchpad apart; a client that sends none shares one bucket.
+#
+# `notify` has no JWT to carry a webhook URL in auth-off mode either, so the
+# server's own config comes from the environment:
+#   LIMINAL_NOTIFY_WEBHOOK_URL=https://ntfy.sh/my-topic   # used when a call names none
+#   LIMINAL_NOTIFY_ALLOWED_HOSTS=ntfy.sh                  # host ceiling (default: any)
+#   LIMINAL_NOTIFY_STDOUT=1                               # also offer `stdout`, off by default:
+#                                                         # it writes caller text to this log
 #
 # POST /mcp refuses browser-shaped requests in every mode: an Origin that is not
 # loopback gets 403, a Content-Type other than application/json gets 415. To let a

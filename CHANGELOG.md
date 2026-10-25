@@ -15,6 +15,19 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **With auth off, each MCP session has its own scratchpad** (tenishai/liminal#192). Every
+  auth-off caller is `anonymous`, so all sessions shared one bucket: one session's
+  `scratchpad.set` overwrote another's, and any `scratchpad.clear` wiped everyone's. Under
+  auth-off, `initialize` now answers with an `Mcp-Session-Id` header, clients send it back,
+  and the scratchpad keys on it. A client that sends none still shares the old bucket. Under
+  auth nothing changes: the header is neither issued nor read.
+- **`notify` can be configured with auth off, and `stdout` is opt-in**
+  (tenishai/liminal#197). With no JWT the webhook transport had no URL and always failed,
+  and the one transport that worked, `stdout`, let any caller write multi-line text,
+  fake `[warning]` lines included, into liminal's own log. The server now reads
+  `LIMINAL_NOTIFY_WEBHOOK_URL` (used when a call names none) and
+  `LIMINAL_NOTIFY_ALLOWED_HOSTS`, offers `stdout` only with `LIMINAL_NOTIFY_STDOUT=1`, and
+  writes each `stdout` notification as one line.
 - **`web.fetch`, `web.head` and `notify` pin https to the validated IP, and pin IPv6
   correctly** (tenishai/liminal#196, tenishai/liminal#195). https requests were left
   unpinned, so a rebinding DNS name could steer the TCP connect and TLS handshake to an

@@ -14,6 +14,7 @@ client that doesn't yet have a token can still complete the handshake.
 from __future__ import annotations
 
 import functools
+import secrets
 
 import structlog
 from fastapi import APIRouter, Header, Request, Response
@@ -51,6 +52,12 @@ log = structlog.get_logger(__name__)
 
 
 PUBLIC_METHODS = {"initialize", "ping", "notifications/initialized"}
+
+#: The MCP streamable-HTTP session header. liminal issues one only under
+#: auth-off (liminal#192), and never requires it.
+SESSION_HEADER = "Mcp-Session-Id"
+#: ctx.extra key carrying the caller's session id to handlers (auth-off only).
+SESSION_EXTRA_KEY = "mcp.session_id"
 
 
 def _token_scopes(claims: VerifiedClaims | None) -> list | None:
@@ -230,7 +237,14 @@ def build_router() -> APIRouter:
                     )
 
         if rpc_req.method == "initialize":
-            return await _handle_initialize(request, rpc_req)
+            result = await _handle_initialize(request, rpc_req)
+            if auth_disabled and result.error is None:
+                # Under auth-off every caller is "anonymous", so this header is
+                # the only thing that tells two clients apart (liminal#192).
+                # Clients send it back on every later request (MCP streamable
+                # HTTP), and the scratchpad keys on it.
+                response.headers[SESSION_HEADER] = secrets.token_hex(16)
+            return result
         if rpc_req.method == "ping":
             return make_success(id=rpc_req.id, result={})
         if rpc_req.method == "tools/list":
@@ -630,6 +644,14 @@ async def _handle_tools_call(
     # multiplexer→target hop (a fresh one is generated downstream if absent).
     # It's a trace tag, not sandbox config or an authz input, so it's threaded
     # regardless of grant — closing the inbound half of #27.
+    # Under auth-off, the caller's MCP session id lets per-agent handlers (the
+    # scratchpad) keep one client's state apart from another's (liminal#192).
+    # Never under auth: there the identity in the token already does that, and a
+    # client-chosen header must not change what a persona can see.
+    session_id = request.headers.get(SESSION_HEADER)
+    if session_id and getattr(request.app.state, "auth_disabled", False):
+        extra[SESSION_EXTRA_KEY] = session_id[:128]
+
     inbound_cid = request.headers.get("x-correlation-id")
     if inbound_cid:
         # Clamp — a caller-supplied trace tag shouldn't flow unbounded into

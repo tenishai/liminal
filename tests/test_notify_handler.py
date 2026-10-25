@@ -692,3 +692,61 @@ async def test_pinned_https_webhook_does_not_use_the_shared_pool() -> None:
         await isolated.aclose()
     finally:
         await transport.shutdown()
+
+
+# ---- server config from the environment (liminal#197) -------------------------
+
+
+@pytest.fixture
+def fresh_singleton(monkeypatch):
+    from liminal.handlers import notify
+
+    monkeypatch.setattr(notify, "_SINGLETON", None)
+    for var in ("LIMINAL_NOTIFY_WEBHOOK_URL", "LIMINAL_NOTIFY_ALLOWED_HOSTS", "LIMINAL_NOTIFY_STDOUT"):
+        monkeypatch.delenv(var, raising=False)
+    return notify
+
+
+def test_entry_point_offers_stdout_only_when_opted_in(fresh_singleton, monkeypatch):
+    assert sorted(fresh_singleton.get_handler().transports) == ["webhook"]
+    monkeypatch.setattr(fresh_singleton, "_SINGLETON", None)
+    monkeypatch.setenv("LIMINAL_NOTIFY_STDOUT", "1")
+    assert sorted(fresh_singleton.get_handler().transports) == ["stdout", "webhook"]
+
+
+def test_entry_point_reads_the_webhook_url_and_host_ceiling(fresh_singleton, monkeypatch):
+    monkeypatch.setenv("LIMINAL_NOTIFY_WEBHOOK_URL", "https://hooks.example/t")
+    monkeypatch.setenv("LIMINAL_NOTIFY_ALLOWED_HOSTS", "hooks.example, ntfy.sh")
+    webhook = fresh_singleton.get_handler().transports["webhook"]
+    assert webhook.default_url == "https://hooks.example/t"
+    assert webhook.server_allowed_hosts == ["hooks.example", "ntfy.sh"]
+
+
+@pytest.mark.asyncio
+async def test_server_webhook_url_is_used_when_the_caller_has_none() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    webhook = _webhook(handler_fn)
+    webhook.default_url = "https://hooks.example/t"
+    handler = NotifyHandler(transports={"webhook": webhook})
+    result = await handler.dispatch("send", {"message": "hi"}, _ctx())
+    assert result.is_error is False, result.error
+    assert seen and seen[0].headers["host"] == "hooks.example"
+
+
+@pytest.mark.asyncio
+async def test_stdout_writes_one_line_whatever_the_message_holds() -> None:
+    import io
+
+    out = io.StringIO()
+    handler = NotifyHandler(transports={"stdout": StdoutTransport(stream=out)})
+    await handler.dispatch(
+        "send",
+        {"message": "ok\n[warning] liminal: fake line\r\nmore", "transport": "stdout"},
+        _ctx(),
+    )
+    assert out.getvalue().count("\n") == 1

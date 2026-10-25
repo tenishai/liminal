@@ -18,7 +18,10 @@ from liminal.protocol import Context, Handler, ToolResult, ToolSpec
 CARD = {
     "handler": "scratchpad",
     "required_scope": None,  # ephemeral, process-local notes — no scope gate
-    "description": "Per-agent ephemeral key/value notes (process-local; cleared on restart)",
+    "description": (
+        "Per-agent ephemeral key/value notes (process-local; cleared on restart). "
+        "With auth off, per MCP session."
+    ),
     "tools": [
         {"name": "set", "description": "Store a value under a key"},
         {"name": "get", "description": "Retrieve a value by key (returns null if absent)"},
@@ -79,7 +82,10 @@ class ScratchpadHandler:
     async def dispatch(
         self, name: str, payload: dict[str, Any], ctx: Context
     ) -> ToolResult:
-        bucket_key = (ctx.identity, ctx.agent_name)
+        # Under auth-off every caller is "anonymous"; the MCP session id the
+        # server put in extra keeps each client's notes apart (liminal#192). A
+        # client that sends no session id shares the anonymous bucket.
+        bucket_key = (ctx.identity, ctx.agent_name, ctx.extra.get("mcp.session_id"))
         bucket = self._notes.setdefault(bucket_key, {})
 
         if name == "set":
