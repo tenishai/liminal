@@ -15,6 +15,7 @@ from liminal.handlers.web import (
     WebConfig,
     WebHandler,
     _host_in_allowlist,
+    _pin_request,
 )
 from liminal.protocol import Context
 
@@ -623,3 +624,118 @@ async def test_rejects_ipv4_compatible_metadata() -> None:
     )
     assert result.is_error is True
     assert "denied" in result.error or "SSRF" in result.error
+
+
+# ---- pinning to the validated IP (liminal#195, #196) ----------------------
+
+
+def _capturing(seen: list[httpx.Request]) -> httpx.MockTransport:
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    return httpx.MockTransport(handle)
+
+
+@pytest.mark.asyncio
+async def test_https_fetch_connects_to_the_validated_ip_with_sni() -> None:
+    seen: list[httpx.Request] = []
+    handler = _build_handler(
+        mock=_capturing(seen), dns_map={"api.example.com": ["93.184.216.34"]}
+    )
+    result = await handler.dispatch("fetch", {"url": "https://api.example.com/x"}, _ctx())
+    assert result.is_error is False
+    (req,) = seen
+    assert req.url.host == "93.184.216.34"
+    assert req.headers["host"] == "api.example.com"
+    assert req.extensions["sni_hostname"] == "api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_https_head_is_pinned_too() -> None:
+    seen: list[httpx.Request] = []
+    handler = _build_handler(
+        mock=_capturing(seen), dns_map={"api.example.com": ["93.184.216.34"]}
+    )
+    await handler.dispatch("head", {"url": "https://api.example.com/x"}, _ctx())
+    (req,) = seen
+    assert req.url.host == "93.184.216.34"
+    assert req.extensions["sni_hostname"] == "api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_ipv6_first_address_is_bracketed_not_an_invalid_url() -> None:
+    seen: list[httpx.Request] = []
+    v6 = "2606:2800:220:1:248:1893:25c8:1946"
+    handler = _build_handler(mock=_capturing(seen), dns_map={"v6.example.com": [v6]})
+    result = await handler.dispatch("fetch", {"url": "http://v6.example.com/p"}, _ctx())
+    assert result.is_error is False, result.error
+    (req,) = seen
+    assert req.url.host == v6
+    assert req.url.path == "/p"
+    assert req.headers["host"] == "v6.example.com"
+    assert "sni_hostname" not in req.extensions
+
+
+def test_pin_request_keeps_a_non_default_port_in_url_and_host() -> None:
+    url, headers, ext = _pin_request("https://api.example.com:8443/a?b=1", "93.184.216.34")
+    assert url == "https://93.184.216.34:8443/a?b=1"
+    assert headers == {"Host": "api.example.com:8443"}
+    assert ext == {"sni_hostname": "api.example.com"}
+    url, headers, _ = _pin_request("http://h.example:81/", "2001:db8::1")
+    assert url == "http://[2001:db8::1]:81/"
+    assert headers == {"Host": "h.example:81"}
+
+
+def test_pin_request_drops_a_scheme_default_port_from_host() -> None:
+    _, headers, _ = _pin_request("https://api.example.com:443/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com"}
+    _, headers, _ = _pin_request("http://api.example.com:80/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com"}
+    _, headers, _ = _pin_request("http://api.example.com:443/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com:443"}
+
+
+def test_pin_request_leaves_the_url_alone_without_an_ip() -> None:
+    assert _pin_request("https://api.example.com/", None) == ("https://api.example.com/", {}, {})
+
+
+@pytest.mark.asyncio
+async def test_pinned_https_does_not_use_the_shared_pool() -> None:
+    """The pool is keyed by IP, so a pinned https request on a shared client
+    could reuse a TLS session verified for another name at the same IP."""
+    handler = WebHandler(default_config=WebConfig(allowed_hosts=["*"]))
+    await handler.startup()
+    try:
+        shared, owned = handler._get_client(handler.default_config)
+        assert owned is False
+        isolated, owned = handler._get_client(handler.default_config, isolated=True)
+        assert owned is True and isolated is not shared
+        await isolated.aclose()
+    finally:
+        await handler.shutdown()
+
+
+def test_pin_request_keeps_userinfo_so_basic_auth_still_goes() -> None:
+    url, headers, _ = _pin_request("https://user:pw@hooks.example.com/x?a=1", "93.184.216.34")
+    assert url == "https://user:pw@93.184.216.34/x?a=1"
+    assert headers == {"Host": "hooks.example.com"}
+
+
+def test_pin_request_uses_the_idna_name_for_host_and_sni() -> None:
+    url, headers, ext = _pin_request("https://bücher.example/x", "93.184.216.34")
+    assert url == "https://93.184.216.34/x"
+    assert headers == {"Host": "xn--bcher-kva.example"}
+    assert ext == {"sni_hostname": "xn--bcher-kva.example"}
+
+
+@pytest.mark.asyncio
+async def test_pinned_https_with_userinfo_sends_basic_auth() -> None:
+    seen: list[httpx.Request] = []
+    handler = _build_handler(
+        mock=_capturing(seen), dns_map={"hooks.example.com": ["93.184.216.34"]}
+    )
+    await handler.dispatch("fetch", {"url": "https://user:pw@hooks.example.com/x"}, _ctx())
+    (req,) = seen
+    assert req.headers["authorization"] == "Basic dXNlcjpwdw=="
+    assert req.headers["host"] == "hooks.example.com"
