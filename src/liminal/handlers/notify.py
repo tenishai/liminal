@@ -46,7 +46,7 @@ import anyio
 import httpx
 import structlog
 
-from liminal.handlers.web import PRIVATE_NETWORKS, _host_in_allowlist, _pin_to_ip
+from liminal.handlers.web import PRIVATE_NETWORKS, _host_in_allowlist, _pin_request
 from liminal.protocol import Context, Handler, ToolResult, ToolSpec
 
 log = structlog.get_logger(__name__)
@@ -175,13 +175,14 @@ class WebhookTransport(Transport):
                 f"exceeds {WEBHOOK_MAX_BODY_BYTES}"
             )
 
-        request_url, extra_headers = _pin_to_ip(url, validated_ip)
-        client, owned = self._get_client()
+        request_url, extra_headers, extensions = _pin_request(url, validated_ip)
+        client, owned = self._get_client(isolated=bool(extensions))
         try:
             resp = await client.post(
                 request_url,
                 content=body,
                 headers={"content-type": "application/json", **extra_headers},
+                extensions=extensions,
             )
         except httpx.HTTPError as exc:
             # The webhook URL is a credential (its path/query/userinfo often
@@ -215,11 +216,14 @@ class WebhookTransport(Transport):
             await self._shared_client.aclose()
             self._shared_client = None
 
-    def _get_client(self) -> tuple[httpx.AsyncClient, bool]:
-        """Return (client, owned). owned=True means the caller must close it."""
+    def _get_client(self, isolated: bool = False) -> tuple[httpx.AsyncClient, bool]:
+        """Return (client, owned). owned=True means the caller must close it.
+
+        isolated=True skips the shared pool (a pinned https request, see
+        web._pin_request)."""
         if self.http_client_factory is not None:
             return self.http_client_factory(), True
-        if self._shared_client is not None:
+        if self._shared_client is not None and not isolated:
             return self._shared_client, False
         return httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout_seconds),

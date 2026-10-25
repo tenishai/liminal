@@ -330,10 +330,12 @@ class WebHandler:
         else:
             # Below 1 used to slice the tail off the body (body[:-5]).
             max_bytes = max(1, min(raw_max, cfg.max_response_bytes))
-        request_url, extra_headers = _pin_to_ip(url, validated_ip)
-        client, owned = self._get_client(cfg)
+        request_url, extra_headers, extensions = _pin_request(url, validated_ip)
+        client, owned = self._get_client(cfg, isolated=bool(extensions))
         try:
-            async with client.stream("GET", request_url, headers=extra_headers) as resp:
+            async with client.stream(
+                "GET", request_url, headers=extra_headers, extensions=extensions
+            ) as resp:
                 content_type = (
                     resp.headers.get("content-type", "")
                     .split(";", 1)[0]
@@ -376,10 +378,10 @@ class WebHandler:
                 await client.aclose()
 
     async def _head(self, url: str, cfg: WebConfig, validated_ip: str | None) -> ToolResult:
-        request_url, extra_headers = _pin_to_ip(url, validated_ip)
-        client, owned = self._get_client(cfg)
+        request_url, extra_headers, extensions = _pin_request(url, validated_ip)
+        client, owned = self._get_client(cfg, isolated=bool(extensions))
         try:
-            resp = await client.head(request_url, headers=extra_headers)
+            resp = await client.head(request_url, headers=extra_headers, extensions=extensions)
             content_type = (
                 resp.headers.get("content-type", "")
                 .split(";", 1)[0]
@@ -413,11 +415,16 @@ class WebHandler:
             if owned:
                 await client.aclose()
 
-    def _get_client(self, cfg: WebConfig) -> tuple[httpx.AsyncClient, bool]:
-        """Return (client, owned). owned=True means the caller must close it."""
+    def _get_client(
+        self, cfg: WebConfig, isolated: bool = False
+    ) -> tuple[httpx.AsyncClient, bool]:
+        """Return (client, owned). owned=True means the caller must close it.
+
+        isolated=True skips the shared pool (a pinned https request, see
+        _pin_request)."""
         if self.http_client_factory is not None:
             return self.http_client_factory(), True
-        if self._shared_client is not None:
+        if self._shared_client is not None and not isolated:
             return self._shared_client, False
         # No pooled client yet (lifespan not called) — create a per-request one.
         return httpx.AsyncClient(
@@ -426,36 +433,46 @@ class WebHandler:
         ), True
 
 
-def _pin_to_ip(url: str, ip: str | None) -> tuple[str, dict[str, str]]:
-    """Return (request_url, extra_headers) with the hostname replaced by `ip`.
+def _pin_request(
+    url: str, ip: str | None
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """Return (request_url, extra_headers, extensions) that connect to `ip`.
 
-    For HTTP schemes we swap the hostname for the pre-validated IP and return
-    a `Host` header preserving the original hostname. This closes the TOCTOU
-    gap between our DNS validation check and httpx's internal re-resolution:
-    httpx connects to exactly the IP we verified, not whatever DNS returns at
-    connect time.
+    The hostname in the URL becomes the pre-validated IP (bracketed for IPv6,
+    liminal#195), so httpx connects to exactly the address we checked rather
+    than re-resolving at connect time. `Host` keeps the original name (and a
+    non-default port). For https the `sni_hostname` extension makes httpcore
+    send the original name as SNI and verify the certificate against it, so
+    https is pinned too (liminal#196): a rebinding name can no longer steer the
+    TCP connect to an internal address.
 
-    For HTTPS we leave the URL unchanged — TLS certificate validation binds
-    the connection to the original hostname, so a rebinding attack would fail
-    cert verification. If no ip is provided (dns_resolver stub in tests that
-    returns no IPs), we also leave the URL unchanged.
+    A pinned https request must not share a pooled connection: the pool is
+    keyed by the IP, so a later request for another name at the same IP would
+    reuse a TLS session verified for the first name. Callers give a request
+    with extensions its own client.
+
+    With no ip (a test resolver that returns none) the URL is unchanged.
     """
     if ip is None:
-        return url, {}
+        return url, {}, {}
     try:
         parsed = urlparse(url)
-    except Exception:  # noqa: BLE001
-        return url, {}
-    if parsed.scheme != "http":
-        return url, {}
+        port = parsed.port
+    except ValueError:
+        return url, {}, {}
+    if parsed.scheme not in ("http", "https"):
+        return url, {}, {}
     host = parsed.hostname or ""
-    port = parsed.port
-    if port:
-        new_netloc = f"{ip}:{port}"
-    else:
-        new_netloc = ip
-    pinned = urlunparse(parsed._replace(netloc=new_netloc))
-    return pinned, {"Host": host}
+    ip_part = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{ip_part}:{port}" if port else ip_part
+    pinned = urlunparse(parsed._replace(netloc=netloc))
+    host_header = f"{host}:{port}" if port else host
+    if ":" in host and port:
+        host_header = f"[{host}]:{port}"
+    elif ":" in host:
+        host_header = f"[{host}]"
+    extensions: dict[str, Any] = {"sni_hostname": host} if parsed.scheme == "https" else {}
+    return pinned, {"Host": host_header}, extensions
 
 
 def _host_in_allowlist(host: str, allowlist: list[str]) -> bool:

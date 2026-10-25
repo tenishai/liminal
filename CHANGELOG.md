@@ -15,6 +15,16 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **`web.fetch`, `web.head` and `notify` pin https to the validated IP, and pin IPv6
+  correctly** (tenishai/liminal#196, tenishai/liminal#195). https requests were left
+  unpinned, so a rebinding DNS name could steer the TCP connect and TLS handshake to an
+  internal address and tell open from closed ports by the error. Now both schemes connect to
+  the IP the SSRF check validated: the URL carries the IP, `Host` keeps the original name
+  (with a non-default port, which it used to drop), and for https the `sni_hostname`
+  extension makes TLS send that name and verify the certificate against it. A pinned https
+  request uses its own client, because the shared pool is keyed by IP and would reuse a TLS
+  session verified for another name. An IPv6 first address used to build an invalid URL
+  (`InvalidURL: Invalid port`); it is now bracketed.
 - **`files.read` reads at most one byte past its cap** (tenishai/liminal#194). It
   used to load the whole file and then slice it, so one read of a large log in an
   allowlisted directory could exhaust the memory of the process every handler shares.

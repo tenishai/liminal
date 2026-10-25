@@ -189,7 +189,8 @@ async def test_webhook_url_from_extra_when_credential_absent() -> None:
     captured: list[str] = []
 
     def handler_fn(request: httpx.Request) -> httpx.Response:
-        captured.append(str(request.url))
+        # The URL host is the pinned IP (liminal#196); Host names the target.
+        captured.append(f"{request.url.scheme}://{request.headers['host']}{request.url.path}")
         return httpx.Response(204)
 
     handler = NotifyHandler(transports={"webhook": _webhook(handler_fn)})
@@ -207,7 +208,8 @@ async def test_credential_url_wins_over_extra_url() -> None:
     captured: list[str] = []
 
     def handler_fn(request: httpx.Request) -> httpx.Response:
-        captured.append(str(request.url))
+        # The URL host is the pinned IP (liminal#196); Host names the target.
+        captured.append(f"{request.url.scheme}://{request.headers['host']}{request.url.path}")
         return httpx.Response(204)
 
     handler = NotifyHandler(transports={"webhook": _webhook(handler_fn)})
