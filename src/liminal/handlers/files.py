@@ -209,7 +209,10 @@ class FilesHandler:
                         "path": {"type": "string"},
                         "max_bytes": {
                             "type": "integer",
-                            "description": "Caller-side cap; capped further by handler config.",
+                            "description": (
+                                "Caller-side cap in bytes, clamped to "
+                                "1..the handler's max_read_bytes."
+                            ),
                         },
                     },
                     "required": ["path"],
@@ -443,22 +446,23 @@ class FilesHandler:
     async def _read(
         self, path: Path, payload: dict[str, Any], cfg: FilesConfig
     ) -> ToolResult:
+        cap, err = _read_cap(payload.get("max_bytes"), cfg.max_read_bytes)
+        if err is not None:
+            return ToolResult.failure(err)
         try:
             if not await anyio.to_thread.run_sync(path.exists):
                 return ToolResult.failure(f"no such file: {path}")
             if not await anyio.to_thread.run_sync(path.is_file):
                 return ToolResult.failure(f"not a file: {path}")
-            cap = min(
-                int(payload.get("max_bytes") or cfg.max_read_bytes),
-                cfg.max_read_bytes,
-            )
-            data = await anyio.to_thread.run_sync(path.read_bytes)
+            # Read one byte past the cap and no more (#194): that byte is how
+            # we know the file is longer, without pulling a 20 GB log into the
+            # one process every handler shares.
+            data = await anyio.to_thread.run_sync(_read_at_most, path, cap + 1)
         except OSError as exc:
             return ToolResult.failure(f"read failed: {exc}")
-        truncated = False
-        if len(data) > cap:
+        truncated = len(data) > cap
+        if truncated:
             data = data[:cap]
-            truncated = True
         text = data.decode("utf-8", errors="replace")
         return ToolResult.json(
             {
@@ -518,21 +522,30 @@ class FilesHandler:
             max_entries = cfg.max_list_entries
 
             def _scan() -> list[dict[str, Any]]:
+                # Stop at cap + 1 entries (#194); the extra one only says
+                # "truncated". Sorting the whole directory first meant reading
+                # all of it. The kept entries are sorted by name, so a listing
+                # that fits under the cap is fully deterministic; a truncated
+                # one holds whichever entries the filesystem yielded first.
                 entries: list[dict[str, Any]] = []
-                for child in sorted(path.iterdir()):
-                    if len(entries) > max_entries:
-                        break
-                    try:
-                        stat = child.stat()
+                with os.scandir(path) as it:
+                    for child in it:
+                        try:
+                            # Follows symlinks; a dangling one is skipped.
+                            st = child.stat()
+                        except OSError:
+                            continue
+                        is_file = stat.S_ISREG(st.st_mode)
                         entries.append(
                             {
                                 "name": child.name,
-                                "type": "dir" if child.is_dir() else "file",
-                                "size": stat.st_size if child.is_file() else None,
+                                "type": "dir" if stat.S_ISDIR(st.st_mode) else "file",
+                                "size": st.st_size if is_file else None,
                             }
                         )
-                    except OSError:
-                        continue
+                        if len(entries) > max_entries:
+                            break
+                entries.sort(key=lambda e: e["name"])
                 return entries
 
             entries = await anyio.to_thread.run_sync(_scan)
@@ -548,6 +561,28 @@ class FilesHandler:
                 "truncated": truncated,
             }
         )
+
+
+def _read_cap(raw: Any, max_read_bytes: int) -> tuple[int, str | None]:
+    """The byte cap for one read: `max_bytes` clamped to 1..max_read_bytes.
+
+    Absent or null means the handler's cap. Anything other than an integer is
+    refused with the field named, rather than raising (#193) or being coerced
+    (`"10"` used to work through int(); bool is an int subclass, so it is
+    refused explicitly). Zero and negatives clamp to 1: `-5` used to slice the
+    tail off the file and still report `truncated: true` (#194).
+    """
+    if raw is None:
+        return max_read_bytes, None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0, f"'max_bytes' must be an integer, got {type(raw).__name__}"
+    return max(1, min(raw, max_read_bytes)), None
+
+
+def _read_at_most(path: Path, limit: int) -> bytes:
+    """Read up to `limit` bytes from the start of `path`."""
+    with path.open("rb") as fh:
+        return fh.read(limit)
 
 
 def _protected_target(
