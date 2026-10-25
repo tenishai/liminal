@@ -142,6 +142,30 @@ async def test_commit_rejects_non_string_tags(techne_db) -> None:
     assert result.is_error is True
 
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["abc", "10", 2.5, True])
+async def test_recall_rejects_non_integer_limit_naming_the_field(
+    techne_db, limit: Any
+) -> None:
+    """#193: int("abc") used to raise and reach the agent as a bare class name."""
+    handler = _handler(techne_db)
+    result = await handler.dispatch(
+        "recall", {"query": "sky", "limit": limit}, _ctx()
+    )
+    assert result.is_error is True
+    assert "'limit' must be an integer" in result.error
+
+
+@pytest.mark.asyncio
+async def test_recall_null_limit_uses_the_default(techne_db) -> None:
+    handler = _handler(techne_db)
+    result = await handler.dispatch(
+        "recall", {"query": "sky", "limit": None}, _ctx()
+    )
+    assert result.is_error is False, result.error
+
+
 # ---- happy path ----------------------------------------------------------
 
 

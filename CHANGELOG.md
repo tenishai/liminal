@@ -26,6 +26,19 @@ Each line cites the pull request that made the change.
   directory first. The entries it returns are still sorted by name, so a listing under
   the cap is unchanged; a truncated listing now holds the first entries the filesystem
   returns, not the alphabetically first.
+- **A handler's exception reaches the agent with an error id it can report**
+  (tenishai/liminal#193). The failure used to say only `web.fetch raised ValueError`,
+  and the operator had to find the log line by timestamp. It now reads
+  `web.fetch raised ValueError (error id 1a2b3c4d)`, and the `multiplexer.target_raised`
+  (or `dispatch.handler_raised`) log line carries the same `error_id` next to the
+  exception's message, which still stays out of the result. liminal's own handlers
+  also check argument types instead of raising: `web.fetch` `max_bytes` and
+  `memory.recall` `limit` must be integers and `files.write` `create_parents` a
+  boolean, and a wrong type returns a failure naming the field. `max_bytes` and
+  `limit` are clamped to 1 and up (`max_bytes: -5` used to cut the tail off the body),
+  so `0` now means one byte or one hit rather than the default; the string
+  `"false"` for `create_parents` used to mean true. `files.read` `max_bytes` is
+  covered by tenishai/liminal#194.
 
 - **`POST /mcp` refuses requests from a browser page** (tenishai/liminal#190). A page
   in the operator's browser could call every tool on a loopback liminal running with

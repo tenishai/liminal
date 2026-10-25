@@ -278,6 +278,51 @@ async def test_max_bytes_payload_cap_capped_by_handler_config() -> None:
     assert payload["bytes"] <= 2000
 
 
+
+def _text_handler(body: bytes) -> WebHandler:
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/plain"}, content=body
+        )
+
+    return _build_handler(mock=httpx.MockTransport(handler_fn))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_bytes", ["abc", "10", 1.5, True, [10]])
+async def test_non_integer_max_bytes_is_refused_naming_the_field(max_bytes: Any) -> None:
+    """#193: "abc" used to reach the agent as "web.fetch raised ValueError"."""
+    handler = _text_handler(b"hello")
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/", "max_bytes": max_bytes}, _ctx()
+    )
+    assert result.is_error is True
+    assert "'max_bytes' must be an integer" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_bytes", [-5, 0])
+async def test_max_bytes_below_one_clamps_to_one(max_bytes: int) -> None:
+    handler = _text_handler(b"hello")
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/", "max_bytes": max_bytes}, _ctx()
+    )
+    assert result.is_error is False, result.error
+    payload = result.content[0]["data"]
+    assert payload["bytes"] == 1
+    assert payload["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_null_max_bytes_uses_the_handler_cap() -> None:
+    handler = _text_handler(b"hello")
+    result = await handler.dispatch(
+        "fetch", {"url": "https://example.com/", "max_bytes": None}, _ctx()
+    )
+    assert result.is_error is False, result.error
+    assert result.content[0]["data"]["truncated"] is False
+
+
 # ---- content-type filter -------------------------------------------------
 
 

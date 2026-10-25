@@ -238,9 +238,13 @@ class MemoryHandler:
         if not sanitized:
             return ToolResult.json({"query": query, "hits": []})
 
-        limit = int(
-            payload.get("limit") or self.default_config.default_recall_limit
-        )
+        limit = payload.get("limit")
+        if limit is None:
+            limit = self.default_config.default_recall_limit
+        elif isinstance(limit, bool) or not isinstance(limit, int):
+            return ToolResult.failure(
+                f"'limit' must be an integer, got {type(limit).__name__}"
+            )
         limit = max(1, min(limit, 50))
         use_vectors = self.default_config.use_vectors
 
