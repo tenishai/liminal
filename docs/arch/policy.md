@@ -2,7 +2,7 @@
 card: arch-card:liminal-policy
 updated: 2026-10-13
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
-anchor: src/liminal/server/routes.py sha=c454719c2771f94a8e6e8e7b7e2476185aa6959e
+anchor: src/liminal/server/routes.py sha=d9349a088b19c7ae89d0ccb8336052e2816b6dc1
 anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
 anchor: src/liminal/server/app.py sha=32c84fd23b21436cfd1294707f74255dea1fca36
 ---

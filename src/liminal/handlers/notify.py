@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -128,6 +129,10 @@ class WebhookTransport(Transport):
     denied_networks: list[Any] = field(default_factory=lambda: list(PRIVATE_NETWORKS))
     timeout_seconds: float = 10.0
     server_allowed_hosts: list[str] = field(default_factory=lambda: ["*"])
+    #: The operator's webhook URL (LIMINAL_NOTIFY_WEBHOOK_URL, liminal#197), used
+    #: when the caller's credentials and tool extras name none: under auth-off
+    #: both are empty, so without this the default transport could never send.
+    default_url: str | None = None
     _shared_client: httpx.AsyncClient | None = field(default=None, init=False)
 
     @property
@@ -142,14 +147,17 @@ class WebhookTransport(Transport):
         title: str | None,
         ctx: Context,
     ) -> dict[str, Any]:
-        url = ctx.credentials.get("NOTIFY_WEBHOOK_URL") or ctx.extra.get(
-            "notify.webhook_url"
+        url = (
+            ctx.credentials.get("NOTIFY_WEBHOOK_URL")
+            or ctx.extra.get("notify.webhook_url")
+            or self.default_url
         )
         if not url:
             raise NotifyError(
                 "webhook URL not configured "
-                "(set NOTIFY_WEBHOOK_URL via `cbl secret set` or pass "
-                "notify.webhook_url in tool_extras)"
+                "(set NOTIFY_WEBHOOK_URL via `cbl secret set`, pass "
+                "notify.webhook_url in tool_extras, or set "
+                "LIMINAL_NOTIFY_WEBHOOK_URL for the server)"
             )
         err, validated_ip = await _check_url(
             url,
@@ -299,7 +307,9 @@ class StdoutTransport(Transport):
         if title:
             prefix_parts.append(f"{title}:")
 
-        line = " ".join(prefix_parts) + " " + message
+        # One log line per call (liminal#197): caller text with a newline could
+        # otherwise write lines that look like liminal's own ("[warning] ...").
+        line = _one_line(" ".join(prefix_parts) + " " + message)
         print(line, file=target, flush=True)
         return {"transport": "stdout", "ok": True, "bytes": len(line)}
 
@@ -491,9 +501,36 @@ async def _check_url(
 _SINGLETON: NotifyHandler | None = None
 
 
+def _one_line(text: str) -> str:
+    return " ".join(text.splitlines())
+
+
 def get_handler() -> Handler:
-    """Entry-point factory."""
+    """Entry-point factory, configured from the environment (liminal#197).
+
+    Under auth-off the caller's credentials and tool extras are empty, so the
+    server's own config is the only source of a webhook URL:
+
+      LIMINAL_NOTIFY_WEBHOOK_URL     the webhook every caller without one uses
+      LIMINAL_NOTIFY_ALLOWED_HOSTS   comma-separated host ceiling (default: any)
+      LIMINAL_NOTIFY_STDOUT=1        also offer the stdout transport
+
+    stdout is opt-in because it writes caller-chosen text into the server's own
+    log, and the caller picks the transport per call. Read the same way files
+    and memory read LIMINAL_FILES_ALLOWED_PATHS and LIMINAL_MEMORY_DB."""
     global _SINGLETON
     if _SINGLETON is None:
-        _SINGLETON = NotifyHandler()
+        hosts = [
+            h.strip()
+            for h in os.environ.get("LIMINAL_NOTIFY_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ]
+        webhook = WebhookTransport(
+            default_url=os.environ.get("LIMINAL_NOTIFY_WEBHOOK_URL") or None,
+            server_allowed_hosts=hosts or ["*"],
+        )
+        transports: dict[str, Transport] = {"webhook": webhook}
+        if os.environ.get("LIMINAL_NOTIFY_STDOUT") == "1":
+            transports["stdout"] = StdoutTransport()
+        _SINGLETON = NotifyHandler(transports=transports)
     return _SINGLETON
