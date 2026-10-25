@@ -6,6 +6,17 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-25
+
+### Upgrading
+
+- **The `aws` handler needs the `[aws]` extra to make calls** (tenishai/liminal#209). An
+  image that installs `tenish-liminal` without it still starts and lists the handler; every
+  `aws.*` call then refuses with a sentence naming the extra. Install `tenish-liminal[aws]`
+  where agents are meant to reach AWS, and give the gateway a Google identity (a service
+  account linked to its Kubernetes service account) before naming it in any role's trust
+  policy.
+
 ### Added
 
 - **An `aws` handler: read-only AWS calls through a role the account owner granted the
