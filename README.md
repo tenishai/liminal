@@ -140,7 +140,8 @@ handlers register automatically next to liminal's own five.
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
-# health check: curl http://127.0.0.1:9100/healthz (always 200 while serving)
+# health check: curl http://127.0.0.1:9100/healthz (always 200 while serving; a
+#   handler missing its server config reads "unconfigured: <what to set>", not "ready")
 # readiness:    curl http://127.0.0.1:9100/readyz  (503 while any target is degraded)
 #
 # The `files` handler starts with an EMPTY allowlist and refuses every call

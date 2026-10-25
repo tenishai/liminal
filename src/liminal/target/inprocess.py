@@ -56,3 +56,20 @@ class InProcessTarget(Target):
 
     def protocol_version(self) -> str | None:
         return None
+
+    @property
+    def config_status(self) -> str | None:
+        """What the handler's own `status()` says is missing, or None (liminal#191).
+
+        Optional and duck-typed, like startup/shutdown, so the Handler protocol
+        does not change. A handler that refuses every call for want of server
+        config (an empty files allowlist, no memory db) says so here, and
+        /healthz shows it instead of "ready"."""
+        status = getattr(self._handler, "status", None)
+        if not callable(status):
+            return None
+        try:
+            return status()
+        except Exception as exc:  # noqa: BLE001 — a probe must not 500 on a handler bug
+            log.warning("inprocess_target.status_failed", target=self.name, error=str(exc))
+            return f"status() failed: {type(exc).__name__}"

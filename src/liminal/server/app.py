@@ -247,8 +247,9 @@ def create_app(
                 "liminal.AUTH_DISABLED",
                 msg=(
                     "JWT enforcement disabled via LIMINAL_AUTH_DISABLED. Every "
-                    "request is accepted without a token; only browser-origin and "
-                    "non-JSON requests are refused. Only use this for trusted-network "
+                    "request is accepted without a token; browser-origin and "
+                    "non-JSON requests are refused at the door, and operator-only "
+                    "tools are still refused. Only use this for trusted-network "
                     "deployments (single operator, localhost client). UNSET in "
                     "production."
                 ),
@@ -257,6 +258,13 @@ def create_app(
         # delegates to its handler's startup() when defined (e.g. to open
         # pooled clients); HttpTarget connects + fetches its catalog.
         await dispatcher.startup()
+        # One line per handler that will refuse every call without per-caller
+        # config (liminal#191), so the operator sees it at boot, not from tool
+        # errors. Agents still see its tools: a token's claims may supply it.
+        for name, target in dispatcher.targets.items():
+            status = getattr(target, "config_status", None)
+            if status:
+                log.warning("liminal.handler_unconfigured", handler=name, status=status)
         yield
         # Shut down in reverse registration order.
         await dispatcher.shutdown()
