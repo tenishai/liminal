@@ -687,6 +687,15 @@ def test_pin_request_keeps_a_non_default_port_in_url_and_host() -> None:
     assert headers == {"Host": "h.example:81"}
 
 
+def test_pin_request_drops_a_scheme_default_port_from_host() -> None:
+    _, headers, _ = _pin_request("https://api.example.com:443/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com"}
+    _, headers, _ = _pin_request("http://api.example.com:80/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com"}
+    _, headers, _ = _pin_request("http://api.example.com:443/", "93.184.216.34")
+    assert headers == {"Host": "api.example.com:443"}
+
+
 def test_pin_request_leaves_the_url_alone_without_an_ip() -> None:
     assert _pin_request("https://api.example.com/", None) == ("https://api.example.com/", {}, {})
 

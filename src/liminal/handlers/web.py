@@ -466,11 +466,11 @@ def _pin_request(
     ip_part = f"[{ip}]" if ":" in ip else ip
     netloc = f"{ip_part}:{port}" if port else ip_part
     pinned = urlunparse(parsed._replace(netloc=netloc))
-    host_header = f"{host}:{port}" if port else host
-    if ":" in host and port:
-        host_header = f"[{host}]:{port}"
-    elif ":" in host:
-        host_header = f"[{host}]"
+    # Host carries the port only when it isn't the scheme's default, as httpx
+    # writes it; urlparse keeps an explicit :443 that httpx would drop.
+    default_port = 443 if parsed.scheme == "https" else 80
+    host_part = f"[{host}]" if ":" in host else host
+    host_header = f"{host_part}:{port}" if port and port != default_port else host_part
     extensions: dict[str, Any] = {"sni_hostname": host} if parsed.scheme == "https" else {}
     return pinned, {"Host": host_header}, extensions
 
