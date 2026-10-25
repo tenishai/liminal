@@ -1,6 +1,6 @@
 ---
 card: arch-card:liminal-handler-protocol
-updated: 2026-10-03
+updated: 2026-10-24
 anchor: src/liminal/protocol/handler.py sha=adfe378e757a7889f1a9a6f48983859fccb44296
 anchor: src/liminal/registry/discover.py sha=86f56acb6ddbc4bced63386de8d0f2ddb97d8579
 anchor: src/liminal/protocol/card.py sha=9e018dcdfcd627b674cd1ee69848c03367ed3e3f
@@ -15,7 +15,7 @@ OPS / FLOW: registry/discover.py:discover_handlers scans entry-point group `limi
 INVARIANTS:
 - Discovery is FAIL-OPEN per handler: import error, factory raise, protocol mismatch, bad card → logged + skipped. WHY: one broken plugin must not black-hole every agent's tool surface. Consequence: a missing handler shows only in logs / `liminal list-handlers`.
 - Duplicate entry-point name → last one wins, with a warning (Registry.register).
-- Handler exceptions never propagate: Multiplexer.dispatch converts them to `ToolResult.failure("<t>.<tool> raised <Type>")`. Return ToolResult.failure for errors the agent can act on.
+- Handler exceptions never propagate: Multiplexer.dispatch converts them to `ToolResult.failure("<t>.<tool> raised <Type> (error id <8 hex>)")`; the message goes to the log under the same id, never to the caller (#193). Return ToolResult.failure for errors the agent can act on, including a bad argument: validate types and name the field rather than letting `int()` raise.
 - Card `required_scope` (handler-level) and per-tool `required_scope` feed the sovereign scope map (app.py:scope_for). Per-tool WINS even when weaker than handler-level (no max) — use it to narrow, never widen. A per-tool `requires_operator: true` (default false) marks an operator-only tool: app.py:operator_only_tools collects them and routes.py:_operator_refusal enforces it at tools/call and filters it from tools/list in EVERY auth mode, independently of `required_scope` (single-cabal: token `cabal_scope`/`scope` must hold `operator`; sovereign: the grant must hold `operator` or `admin:*`; auth-disabled: refused). Federated targets have no such flag.
 - Handlers must read sandbox bounds from `ctx.extra` and authz from `ctx.granted_scopes`, never from `ctx`-independent token data; routes.py fills both according to auth mode.
 - Never add a module-scope hard `import techne` (memory is optional); new capability goes in handlers/ + a pyproject entry point, not branches in gateway code.

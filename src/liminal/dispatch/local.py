@@ -11,6 +11,7 @@ scale-mode-only; in solo mode a raise is just a tool-call error.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -77,13 +78,35 @@ class InProcessDispatcher:
         try:
             return await record.handler.dispatch(local_name, payload, ctx)
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            return raised_failure(
                 "dispatch.handler_raised",
+                f"{handler_name}.{local_name}",
+                exc,
                 handler=handler_name,
                 tool=local_name,
-                error_type=type(exc).__name__,
-                error=str(exc),
             )
-            return ToolResult.failure(
-                f"{handler_name}.{local_name} raised {type(exc).__name__}"
-            )
+
+
+def raised_failure(
+    event: str, tool_name: str, exc: Exception, **fields: Any
+) -> ToolResult:
+    """Log a handler's exception and return the failure the caller sees.
+
+    The caller gets the tool name, the exception class and a short error id;
+    the log line gets the same id plus the exception's message. The message
+    stays out of the result because it can carry paths, upstream text or
+    other detail the agent should not see; the id is how an operator joins
+    the agent's report to the log line (#193). Shared by the Multiplexer and
+    InProcessDispatcher so both produce the same text.
+    """
+    error_id = uuid.uuid4().hex[:8]
+    log.warning(
+        event,
+        error_id=error_id,
+        error_type=type(exc).__name__,
+        error=str(exc),
+        **fields,
+    )
+    return ToolResult.failure(
+        f"{tool_name} raised {type(exc).__name__} (error id {error_id})"
+    )

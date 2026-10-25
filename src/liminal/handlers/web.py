@@ -173,7 +173,7 @@ class WebHandler:
                         "url": {"type": "string"},
                         "max_bytes": {
                             "type": "integer",
-                            "description": "Override the default response-size cap (capped by handler config).",
+                            "description": "Override the default response-size cap; clamped to 1..the handler's cap.",
                         },
                     },
                     "required": ["url"],
@@ -318,10 +318,18 @@ class WebHandler:
     async def _fetch(
         self, url: str, payload: dict[str, Any], cfg: WebConfig, validated_ip: str | None
     ) -> ToolResult:
-        max_bytes = min(
-            int(payload.get("max_bytes") or cfg.max_response_bytes),
-            cfg.max_response_bytes,
-        )
+        raw_max = payload.get("max_bytes")
+        if raw_max is None:
+            max_bytes = cfg.max_response_bytes
+        elif isinstance(raw_max, bool) or not isinstance(raw_max, int):
+            # int() used to raise here, and the agent saw only
+            # "web.fetch raised ValueError" (#193).
+            return ToolResult.failure(
+                f"'max_bytes' must be an integer, got {type(raw_max).__name__}"
+            )
+        else:
+            # Below 1 used to slice the tail off the body (body[:-5]).
+            max_bytes = max(1, min(raw_max, cfg.max_response_bytes))
         request_url, extra_headers = _pin_to_ip(url, validated_ip)
         client, owned = self._get_client(cfg)
         try:

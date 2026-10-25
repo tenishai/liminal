@@ -490,7 +490,12 @@ class FilesHandler:
                 f"content is {len(encoded)} bytes; exceeds "
                 f"max_write_bytes={cfg.max_write_bytes}"
             )
-        create_parents = bool(payload.get("create_parents", True))
+        create_parents = payload.get("create_parents", True)
+        if not isinstance(create_parents, bool):
+            # bool() made the string "false" mean True.
+            return ToolResult.failure(
+                f"'create_parents' must be a boolean, got {type(create_parents).__name__}"
+            )
         try:
             if create_parents:
                 await anyio.to_thread.run_sync(

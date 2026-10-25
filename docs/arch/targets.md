@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-targets
-updated: 2026-10-13
-anchor: src/liminal/dispatch/multiplexer.py sha=26f5e3dabc7105cfae322b1d9ba20ad92fb183e0
+updated: 2026-10-24
+anchor: src/liminal/dispatch/multiplexer.py sha=b82ba7db1212274afbf3b019dc7a2a1e8a7304ed
 anchor: src/liminal/target/http.py sha=6825cf1467ddda1d7ac0faaf10c7688d307a4f1d
 anchor: src/liminal/target/config.py sha=fcf52749e20bf67a29f1c83cb6f134eb7c0a5a79
 anchor: src/liminal/target/inspect.py sha=ac28df939b131dac9756622c02e0a78a98ea15a0
@@ -22,6 +22,7 @@ INVARIANTS:
 - One target's startup failure does not stop the others (#86); it stays registered and /healthz (always 200) and /readyz (503 while degraded, #159) report `degraded` with one of "startup failed", "catalog fetch failed (startup|refresh)", "catalog inspection failed (startup|refresh)" or "not started". A failed catalog = zero tools, visible on /healthz (#75).
 - Consumers must trust `_meta["liminal/untrusted"]` + nonce, not the banner text (an upstream can imitate text).
 - Unsanitizable upstream content → refusal ToolResult naming target and cause, not an exception.
+- A target that raises → `ToolResult.failure("<target>.<tool> raised <Class> (error id <8 hex>)")` via `raised_failure` (dispatch/local.py, shared with InProcessDispatcher). The same id is on the `multiplexer.target_raised` / `dispatch.handler_raised` log line with the exception message; the message never reaches the caller (#193; tests/test_dispatch_error_id.py). Not yet the per-request correlation id of #27.
 - Owned httpx client rejects all cookies (#76).
 - Target scopes are operator config only (see policy.md); declaring tool_scopes makes the target deny-by-default.
 CONSUMERS: server/app.py:create_app (builds all targets), server/routes.py (dispatch, /healthz, /readyz, `_meta`). Tests: test_http_target.py, test_untrusted_result_framing.py, test_catalog_depth_bound.py, test_cli_targets.py, test_tool_extras_forwarding.py, test_basic_auth_scheme.py, test_stateful_upstream.py, test_target_header_validation.py, test_readyz.py.

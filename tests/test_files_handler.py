@@ -339,6 +339,24 @@ async def test_write_content_must_be_string(tmp_path) -> None:
     assert "'content'" in result.error
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create_parents", ["false", 0, None])
+async def test_non_boolean_create_parents_is_refused_naming_the_field(
+    tmp_path, create_parents: Any
+) -> None:
+    """#193: bool("false") is True, so the string used to create the parents."""
+    target = tmp_path / "new" / "out.txt"
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch(
+        "write",
+        {"path": str(target), "content": "x", "create_parents": create_parents},
+        _ctx(),
+    )
+    assert result.is_error is True
+    assert "'create_parents' must be a boolean" in result.error
+    assert not target.parent.exists()
+
+
 # ---- list -------------------------------------------------------------
 
 

@@ -28,7 +28,7 @@ from typing import Any
 
 import structlog
 
-from liminal.dispatch.local import DispatchError, UnknownTool
+from liminal.dispatch.local import DispatchError, UnknownTool, raised_failure
 from liminal.protocol import Context, ToolResult
 from liminal.registry import Registry
 from liminal.target.base import Target
@@ -128,7 +128,9 @@ class Multiplexer:
         MCP-level errors. Once a target is selected, an exception it raises
         is caught and converted to ``ToolResult.failure`` (identical message
         format to ``InProcessDispatcher``) so the agent always sees a
-        structured result.
+        structured result. The failure names the exception class and carries
+        a short error id that also appears on the log line; the exception's
+        message goes to the log only (#193).
         """
         target_name, _, local_name = tool_name.partition(TOOL_NAME_SEPARATOR)
         if not local_name:
@@ -144,13 +146,10 @@ class Multiplexer:
         try:
             return await target.dispatch(local_name, payload, ctx)
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            return raised_failure(
                 "multiplexer.target_raised",
+                f"{target_name}.{local_name}",
+                exc,
                 target=target_name,
                 tool=local_name,
-                error_type=type(exc).__name__,
-                error=str(exc),
-            )
-            return ToolResult.failure(
-                f"{target_name}.{local_name} raised {type(exc).__name__}"
             )
