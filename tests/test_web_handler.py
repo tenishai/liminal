@@ -714,3 +714,28 @@ async def test_pinned_https_does_not_use_the_shared_pool() -> None:
         await isolated.aclose()
     finally:
         await handler.shutdown()
+
+
+def test_pin_request_keeps_userinfo_so_basic_auth_still_goes() -> None:
+    url, headers, _ = _pin_request("https://user:pw@hooks.example.com/x?a=1", "93.184.216.34")
+    assert url == "https://user:pw@93.184.216.34/x?a=1"
+    assert headers == {"Host": "hooks.example.com"}
+
+
+def test_pin_request_uses_the_idna_name_for_host_and_sni() -> None:
+    url, headers, ext = _pin_request("https://bücher.example/x", "93.184.216.34")
+    assert url == "https://93.184.216.34/x"
+    assert headers == {"Host": "xn--bcher-kva.example"}
+    assert ext == {"sni_hostname": "xn--bcher-kva.example"}
+
+
+@pytest.mark.asyncio
+async def test_pinned_https_with_userinfo_sends_basic_auth() -> None:
+    seen: list[httpx.Request] = []
+    handler = _build_handler(
+        mock=_capturing(seen), dns_map={"hooks.example.com": ["93.184.216.34"]}
+    )
+    await handler.dispatch("fetch", {"url": "https://user:pw@hooks.example.com/x"}, _ctx())
+    (req,) = seen
+    assert req.headers["authorization"] == "Basic dXNlcjpwdw=="
+    assert req.headers["host"] == "hooks.example.com"

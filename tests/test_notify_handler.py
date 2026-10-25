@@ -653,3 +653,42 @@ async def test_webhook_secret_url_never_appears_in_any_result_or_error() -> None
             assert (result.error or "").startswith(expected), (label, result.error)
             _assert_no_secret(result.error or "")
         _assert_no_secret(json.dumps(result.content, default=str))
+
+
+# ---- https webhooks are pinned like web.fetch (liminal#196) -------------------
+
+
+@pytest.mark.asyncio
+async def test_https_webhook_is_pinned_with_sni_and_keeps_basic_auth() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    handler = NotifyHandler(transports={"webhook": _webhook(handler_fn)})
+    result = await handler.dispatch(
+        "send",
+        {"message": "hi"},
+        _ctx(extra={"notify.webhook_url": "https://user:pw@hooks.example/topic"}),
+    )
+    assert result.is_error is False
+    (req,) = seen
+    assert req.url.host == "93.184.216.34"
+    assert req.headers["host"] == "hooks.example"
+    assert req.extensions["sni_hostname"] == "hooks.example"
+    assert req.headers["authorization"] == "Basic dXNlcjpwdw=="
+
+
+@pytest.mark.asyncio
+async def test_pinned_https_webhook_does_not_use_the_shared_pool() -> None:
+    transport = WebhookTransport()
+    await transport.startup()
+    try:
+        shared, owned = transport._get_client()
+        assert owned is False
+        isolated, owned = transport._get_client(isolated=True)
+        assert owned is True and isolated is not shared
+        await isolated.aclose()
+    finally:
+        await transport.shutdown()

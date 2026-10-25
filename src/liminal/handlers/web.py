@@ -28,7 +28,7 @@ import ipaddress
 import socket
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import anyio
 import httpx
@@ -455,24 +455,23 @@ def _pin_request(
     """
     if ip is None:
         return url, {}, {}
+    # Parse with httpx, not urlparse, so the pinned URL keeps what httpx needs
+    # (PR 203 review): userinfo (httpx turns it into Basic auth, which webhook
+    # URLs carry), the IDNA form of a non-ASCII host (urlparse's Unicode name
+    # can't go in a header), and httpx's own default-port rule for Host.
     try:
-        parsed = urlparse(url)
-        port = parsed.port
-    except ValueError:
+        parsed = httpx.URL(url)
+    except httpx.InvalidURL:
         return url, {}, {}
     if parsed.scheme not in ("http", "https"):
         return url, {}, {}
-    host = parsed.hostname or ""
-    ip_part = f"[{ip}]" if ":" in ip else ip
-    netloc = f"{ip_part}:{port}" if port else ip_part
-    pinned = urlunparse(parsed._replace(netloc=netloc))
-    # Host carries the port only when it isn't the scheme's default, as httpx
-    # writes it; urlparse keeps an explicit :443 that httpx would drop.
-    default_port = 443 if parsed.scheme == "https" else 80
-    host_part = f"[{host}]" if ":" in host else host
-    host_header = f"{host_part}:{port}" if port and port != default_port else host_part
-    extensions: dict[str, Any] = {"sni_hostname": host} if parsed.scheme == "https" else {}
-    return pinned, {"Host": host_header}, extensions
+    pinned = parsed.copy_with(host=ip)  # brackets an IPv6 address itself
+    # netloc: IDNA host, port only when non-default, no userinfo.
+    host_header = parsed.netloc.decode("ascii")
+    extensions: dict[str, Any] = (
+        {"sni_hostname": parsed.raw_host.decode("ascii")} if parsed.scheme == "https" else {}
+    )
+    return str(pinned), {"Host": host_header}, extensions
 
 
 def _host_in_allowlist(host: str, allowlist: list[str]) -> bool:
