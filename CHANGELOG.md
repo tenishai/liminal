@@ -15,6 +15,18 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **`files.read` reads at most one byte past its cap** (tenishai/liminal#194). It
+  used to load the whole file and then slice it, so one read of a large log in an
+  allowlisted directory could exhaust the memory of the process every handler shares.
+  `max_bytes` is now clamped to `1..max_read_bytes` (`-5` used to cut the tail off the
+  file and report `truncated: true`; `0` used to mean "the handler's cap" and now reads
+  one byte), and a value that is not an integer, including the string `"10"` that
+  used to be coerced, returns a failure naming `max_bytes`. `files.list` stops reading
+  the directory once it has one entry past its cap instead of sorting the whole
+  directory first. The entries it returns are still sorted by name, so a listing under
+  the cap is unchanged; a truncated listing now holds the first entries the filesystem
+  returns, not the alphabetically first.
+
 - **`POST /mcp` refuses requests from a browser page** (tenishai/liminal#190). A page
   in the operator's browser could call every tool on a loopback liminal running with
   `LIMINAL_AUTH_DISABLED=1`, by posting a `text/plain` body (no CORS preflight) or by

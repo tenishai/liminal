@@ -162,6 +162,108 @@ async def test_caller_max_bytes_is_capped_by_handler_config(tmp_path) -> None:
     assert payload["bytes"] == 2000
 
 
+
+class _ReadSpy:
+    """Wraps an open file and records every read() size it is asked for."""
+
+    def __init__(self, fh: Any, sizes: list[int]) -> None:
+        self._fh = fh
+        self._sizes = sizes
+
+    def read(self, size: int = -1) -> bytes:
+        self._sizes.append(size)
+        return self._fh.read(size)
+
+    def __enter__(self) -> _ReadSpy:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._fh.close()
+
+
+@pytest.mark.asyncio
+async def test_read_of_a_file_over_the_cap_reads_only_cap_plus_one(
+    tmp_path, monkeypatch
+) -> None:
+    """#194: a file far larger than the cap is never loaded whole."""
+    target = tmp_path / "huge.log"
+    target.write_bytes(b"z" * 200_000)
+    sizes: list[int] = []
+    real_open = Path.open
+
+    def spy_open(self: Path, *args: Any, **kwargs: Any) -> _ReadSpy:
+        return _ReadSpy(real_open(self, *args, **kwargs), sizes)
+
+    def no_read_bytes(self: Path) -> bytes:
+        raise AssertionError("read_bytes loads the whole file")
+
+    monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(Path, "read_bytes", no_read_bytes)
+    handler = _build_handler([tmp_path], max_read_bytes=100)
+    result = await handler.dispatch("read", {"path": str(target)}, _ctx())
+    assert result.is_error is False, result.error
+    payload = result.content[0]["data"]
+    assert payload["bytes"] == 100
+    assert payload["truncated"] is True
+    assert sizes == [101]
+
+
+@pytest.mark.asyncio
+async def test_read_of_a_file_exactly_at_the_cap_is_not_truncated(tmp_path) -> None:
+    target = tmp_path / "exact.txt"
+    target.write_bytes(b"e" * 100)
+    handler = _build_handler([tmp_path], max_read_bytes=100)
+    result = await handler.dispatch("read", {"path": str(target)}, _ctx())
+    payload = result.content[0]["data"]
+    assert payload["bytes"] == 100
+    assert payload["truncated"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_bytes", [-5, 0])
+async def test_max_bytes_below_one_clamps_to_one(tmp_path, max_bytes: int) -> None:
+    """#194: -5 used to slice the tail off and still say truncated."""
+    target = tmp_path / "abc.txt"
+    target.write_text("abcdef")
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch(
+        "read", {"path": str(target), "max_bytes": max_bytes}, _ctx()
+    )
+    assert result.is_error is False, result.error
+    payload = result.content[0]["data"]
+    assert payload["text"] == "a"
+    assert payload["bytes"] == 1
+    assert payload["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_within_range_is_honoured(tmp_path) -> None:
+    target = tmp_path / "abc.txt"
+    target.write_text("abcdef")
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch(
+        "read", {"path": str(target), "max_bytes": 3}, _ctx()
+    )
+    payload = result.content[0]["data"]
+    assert payload["text"] == "abc"
+    assert payload["truncated"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_bytes", ["abc", "10", 1.5, True, [10]])
+async def test_non_integer_max_bytes_is_refused_naming_the_field(
+    tmp_path, max_bytes: Any
+) -> None:
+    target = tmp_path / "abc.txt"
+    target.write_text("abcdef")
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch(
+        "read", {"path": str(target), "max_bytes": max_bytes}, _ctx()
+    )
+    assert result.is_error is True
+    assert "'max_bytes' must be an integer" in result.error
+
+
 # ---- write -------------------------------------------------------------
 
 
@@ -265,6 +367,68 @@ async def test_list_truncates_at_cap(tmp_path) -> None:
     payload = result.content[0]["data"]
     assert len(payload["entries"]) == 5
     assert payload["truncated"] is True
+
+
+
+@pytest.mark.asyncio
+async def test_list_is_sorted_by_name(tmp_path) -> None:
+    for name in ["c", "a", "e", "b", "d"]:
+        (tmp_path / name).write_text(name)
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch("list", {"path": str(tmp_path)}, _ctx())
+    payload = result.content[0]["data"]
+    assert [e["name"] for e in payload["entries"]] == ["a", "b", "c", "d", "e"]
+    assert payload["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_of_a_large_directory_stops_at_the_cap(
+    tmp_path, monkeypatch
+) -> None:
+    """#194: the scan pulls cap + 1 entries, not the whole directory."""
+    for i in range(2000):
+        (tmp_path / f"f{i:04d}").touch()
+    pulled = 0
+    real_scandir = os.scandir
+
+    class _CountingScandir:
+        def __init__(self, path: Any) -> None:
+            self._it = real_scandir(path)
+
+        def __enter__(self) -> _CountingScandir:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._it.close()
+
+        def __iter__(self) -> _CountingScandir:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal pulled
+            entry = next(self._it)
+            pulled += 1
+            return entry
+
+    monkeypatch.setattr(os, "scandir", _CountingScandir)
+    handler = _build_handler([tmp_path], max_list_entries=10)
+    result = await handler.dispatch("list", {"path": str(tmp_path)}, _ctx())
+    payload = result.content[0]["data"]
+    assert len(payload["entries"]) == 10
+    assert payload["truncated"] is True
+    names = [e["name"] for e in payload["entries"]]
+    assert names == sorted(names)
+    assert pulled == 11
+
+
+@pytest.mark.asyncio
+async def test_list_skips_a_dangling_symlink(tmp_path) -> None:
+    (tmp_path / "real").write_text("x")
+    (tmp_path / "dangling").symlink_to(tmp_path / "missing")
+    handler = _build_handler([tmp_path])
+    result = await handler.dispatch("list", {"path": str(tmp_path)}, _ctx())
+    payload = result.content[0]["data"]
+    assert [e["name"] for e in payload["entries"]] == ["real"]
 
 
 @pytest.mark.asyncio
