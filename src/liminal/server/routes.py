@@ -134,10 +134,17 @@ def build_router() -> APIRouter:
         dispatcher = getattr(request.app.state, "dispatcher", None)
         failed = getattr(dispatcher, "startup_failures", {}) if dispatcher else {}
         targets = {
-            name: failed.get(name) or getattr(target, "catalog_status", "ready")
+            name: failed.get(name)
+            or getattr(target, "config_status", None)
+            or getattr(target, "catalog_status", "ready")
             for name, target in (dispatcher.targets if dispatcher else {}).items()
         }
-        degraded = [n for n, s in targets.items() if s != "ready"]
+        # An unconfigured handler is shown (liminal#191) but does not make the
+        # gateway degraded: under auth a token's claims can supply the config the
+        # server lacks, so the server can't know the handler is unusable.
+        degraded = [
+            n for n, s in targets.items() if s != "ready" and not s.startswith("unconfigured")
+        ]
         return {
             "status": "degraded" if degraded else "ok",
             "targets": targets,

@@ -116,6 +116,16 @@ class MemoryConfig:
 class MemoryHandler:
     default_config: MemoryConfig = field(default_factory=MemoryConfig)
 
+    def status(self) -> str | None:
+        """liminal#191: with no default db every call without a per-persona
+        memory.db_path override is refused, so say so instead of ready."""
+        if self.default_config.db_path is not None:
+            return None
+        return (
+            "unconfigured: LIMINAL_MEMORY_DB is unset (only a token's memory.db_path "
+            "override can name a store)"
+        )
+
     def tools(self) -> list[ToolSpec]:
         return [
             ToolSpec(

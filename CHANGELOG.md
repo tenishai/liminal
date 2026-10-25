@@ -15,6 +15,16 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **`/healthz` says which handlers are unconfigured** (tenishai/liminal#191, partly). A
+  handler that refuses every call for want of server config reported "ready", and on dev04
+  14 of 25 advertised tools always refused. A handler may now define an optional
+  `status()`; `/healthz` shows its answer, e.g. `unconfigured: LIMINAL_FILES_ALLOWED_PATHS is
+  unset`, and startup logs `liminal.handler_unconfigured` for each. `files` and `memory`
+  implement it. It does not make the gateway degraded or `/readyz` fail, and the tools stay
+  listed, because under auth a token's claims can supply what the server lacks. cabal's
+  handlers do not implement it yet.
+- The auth-off startup banner no longer says only browser-origin and non-JSON requests are
+  refused; operator-only tools are refused too (tenishai/liminal#199).
 - **With auth off, each MCP session has its own scratchpad** (tenishai/liminal#192). Every
   auth-off caller is `anonymous`, so all sessions shared one bucket: one session's
   `scratchpad.set` overwrote another's, and any `scratchpad.clear` wiped everyone's. Under

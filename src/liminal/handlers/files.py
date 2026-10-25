@@ -195,6 +195,16 @@ class FilesHandler:
 
     default_config: FilesConfig = field(default_factory=FilesConfig)
 
+    def status(self) -> str | None:
+        """liminal#191: with no server allowlist every call without a token claim
+        is refused, so say so instead of reporting ready."""
+        if self.default_config.allowed_paths:
+            return None
+        return (
+            f"unconfigured: {ALLOWED_PATHS_ENV} is unset (only a token's "
+            "files.allowed_paths claim can grant paths)"
+        )
+
     def tools(self) -> list[ToolSpec]:
         return [
             ToolSpec(
