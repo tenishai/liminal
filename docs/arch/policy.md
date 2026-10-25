@@ -1,9 +1,9 @@
 ---
 card: arch-card:liminal-policy
-updated: 2026-10-13
+updated: 2026-10-25
 anchor: src/liminal/server/policy.py sha=802dcf8d5d7f301893dfab04237a114a514d1e90
 anchor: src/liminal/server/routes.py sha=929cf2cd79a2ba84eff7600f7e80b1a1cbf74de8
-anchor: src/liminal/server/admin.py sha=0b8d447b961ac79298d4a597699cfd5a156d9182
+anchor: src/liminal/server/admin.py sha=1a55e0d6b8a08ae68021d585651ed1c5b3cd783a
 anchor: src/liminal/server/app.py sha=61df18deaf0a7b0de0a9852cfc327273a71a57b5
 ---
 # policy — sovereign (multi-issuer) authorization
@@ -32,4 +32,4 @@ INVARIANTS:
 - All SQLite access serialized by an asyncio.Lock + to_thread on one connection.
 - Every pattern match on this boundary, and what it excludes (#93). (1) `resolve` falls back to persona `"*"` only within the SAME verified issuer and only among non-parent rows: it never matches another issuer's grant or a parent row. (2) `admin:*` satisfies every scope, `DENY_SCOPE` and `operator` included; it is held only by parent rows, which the data plane never resolves, or by an explicit grant. (3) Credentials (server/credentials.py) match nothing by pattern: the cache key is exact `(issuer, persona, handler)`. Note the fetch URL is `/admin/secrets/{persona}/{handler}` with no issuer, so two issuers' personas with the same name receive the same secrets from the one configured cabal; the cache keeps them apart but the source does not. (4) Federated tool scopes match exact `<target>.<tool>` names, then the target rule (app.py:scope_for); no globs. The three modules don't overlap: scopes.py holds constants only, policy.py decides authority, credentials.py fetches secrets for an identity policy has already admitted.
 CONSUMERS: server/routes.py (data plane), server/admin.py (`_admin_auth`: issuer in store.parents() AND resolve_parent has admin:*), handlers/files.py (`files:protected_writes` via ctx.granted_scopes + ctx.audit), cli.py (builds store from `--trust-registry`/`--policy-db`). Tests: test_policy_store.py, test_policy_inversion.py, test_multi_issuer_auth.py, test_federated_tool_scopes.py.
-API: admin routes (admin.py, parent-issuer token with admin:*): POST /admin/policy/grant {issuer, persona="*", scopes, allowed_handlers}, POST /admin/policy/revoke {issuer, persona}, GET /admin/policy, GET /admin/policy/audit. Mounted on the data app unless `--admin-port` moves it to create_admin_app (#74).
+API: admin routes (admin.py, parent-issuer token with admin:*): POST /admin/policy/grant {issuer, persona="*", scopes, allowed_handlers}, POST /admin/policy/revoke {issuer, persona}, GET /admin/policy, GET /admin/policy/audit; and for the `aws` handler's set-up page, GET /admin/aws/identity (the gateway's own Google OIDC claims, from a token minted for the purpose and never returned) and POST /admin/aws/probe {role_arn, audience?} (assume once as the calling admin persona; 400 with AWS's refusal). Mounted on the data app unless `--admin-port` moves it to create_admin_app (#74).

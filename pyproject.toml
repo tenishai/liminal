@@ -44,6 +44,9 @@ dev = [
 # Dev, and CI's manual integration job, use an editable techne instead:
 # `pip install -e ../techne`.
 memory = ["tenish-techne>=0.18.2"]
+# Enables the `aws` handler's STS and API calls (imported lazily; the handler
+# registers without it and refuses calls with a sentence naming this extra).
+aws = ["botocore>=1.35"]
 
 [project.scripts]
 liminal = "liminal.cli:main"
@@ -56,6 +59,7 @@ web        = "liminal.handlers.web:get_handler"
 files      = "liminal.handlers.files:get_handler"
 memory     = "liminal.handlers.memory:get_handler"
 notify     = "liminal.handlers.notify:get_handler"
+aws        = "liminal.handlers.aws:get_handler"
 
 [project.urls]
 Source = "https://github.com/tenishai/liminal"
