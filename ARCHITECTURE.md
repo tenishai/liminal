@@ -1,14 +1,14 @@
 ---
 card: repo-card:liminal
-updated: 2026-10-13
-anchor: pyproject.toml sha=8f818332466205e50af5c408a95372404e395371
+updated: 2026-10-25
+anchor: pyproject.toml sha=aa39cd42d96978afc8c604fbd8edd6aa46b247b9
 anchor: src/liminal/server/routes.py sha=929cf2cd79a2ba84eff7600f7e80b1a1cbf74de8
 ---
 # liminal — repo card
 
 WHAT: MCP gateway. One MCP-over-HTTP connection per agent; many backends behind it (in-process handlers discovered by entry point, plus federated HTTP MCP upstreams), with JWT auth, per-caller handler allowlists, and (sovereign mode) a server-side policy store. Renamed from `limenal` 2026-08; older issues and docs say limenal. The PyPI-style distribution name is `tenish-liminal` since v0.4.0 (`tenishai-liminal` in v0.3.0; pyproject `name`; `liminal.__version__` reads it); the import package and CLI stay `liminal`.
 STATE: main, v0.5.0 (pyproject), classifier Pre-Alpha, AGPL-3.0-or-later. CHANGELOG.md has an [Unreleased] section. Active area: federation hardening (multi-issuer trust, policy/admin plane, untrusted-target framing, #108/#110 protected writes, operator-only tools, SSE responses in the client #129/#131, static target `headers` #130, per-persona upstream sessions #172, parent-issuer demotion refusal #87). CHANGELOG [0.5.0] describes this release; later changes go under [Unreleased]. Tags cut by hand; bump pyproject in a PR, tag THAT merge commit (tests/test_version_tags.py; v0.2.0 once shipped reporting 0.1.0, #95).
-STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extra `[memory]` = `tenish-techne>=0.18.2` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree; the Dockerfile also pins TECHNE_WHEEL_SHA256, and scripts/check-techne-sibling.sh compares commits, run before a sibling-checkout build). Dockerfile present. `pip install -e ".[dev]"`.
+STACK: Python >=3.12, FastAPI + uvicorn, pydantic v2, joserfc (RS256 JWT), httpx, structlog, stdlib sqlite3 (policy DB only). Optional extras: `[aws]` = `botocore>=1.35` (the `aws` handler imports it lazily and refuses calls without it); `[memory]` = `tenish-techne>=0.18.2` (not on a public index; pair with requirements-sources.txt, which pins the git tag; tests/test_techne_pin.py fails if pyproject, requirements-sources.txt and the Dockerfile's TECHNE_VERSION disagree; the Dockerfile also pins TECHNE_WHEEL_SHA256, and scripts/check-techne-sibling.sh compares commits, run before a sibling-checkout build). Dockerfile present. `pip install -e ".[dev]"`.
 ENTRY:
 - CLI `liminal` → src/liminal/cli.py:main (`version`, `list-handlers [--cards]`, `serve`)
 - server factory → src/liminal/server/app.py:create_app (data plane) + create_admin_app (admin plane on `--admin-port`)
@@ -26,7 +26,7 @@ SEAMS → card:
 - client            src/liminal/client/mcp.py + library.py  (MCP client lib cabal imports)  → docs/arch/client.md
 - (uncarded) server/secret_guard.py: shape-based pre-dispatch scan of files.write/memory.commit/notify.send content; fail-closed, ON unless `LIMINAL_SECRET_GUARD` is falsey.
 - (uncarded) server/auth.py: JWTVerifier Protocol; URLJWKSVerifier (RS256 pin, iss/aud/exp/iat, needs `cabal_persona`|`persona` AND `sub`), MultiIssuerJWKSVerifier (peeks unverified `iss` only to pick keys).
-- (uncarded) handlers/: scratchpad (in-memory per (identity,agent)), files (empty allowlist default; `LIMINAL_FILES_ALLOWED_PATHS`, os.pathsep-separated absolute paths, is a GRANT for a caller with no `files.allowed_paths` claim and a CEILING for one that has the claim; `files.write` to protected paths, hard-linked files and `LIMINAL_FILES_PROTECTED_PATTERNS` matches is refused without `files:protected_writes`), web (host allowlist + private-range SSRF deny), memory (techne), notify (webhook transport).
+- (uncarded) handlers/: scratchpad (in-memory per (identity,agent)), files (empty allowlist default; `LIMINAL_FILES_ALLOWED_PATHS`, os.pathsep-separated absolute paths, is a GRANT for a caller with no `files.allowed_paths` claim and a CEILING for one that has the claim; `files.write` to protected paths, hard-linked files and `LIMINAL_FILES_PROTECTED_PATTERNS` matches is refused without `files:protected_writes`), web (host allowlist + private-range SSRF deny), memory (techne), notify (webhook transport), aws (read-only AWS through one IAM role per account trusting the gateway's own Google identity over OIDC; accounts from `[tool_extras."aws.roles"]`, an agent reaches `<name>` when its grant holds `<name>:read`; read verbs only, data-plane reads refused by name; admin routes /admin/aws/identity and /admin/aws/probe for a set-up page).
 
 DEPS:
 - cabal → liminal: cabal/src/cabal/core/tools/mcp_proxy.py lazily imports `liminal.client.AsyncMCPClient`; cabal's pyproject registers `patterns`/`documents`/`code`/`archivist` into the `liminal.handlers` group; cabal serves `GET /admin/secrets/{persona}/{handler}` and mints the JWTs liminal verifies (single-cabal defaults `--issuer cabal-core`, `--audience liminal`).
