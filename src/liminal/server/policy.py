@@ -142,7 +142,8 @@ class PolicyStore(Protocol):
         self, *, issuer: str, persona: str, agent: str | None, allowed: bool, detail: dict[str, Any]
     ) -> None: ...
     async def audit(
-        self, *, since: float | None = None, limit: int = 100
+        self, *, since: float | None = None, limit: int = 100,
+        persona: str | None = None, agent: str | None = None,
     ) -> list[AuditRow]: ...
     def parents(self) -> frozenset[str]: ...
 
@@ -470,21 +471,26 @@ class SqlitePolicyStore:
         await self._run(_op)
 
     async def audit(
-        self, *, since: float | None = None, limit: int = 100
+        self, *, since: float | None = None, limit: int = 100,
+        persona: str | None = None, agent: str | None = None,
     ) -> list[AuditRow]:
         def _q() -> list[AuditRow]:
+            where, args = [], []
             if since is not None:
-                rows = self._conn.execute(
-                    "SELECT ts, action, issuer, persona, agent, detail FROM policy_audit "
-                    "WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
-                    (since, limit),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT ts, action, issuer, persona, agent, detail FROM policy_audit "
-                    "ORDER BY ts DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+                where.append("ts >= ?")
+                args.append(since)
+            if persona is not None:
+                where.append("persona = ?")
+                args.append(persona)
+            if agent is not None:
+                where.append("agent = ?")
+                args.append(agent)
+            clause = (" WHERE " + " AND ".join(where)) if where else ""
+            rows = self._conn.execute(
+                "SELECT ts, action, issuer, persona, agent, detail FROM policy_audit"
+                + clause + " ORDER BY ts DESC LIMIT ?",
+                (*args, limit),
+            ).fetchall()
             return [
                 AuditRow(
                     ts=r["ts"],

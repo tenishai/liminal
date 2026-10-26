@@ -6,6 +6,19 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Added
+
+- **Every call that reaches a handler leaves one audit row** (for kobo's per-agent
+  activity view). The gateway used to record refusals only, so an allowed call left no
+  trace beyond the handler's own logs. Now each `tools/call` that a grant admitted writes an
+  `access_allow` row with `kind: call`, the handler and tool, a one-line argument summary
+  (keys in order, values clipped, anything named like a secret masked, 300 characters at
+  most), the outcome, the error's first 200 characters, the duration in milliseconds and
+  the inbound correlation id; and in every auth mode it logs one `tool.call` line with the
+  same fields. `GET /admin/policy/audit` takes `persona=` and `agent=` filters and caps
+  `limit` at 1000. Handlers that write their own rows (files) are unchanged; their rows
+  carry no `kind`.
+
 ## [0.6.0] — 2026-10-25
 
 ### Upgrading

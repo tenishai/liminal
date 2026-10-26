@@ -154,10 +154,12 @@ def build_admin_router() -> APIRouter:
         request: Request,
         since: float | None = None,
         limit: int = 100,
+        persona: str | None = None,
+        agent: str | None = None,
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         _claims, store = await _admin_auth(request, authorization)
-        rows = await store.audit(since=since, limit=limit)
+        rows = await store.audit(since=since, limit=min(max(limit, 1), 1000), persona=persona, agent=agent)
         return {
             "audit": [
                 {

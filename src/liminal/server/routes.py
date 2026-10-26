@@ -14,7 +14,10 @@ client that doesn't yet have a token can still complete the handshake.
 from __future__ import annotations
 
 import functools
+import re
 import secrets
+import time
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Header, Request, Response
@@ -49,6 +52,32 @@ from liminal.server.secret_guard import scan_tool_call
 from liminal.wire import to_spec_result_content as _to_spec_result_content
 
 log = structlog.get_logger(__name__)
+
+
+_SECRET_KEY = re.compile(r"(token|secret|password|passwd|api[_-]?key|authorization|credential|cookie)", re.I)
+_ARGS_MAX = 300
+
+
+def summarize_args(arguments: Any) -> str:
+    """The call's arguments as one short line for the audit row: keys in
+    order, values clipped, anything that looks like a secret masked, the
+    whole thing capped. Never the full payload: that is the handler's
+    business and may be large or sensitive."""
+    if not isinstance(arguments, dict) or not arguments:
+        return ""
+    parts = []
+    for key in sorted(arguments):
+        value = arguments[key]
+        if _SECRET_KEY.search(str(key)):
+            shown = "***"
+        elif isinstance(value, (dict, list)):
+            shown = f"<{type(value).__name__} of {len(value)}>"
+        else:
+            text = str(value).replace("\n", " ")
+            shown = text if len(text) <= 60 else text[:57] + "..."
+        parts.append(f"{key}={shown}")
+    line = " ".join(parts)
+    return line if len(line) <= _ARGS_MAX else line[: _ARGS_MAX - 3] + "..."
 
 
 PUBLIC_METHODS = {"initialize", "ping", "notifications/initialized"}
@@ -691,6 +720,7 @@ async def _handle_tools_call(
     )
 
     dispatcher: Multiplexer = request.app.state.dispatcher
+    started = time.perf_counter()
     try:
         tool_result = await dispatcher.dispatch(
             tool_name=params.name, payload=params.arguments, ctx=ctx
@@ -706,6 +736,30 @@ async def _handle_tools_call(
             id=rpc_req.id,
             code=ERROR_INVALID_PARAMS,
             message=str(exc),
+        )
+    # Every call that reached a handler leaves one trace: the log line for
+    # whoever tails the gateway, and under a grant an audit row beside the
+    # denials, so "what did this agent do" has one answer (kobo's per-agent activity view, 2026-10-25).
+    call = {
+        "kind": "call",
+        "handler": handler_name,
+        "tool": params.name,
+        "args": summarize_args(params.arguments),
+        "outcome": "error" if tool_result.is_error else "ok",
+        "ms": int((time.perf_counter() - started) * 1000),
+    }
+    if tool_result.is_error and tool_result.error:
+        call["error"] = tool_result.error[:200]
+    if inbound_cid:
+        call["correlation_id"] = inbound_cid[:200]
+    log.info(
+        "tool.call", persona=claims.identity, agent=claims.agent_name,
+        issuer=claims.issuer, **call,
+    )
+    if grant is not None and store is not None:
+        await store.record_access(
+            issuer=claims.issuer, persona=claims.identity,
+            agent=claims.agent_name, allowed=True, detail=call,
         )
 
     result = ToolCallResult(
