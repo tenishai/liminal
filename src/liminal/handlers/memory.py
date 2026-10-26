@@ -9,7 +9,7 @@ No credentials required.
 
 Architectural note: in Cabal, the Archivist persona already has direct
 techne access via its `memory_store`. This handler is for the *other*
-personas — Architect, Librarian, Rook subordinates — that want to read
+personas (Architect, Librarian and the rest) that want to read
 from and contribute to the same knowledge corpus through liminal's
 unified tool interface. The DB path is configurable per-persona via
 `ctx.extra["memory.db_path"]`, so personas can share or isolate as the

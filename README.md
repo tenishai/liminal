@@ -7,6 +7,24 @@ reach its tools: memory, web fetch, file I/O, notifications, and persona-specifi
 backends. Instead of every agent running N MCP server processes, agents connect
 to one liminal and liminal dispatches.
 
+New here, or asking an agent what this is? Run `liminal guide welcome`: it ships in
+the package and covers every mode, handler and extra with why you'd pick it.
+
+## Where this fits
+
+- **techne** (optional): backs the `memory` handler through the `[memory]` extra.
+- **cabal** (optional): mints the JWTs liminal verifies, serves per-persona secrets
+  (`--cabal-url`), and ships the `patterns`, `documents`, `code` and `archivist`
+  handlers through liminal's entry points. Its personas connect with `liminal.client`.
+- **daedalus** (optional consumer): uses liminal as an agent's tool provider
+  (`tools.provider: liminal`).
+- **kobo** (optional consumer): writes agents' grants, reads the call audit and runs
+  the AWS set-up checks on a sovereign liminal's `/admin/*` plane.
+- **gojira** (optional): deploys liminal from `gojira.yaml`.
+
+liminal runs without any of them: auth-off needs no issuer, and any RS256 JWT issuer
+can stand in for cabal.
+
 ## Status
 
 All handlers shipped, credential flow complete, MCP spec compliant, async-clean,
@@ -14,11 +32,15 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 
 ## What works
 
-- **5 built-in handlers** — `scratchpad` (per-agent ephemeral notes), `files`
+- **6 built-in handlers** — `scratchpad` (per-agent ephemeral notes), `files`
   (scoped read/write/list/exists with path-traversal defense), `web` (allowlisted
   HTTP fetch + SSRF DNS-rebinding defense via pinned-IP transport), `memory`
   (techne-backed knowledge recall + commit), `notify` (transport-agnostic
-  notifications; webhook in v1).
+  notifications; webhook in v1), `aws` (read-only AWS calls through an IAM role that
+  trusts the gateway's own Google identity; needs the `[aws]` extra).
+- **Call audit** — every `tools/call` that reaches a handler logs one `tool.call` line;
+  in sovereign mode it also writes an audit row, read with `GET /admin/policy/audit`
+  (`persona=`, `agent=`, `since=`, `limit=` up to 1000).
 - **JWT auth** — RS256 algorithm pin and `aud` enforcement on every authenticated
   method (`tools/list`, `tools/call`); `initialize` and `ping` need no token. In
   single-cabal mode (`--jwks-url`) the token must also hold the `dispatch` scope,
@@ -135,7 +157,7 @@ pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
 Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal
 personas) connects to. Handlers are **auto-discovered** from installed packages — install
 `cabal` alongside liminal and its `patterns` / `documents` / `code` / `archivist`
-handlers register automatically next to liminal's own five.
+handlers register automatically next to liminal's own six.
 
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
@@ -215,7 +237,7 @@ env. The generated CI passes the index token as a BuildKit secret
 src/liminal/
   protocol/        Handler Protocol, Context, ToolSpec, ToolResult, CapabilityCard
   registry/        Entry-point discovery + handler registration
-  dispatch/        In-process dispatcher
+  dispatch/        Multiplexer (handlers + federated targets), in-process dispatcher
   server/          MCP HTTP server (POST /mcp), JWT verifiers, credential resolver,
                    policy store, admin surface, secret guard
   target/          Federated targets — the machinery behind `--targets`
@@ -223,12 +245,16 @@ src/liminal/
   client/          LiminalClient protocol, LibraryLiminalClient (in-process),
                    ProxyLiminalClient (HTTP, wraps AsyncMCPClient), from_config,
                    MCPClient (sync) + AsyncMCPClient (async)
+  docs/            The guides `liminal guide` prints (welcome.md), shipped in the wheel
   wire.py          Wire-format helpers shared by the server and the library client
-scripts/           check-techne-sibling.sh (sibling techne matches the pinned tag)
+scripts/           check-techne-sibling.sh (sibling techne matches the pinned tag),
+                   check_arch_cards.py (cards match the files they anchor)
 tests/             pytest suite
 docs/
   design.md        The ORIGINAL proposal. The implementation has diverged —
                    read this README for what shipped.
+  writing-a-handler.md  What a handler author needs beyond the sketch below
+  arch/            Architecture cards, one per seam (indexed in ARCHITECTURE.md)
   proposals/       Design notes, not documentation of current behaviour
 ```
 
@@ -257,9 +283,9 @@ greet = "mypackage.greet:get_handler"
 ```
 
 That's the mechanism. Before you write a real handler, read
-[`docs/writing-a-handler.md`](docs/writing-a-handler.md) — four things
-(`ctx.extra`'s security contract, silent discovery failure, a scope-gating
-footgun, the testing convention) that this sketch doesn't cover and that
+[`docs/writing-a-handler.md`](docs/writing-a-handler.md) — the things
+(`ctx.extra`'s security contract, the optional `startup`/`shutdown`/`status`
+hooks, silent discovery failure, a scope-gating footgun, the testing convention) that this sketch doesn't cover and that
 you'd otherwise have to find in source.
 
 ## Using the MCP client

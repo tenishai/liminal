@@ -11,10 +11,10 @@ README or `docs/design.md`, because they only show up in source.
 Every shipped handler reads its own operator-supplied config out of
 `ctx.extra` under a `<handler>.<setting>` key: `files.allowed_paths`,
 `web.allowed_hosts`, `memory.db_path`, `notify.allowed_hosts`,
-`notify.webhook_url`, `notify.transport`. There's no registration step for
+`notify.webhook_url`, `notify.transport`, `aws.roles`. There's no registration step for
 this — a handler just reads `ctx.extra.get("<handler>.<setting>")` and falls
 back to its own default (usually the safe/closed one) if the key is absent.
-See `src/liminal/handlers/files.py`, `web.py`, `memory.py`, or `notify.py`
+See `src/liminal/handlers/files.py`, `web.py`, `memory.py`, `notify.py` or `aws.py`
 for the pattern in place.
 
 **Security contract.** `ctx.extra` is populated differently depending on auth
@@ -34,10 +34,16 @@ mode, and the difference matters if your handler uses `extra` to pick a
 
 In other words: `ctx.extra` is safe for a handler to trust as operator
 config, and a handler must not treat it as if the calling agent chose it.
-The one exception is `correlation_id`: routes.py copies it from the
-caller's `x-correlation-id` header (clamped to 200 characters) on every
-HTTP `tools/call`, so it is caller input. Use it as a trace tag only, never as a path,
-host or authorization input.
+Two keys are exceptions, because routes.py copies them from request headers, so
+they are caller input:
+
+- `correlation_id`, from `x-correlation-id` (clamped to 200 characters), on every
+  HTTP `tools/call`.
+- `mcp.session_id`, from `Mcp-Session-Id` (clamped to 128 characters), only under
+  `LIMINAL_AUTH_DISABLED=1` (#192). The scratchpad keys its buckets on it.
+
+Use them to tell callers or traces apart, never as a path, host or authorization
+input.
 
 ## `ctx.granted_scopes` and `ctx.audit` are for decisions the token must not make
 
@@ -49,6 +55,20 @@ policy grant, and it is empty in single-cabal, auth-off and library mode. Record
 the decision with `await ctx.audit(allowed=..., detail={...})` when `ctx.audit`
 is set (sovereign mode only; log it otherwise); it writes through `policy_store.record_access`, so it lands in the same
 audit log as the route's own gates.
+
+## Optional hooks: `startup()`, `shutdown()`, `status()`
+
+None of these is part of the `Handler` protocol; liminal calls each one only if the
+handler defines it (`src/liminal/target/inprocess.py`).
+
+- `async startup()` / `async shutdown()` run in the app lifespan. `web` uses them to open
+  and close a pooled HTTP client.
+- `status() -> str | None` says whether the handler can serve without per-caller
+  config. Return `None` when it can; otherwise return a sentence starting
+  `unconfigured:` that names what to set. `/healthz` shows it in place of `ready`, and
+  startup logs `liminal.handler_unconfigured` (#191). It does not mark the gateway
+  degraded, because a token's tool extras may still supply the config. `files` and
+  `memory` implement it. A `status()` that raises reads `status() failed: <type>`.
 
 ## Discovery is fail-open, and failure is silent
 
@@ -79,7 +99,7 @@ to accidentally loosen a tool below what the handler already declares.
 
 Every shipped handler has its own test module: `test_files_handler.py`,
 `test_memory_handler.py`, `test_notify_handler.py`, `test_web_handler.py`,
-`test_scratchpad.py`. There's no enforcement of this, but it's the
+`test_scratchpad.py`, `test_aws_handler.py`. There's no enforcement of this, but it's the
 expectation — a new handler should ship with its own `tests/test_<name>*.py`
 alongside it.
 
