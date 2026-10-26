@@ -6,6 +6,15 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-26
+
+### Upgrading
+
+- **The audit table grows with every admitted call.** It was refusals only; it is now one
+  row per `tools/call` a grant admitted. The ring buffer still prunes at 50k rows, so a busy
+  gateway keeps roughly its last few days; ship the `tool.call` log line to wherever logs
+  live for the long tail.
+
 ### Added
 
 - **Every call that reaches a handler leaves one audit row** (for kobo's per-agent
