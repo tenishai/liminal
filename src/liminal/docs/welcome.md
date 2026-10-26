@@ -103,8 +103,8 @@ lack of server config still lists its tools.
 | `notify` | `send`, `list_transports` | A webhook URL from the persona's cabal secret `NOTIFY_WEBHOOK_URL`, `notify.webhook_url` in tool extras, or `LIMINAL_NOTIFY_WEBHOOK_URL`. `LIMINAL_NOTIFY_ALLOWED_HOSTS` caps the hosts; `LIMINAL_NOTIFY_STDOUT=1` adds a log-only transport. | An agent should post to Slack, Discord, ntfy or any URL that takes a JSON POST. The URL must resolve to a public address. The stdout transport is off by default because it writes caller text into the server log. |
 | `aws` | `whoami`, `call` | The `[aws]` extra (botocore), a `[tool_extras."aws.roles".<name>]` table with `role_arn` (and optional `audience`) per account, and a Google identity for the gateway (GCP metadata server, or a token file in `LIMINAL_AWS_WEB_IDENTITY_TOKEN_FILE`). | Agents need read-only AWS answers without holding keys. Each call assumes the account's IAM role with the gateway's own OIDC token and tags the session with the agent's name. Only read verbs pass, and data reads such as `s3:GetObject` or `secretsmanager:GetSecretValue` are refused by name. In sovereign mode a grant reaches account `<name>` when it holds `<name>:read`; without a grant (single-cabal or auth-off) every configured account is reachable, and the role's trust policy is the wall. |
 
-The repo's Dockerfile installs liminal without the `[aws]` extra, so in that image
-every `aws.*` call refuses with a sentence naming the extra.
+The repo's Docker image includes the `[aws]` extra. A pip install without it makes every
+`aws.*` call refuse with a sentence naming the extra.
 
 `files`, `memory` and `notify` read their `LIMINAL_*` variables once, when the handler
 is first built at startup.
@@ -185,7 +185,10 @@ count as degraded, because a token's tool extras may still supply the config.
 
 ## How to install
 
-<!-- access: pending decision -->
+The tenishai repos are private for now. Installing from the git URLs below needs a GitHub
+account with read access to the tenishai organization, with git set up to use it (an SSH
+key, or a token through a credential helper); without that, the install fails at the git
+clone step. The tenish package index (pypi.tenish.ai) needs credentials too.
 
 From a tagged release:
 

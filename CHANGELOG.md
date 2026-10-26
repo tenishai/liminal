@@ -19,6 +19,9 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **The Docker image installs the `[aws]` extra**, so the `aws` handler can make calls in
+  liminal's own image. Before, every `aws.*` call there refused for want of botocore.
+
 - **Docs caught up with 0.6.0 and 0.7.0.** README and AGENTS.md counted five built-in
   handlers and left out `aws`; README now names it and the per-call audit, and has a
   "Where this fits" section. `docs/writing-a-handler.md` adds the `aws.roles` key, the
