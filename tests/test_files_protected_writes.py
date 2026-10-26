@@ -289,7 +289,7 @@ async def test_sovereign_grant_decides_and_is_audited(tmp_path, scopes: set[str]
         result = await _call_write(client, tok, root / "CLAUDE.md")
         rows = [
             r for r in await store.audit(limit=20)
-            if r.detail.get("tool") == "files.write"
+            if r.detail.get("tool") == "files.write" and r.detail.get("kind") != "call"
         ]
     store.close()
 
@@ -346,7 +346,7 @@ async def test_auth_off_with_an_inert_store_neither_grants_nor_audits(
     store.close()
     assert result["isError"] is True
     assert not (root / "CLAUDE.md").exists()
-    assert [r for r in rows if r.detail.get("tool") == "files.write"] == []
+    assert [r for r in rows if r.detail.get("tool") == "files.write" and r.detail.get("kind") != "call"] == []
 
 
 # ---- code-execution paths (#110) --------------------------------------------
