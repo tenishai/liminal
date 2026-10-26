@@ -53,8 +53,10 @@ starts but refuses every `tools/list` and `tools/call`.
 
 **When auth-off is acceptable.** Only on loopback. liminal does not check this: the
 default `--host` is `127.0.0.1`, but nothing stops `--host 0.0.0.0` with auth off, and
-then anyone who can reach the port has every tool. The startup log prints a
-`liminal.AUTH_DISABLED` warning so it is visible. Two guards stay on in every mode: `POST
+then anyone who can reach the port has every tool. The repo's Docker image runs
+`--host 0.0.0.0`, so under auth-off publish it only to loopback (`-p 127.0.0.1:9100:9100`)
+or don't use auth-off there. The startup log prints a `liminal.AUTH_DISABLED` warning so
+it is visible. Two guards stay on in every mode: `POST
 /mcp` refuses an `Origin` that is not loopback (403; allow more with
 `LIMINAL_ALLOWED_ORIGINS`, comma-separated) and any Content-Type other than
 `application/json` (415), so a web page in your browser cannot reach the tools. A page
@@ -99,7 +101,7 @@ lack of server config still lists its tools.
 | `web` | `fetch`, `head` | `web.allowed_hosts` in tool extras narrows it; the default is any public host. | An agent needs to read public web pages or JSON. Private, loopback, link-local, CGNAT and cloud-metadata addresses are refused on every resolved IP, and the connection is pinned to the IP that was checked. 1 MB, 15 s, text-like content types only. |
 | `memory` | `recall`, `commit` | The `[memory]` extra (techne), plus `LIMINAL_MEMORY_DB=/abs/path/memory.db`. A `memory.db_path` in tool extras may pick another file under that file's directory. | Agents should search and add to a shared techne knowledge store. Scopes `mem:query` and `mem:append` split read from write. |
 | `notify` | `send`, `list_transports` | A webhook URL from the persona's cabal secret `NOTIFY_WEBHOOK_URL`, `notify.webhook_url` in tool extras, or `LIMINAL_NOTIFY_WEBHOOK_URL`. `LIMINAL_NOTIFY_ALLOWED_HOSTS` caps the hosts; `LIMINAL_NOTIFY_STDOUT=1` adds a log-only transport. | An agent should post to Slack, Discord, ntfy or any URL that takes a JSON POST. The URL must resolve to a public address. The stdout transport is off by default because it writes caller text into the server log. |
-| `aws` | `whoami`, `call` | The `[aws]` extra (botocore), a `[tool_extras."aws.roles".<name>]` table with `role_arn` (and optional `audience`) per account, and a Google identity for the gateway (GCP metadata server, or a token file in `LIMINAL_AWS_WEB_IDENTITY_TOKEN_FILE`). | Agents need read-only AWS answers without holding keys. Each call assumes the account's IAM role with the gateway's own OIDC token and tags the session with the agent's name. Only read verbs pass, and data reads such as `s3:GetObject` or `secretsmanager:GetSecretValue` are refused by name. A grant reaches account `<name>` when it holds `<name>:read`. |
+| `aws` | `whoami`, `call` | The `[aws]` extra (botocore), a `[tool_extras."aws.roles".<name>]` table with `role_arn` (and optional `audience`) per account, and a Google identity for the gateway (GCP metadata server, or a token file in `LIMINAL_AWS_WEB_IDENTITY_TOKEN_FILE`). | Agents need read-only AWS answers without holding keys. Each call assumes the account's IAM role with the gateway's own OIDC token and tags the session with the agent's name. Only read verbs pass, and data reads such as `s3:GetObject` or `secretsmanager:GetSecretValue` are refused by name. In sovereign mode a grant reaches account `<name>` when it holds `<name>:read`; without a grant (single-cabal or auth-off) every configured account is reachable, and the role's trust policy is the wall. |
 
 The repo's Dockerfile installs liminal without the `[aws]` extra, so in that image
 every `aws.*` call refuses with a sentence naming the extra.

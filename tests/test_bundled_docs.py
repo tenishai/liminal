@@ -72,7 +72,7 @@ def test_guide_prints_the_file_verbatim(capsys) -> None:
 
 
 def test_an_unknown_guide_fails_and_names_the_valid_ones(capsys) -> None:
-    assert cli.main(["guide", "no-such-guide"]) != 0
+    assert cli.main(["guide", "no-such-guide"]) == 2
     err = capsys.readouterr().err
     assert "no-such-guide" in err
     for name in GUIDES:
