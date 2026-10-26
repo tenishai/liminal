@@ -6,13 +6,20 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-26
+
+### Upgrading
+
+- Nothing to run. The Docker image now also installs botocore, through the `[aws]`
+  extra. A pip install from git is unchanged unless you ask for `[aws]`.
+
 ### Added
 
 - **`liminal guide` prints the guides that ship in the package.** With no name it lists
   them; `liminal guide welcome` prints the welcome guide, which says what liminal is,
   which projects use it, and each auth mode, handler, extra, `LIMINAL_*` variable and
   endpoint with when to pick it and what it costs. An unknown name exits 2 and lists the
-  valid ones. The markdown lives in `src/liminal/docs/` and rides in the wheel as package
+  valid ones (#213). The markdown lives in `src/liminal/docs/` and rides in the wheel as package
   data, so an installed liminal can explain itself without the repo.
   `tests/test_bundled_docs.py` fails when a guide is missing from disk or from
   package-data, or when the welcome guide lacks a row for a built-in handler or extra.
@@ -20,7 +27,7 @@ Each line cites the pull request that made the change.
 ### Fixed
 
 - **The Docker image installs the `[aws]` extra**, so the `aws` handler can make calls in
-  liminal's own image. Before, every `aws.*` call there refused for want of botocore.
+  liminal's own image. Before, every `aws.*` call there refused for want of botocore (#213).
 
 - **Docs caught up with 0.6.0 and 0.7.0.** README and AGENTS.md counted five built-in
   handlers and left out `aws`; README now names it and the per-call audit, and has a
@@ -28,7 +35,7 @@ Each line cites the pull request that made the change.
   optional `startup`/`shutdown`/`status` hooks, and `mcp.session_id` as caller input
   beside `correlation_id`. The repo card said 0.7.0 was the aws release; `docs/design.md`'s
   health section now mentions `unconfigured:` handlers. `liminal serve --help` documents
-  `--host` and `--port`.
+  `--host` and `--port` (#213).
 
 ## [0.7.0] — 2026-10-26
 

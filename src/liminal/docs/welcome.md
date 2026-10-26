@@ -193,7 +193,7 @@ clone step.
 From a tagged release:
 
 ```bash
-pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@v0.7.0"
+pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@v0.7.1"
 ```
 
 With the memory handler, from a clone, so techne comes from its pinned tag:
