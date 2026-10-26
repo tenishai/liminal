@@ -188,7 +188,7 @@ count as degraded, because a token's tool extras may still supply the config.
 The tenishai repos are private for now. Installing from the git URLs below needs a GitHub
 account with read access to the tenishai organization, with git set up to use it (an SSH
 key, or a token through a credential helper); without that, the install fails at the git
-clone step. The tenish package index (pypi.tenish.ai) needs credentials too.
+clone step.
 
 From a tagged release:
 
