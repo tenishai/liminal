@@ -67,6 +67,13 @@ Source = "https://github.com/tenishai/liminal"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The guides `liminal guide` prints. They live inside the package because
+# setuptools ships package data only from there, and the Dockerfile copies only
+# src/. tests/test_bundled_docs.py checks every guide in liminal.docs.GUIDES
+# matches this glob.
+[tool.setuptools.package-data]
+"liminal.docs" = ["*.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

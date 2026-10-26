@@ -92,7 +92,7 @@ RUN --mount=type=secret,id=ar_token \
       echo "techne: pass --build-context techne=../techne or --build-arg EXTRA_INDEX_URL=… (see the techne stage)" >&2; exit 1; \
     fi \
  && mkdir -p src/liminal && touch src/liminal/__init__.py \
- && /venv/bin/pip install --no-cache-dir . \
+ && /venv/bin/pip install --no-cache-dir ".[aws]" \
  && rm -rf src build
 
 COPY src ./src

@@ -452,7 +452,7 @@ required_scope = "confluence:use"
 
 ### Health and readiness
 
-`GET /healthz` and `GET /readyz` return the same body: `{"status": "ok" | "degraded", "targets": {name: status}}`, where a target's status is `ready` or a fixed description of what failed (`catalog fetch failed (startup)`, `startup failed`, and so on; never upstream text, because neither path is authenticated). `/healthz` always answers 200 and is the liveness probe: restarting liminal doesn't fix a dead upstream. `/readyz` answers 503 while any target is degraded and is the readiness probe (liminal#159).
+`GET /healthz` and `GET /readyz` return the same body: `{"status": "ok" | "degraded", "targets": {name: status}}`, where a target's status is `ready` or a fixed description of what failed (`catalog fetch failed (startup)`, `startup failed`, and so on; never upstream text, because neither path is authenticated). An in-process handler that defines `status()` reads `unconfigured: <what to set>` while it lacks server config; that is shown but does not count as degraded (liminal#191). `/healthz` always answers 200 and is the liveness probe: restarting liminal doesn't fix a dead upstream. `/readyz` answers 503 while any target is degraded and is the readiness probe (liminal#159).
 
 ### Version handling
 

@@ -6,6 +6,10 @@ Instructions for AI coding agents working in this repo. Claude Code loads this v
 liminal is the tool gateway: handlers behind an MCP HTTP server, with JWT-scoped access
 and per-caller allowlists.
 
+To explain liminal to a person, or to check an option, run `liminal guide welcome`. It
+ships in the wheel (source: `src/liminal/docs/welcome.md`); when you change a mode,
+handler, extra or `LIMINAL_*` variable, update it in the same PR.
+
 ## Build, test, lint
 
 ```bash
@@ -91,9 +95,10 @@ src/liminal/
   dispatch/    In-process dispatcher, multiplexer
   server/      MCP HTTP server, JWT verifiers, policy store, admin, secret guard
   target/      Federated targets (the `--targets` machinery)
-  handlers/    THE EXTENSION SURFACE — scratchpad, files, web, memory, notify
+  handlers/    THE EXTENSION SURFACE — scratchpad, files, web, memory, notify, aws
   client/      LiminalClient, LibraryLiminalClient, ProxyLiminalClient, from_config;
                MCPClient (sync) + AsyncMCPClient (async)
+  docs/        The bundled guides `liminal guide` prints (package data)
   wire.py      Wire-format helpers shared by the server and the library client
 ```
 
