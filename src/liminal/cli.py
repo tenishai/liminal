@@ -1,6 +1,8 @@
-"""liminal CLI — `liminal version`, `liminal list-handlers`, `liminal serve`.
+"""liminal CLI — `liminal version`, `liminal list-handlers`, `liminal serve`,
+`liminal guide`.
 
-`serve` runs the MCP gateway (JSON-RPC over HTTP at `POST /mcp`).
+`serve` runs the MCP gateway (JSON-RPC over HTTP at `POST /mcp`). `guide`
+prints the guides that ship in the package; start with `liminal guide welcome`.
 """
 
 from __future__ import annotations
@@ -131,6 +133,27 @@ def _env(name: str, fallback: str | None = None) -> str | None:
     return value if value else fallback
 
 
+def _guide(name: str | None) -> int:
+    """Print one bundled guide as raw markdown, or list them. An agent is the
+    expected reader, so the output is meant to be read into context as is."""
+    from liminal.docs import GUIDES, bundled_guide
+
+    if not name:
+        print("Bundled guides (`liminal guide <name>`):\n")
+        for n, line in GUIDES.items():
+            print(f"  {n:<12}  {line}")
+        return 0
+    try:
+        print(bundled_guide(name), end="")
+    except KeyError:
+        print(
+            f"error: no bundled guide named {name!r}. Valid: {', '.join(GUIDES)}",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="liminal", description=__doc__)
     sub = parser.add_subparsers(dest="cmd")
@@ -141,9 +164,21 @@ def main(argv: list[str] | None = None) -> int:
         "--cards", action="store_true", help="Also print each handler's capability card"
     )
 
+    guide_p = sub.add_parser(
+        "guide", help="List the bundled guides, or print one (start with `welcome`)"
+    )
+    guide_p.add_argument("name", nargs="?", help="Guide to print; omit to list them")
+
     serve_p = sub.add_parser("serve", help="Run the MCP HTTP server")
-    serve_p.add_argument("--host", default="127.0.0.1")
-    serve_p.add_argument("--port", type=int, default=9100)
+    serve_p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Bind address (default 127.0.0.1). 0.0.0.0 listens on every interface; "
+            "never pair that with LIMINAL_AUTH_DISABLED=1."
+        ),
+    )
+    serve_p.add_argument("--port", type=int, default=9100, help="Bind port (default 9100).")
     serve_p.add_argument(
         "--jwks-url",
         default=_env("LIMINAL_JWKS_URL"),
@@ -257,6 +292,9 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"liminal {__version__}")
         return 0
+
+    if args.cmd == "guide":
+        return _guide(args.name)
 
     if args.cmd == "list-handlers":
         from liminal.registry import discover_handlers
