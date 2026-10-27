@@ -6,6 +6,8 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-10-27
+
 ### Fixed
 
 - **The `aws` handler never completed a real assume** (#217). `AssumeRoleWithWebIdentity`
