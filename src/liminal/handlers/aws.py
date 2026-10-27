@@ -4,8 +4,9 @@ No access key anywhere. The owner creates one IAM role per connected account
 (tenishai/cloud-access: `KoboAccess-Role`, read-only packs) whose trust policy
 names the gateway's own Google service account through OIDC. Per call the
 gateway mints a Google ID token for itself, trades it for a one-hour session
-with `AssumeRoleWithWebIdentity`, tags the session with the agent's name as its
-`SourceIdentity` (so CloudTrail says which agent did what), and runs the
+with `AssumeRoleWithWebIdentity`, names the session after the agent (`kobo-<agent>`,
+which CloudTrail records in the assumed-role ARN, so it says which agent did
+what; that API takes no SourceIdentity), and runs the
 requested read with it. Sessions are cached per (account, agent).
 
 Which accounts exist is operator config in the trust registry, read from
@@ -61,7 +62,7 @@ METADATA_IDENTITY_URL = (
 TOKEN_FILE_ENV = "LIMINAL_AWS_WEB_IDENTITY_TOKEN_FILE"
 
 _ROLE_ARN = re.compile(r"^arn:aws[a-z-]*:iam::\d{12}:role/[\w+=,.@/-]+$")
-# RoleSessionName and SourceIdentity: [\w+=,.@-], 2..64 chars.
+# RoleSessionName: [\w+=,.@-], 2..64 chars.
 _SESSION_NAME_BAD = re.compile(r"[^\w+=,.@-]")
 
 READ_VERBS = (
@@ -209,12 +210,12 @@ def identity_from_token(token: str) -> dict[str, str]:
 # ---- STS + the read itself (botocore, in a thread) ----------------------------
 
 
-def _assume_sync(role: RoleSpec, token: str, name: str, source_identity: str) -> AwsSession:
+def _assume_sync(role: RoleSpec, token: str, name: str) -> AwsSession:
     try:
         import botocore.session
         from botocore import UNSIGNED
         from botocore.config import Config
-        from botocore.exceptions import ClientError
+        from botocore.exceptions import BotoCoreError, ClientError
     except ImportError as exc:  # pragma: no cover - the [aws] extra is missing
         raise AwsError("botocore is not installed; install liminal with the [aws] extra") from exc
     sts = botocore.session.get_session().create_client(
@@ -226,7 +227,6 @@ def _assume_sync(role: RoleSpec, token: str, name: str, source_identity: str) ->
             RoleSessionName=name,
             WebIdentityToken=token,
             DurationSeconds=SESSION_SECONDS,
-            SourceIdentity=source_identity,
         )
     except ClientError as exc:
         err = exc.response.get("Error", {})
@@ -234,6 +234,8 @@ def _assume_sync(role: RoleSpec, token: str, name: str, source_identity: str) ->
             f"AWS refused the role {role.role_arn}: {err.get('Code', 'error')} "
             f"{err.get('Message', '')}".strip()
         ) from exc
+    except BotoCoreError as exc:
+        raise AwsError(f"the STS call failed before it left the gateway: {exc}") from exc
     creds = resp["Credentials"]
     return AwsSession(
         access_key=creds["AccessKeyId"],
@@ -271,8 +273,8 @@ def _invoke_sync(session: AwsSession, service: str, action: str, params: dict, r
         raise AwsError(f"{service}:{action} failed: {exc}") from exc
 
 
-async def assume_role(role: RoleSpec, token: str, name: str, source_identity: str) -> AwsSession:
-    return await anyio.to_thread.run_sync(_assume_sync, role, token, name, source_identity)
+async def assume_role(role: RoleSpec, token: str, name: str) -> AwsSession:
+    return await anyio.to_thread.run_sync(_assume_sync, role, token, name)
 
 
 async def invoke(session: AwsSession, service: str, action: str, params: dict, region: str) -> Any:
@@ -285,7 +287,7 @@ async def probe(role_arn: str, audience: str = DEFAULT_AUDIENCE, *, who: str = "
         raise AwsError(f"{role_arn!r} is not an IAM role ARN")
     role = RoleSpec(integration="probe", role_arn=role_arn, audience=audience or DEFAULT_AUDIENCE)
     token = await web_identity_token(role.audience)
-    session = await assume_role(role, token, session_name("probe-", who), session_name("", who))
+    session = await assume_role(role, token, session_name("probe-", who))
     return {"account": session.account, "arn": session.assumed_arn, "role_arn": role_arn}
 
 
@@ -367,9 +369,7 @@ class AwsHandler:
         if cached is not None and cached.role == role and cached.fresh(self.now()):
             return cached
         token = await self.token_source(role.audience)
-        session = await self.assume(
-            role, token, session_name("kobo-", ctx.agent_name), session_name("", ctx.agent_name)
-        )
+        session = await self.assume(role, token, session_name("kobo-", ctx.agent_name))
         self._sessions[key] = session
         log.info("aws.assumed", account=session.account, agent=ctx.agent_name, role=role.role_arn)
         return session
