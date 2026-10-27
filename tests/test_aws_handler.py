@@ -35,8 +35,8 @@ def _handler(clock: list[float] | None = None):
     async def token(aud: str) -> str:
         return f"token-for-{aud}"
 
-    async def assume(role: RoleSpec, token: str, name: str, source: str) -> AwsSession:
-        calls.append(("assume", role.integration, token, name, source))
+    async def assume(role: RoleSpec, token: str, name: str) -> AwsSession:
+        calls.append(("assume", role.integration, token, name))
         return AwsSession("AK", "SK", "ST", clock[0] + 3600, f"arn:aws:sts::{role.account}:assumed-role/KoboAccess-Role/{name}", role)
 
     async def invoke(session: AwsSession, service: str, action: str, params: dict, region: str):
@@ -83,8 +83,9 @@ async def test_the_lane_picks_the_account_and_the_session_is_tagged_and_cached()
     assert body == {"Reservations": []}
     assumes = [c for c in calls if c[0] == "assume"]
     assert len(assumes) == 1, "two calls, one assume: the session is cached"
-    _, integration, token, name, source = assumes[0]
-    assert (integration, token, name, source) == ("aws", "token-for-sts.amazonaws.com", "kobo-sherlock-primus", "sherlock-primus")
+    _, integration, token, name = assumes[0]
+    # The agent rides in the session name; AssumeRoleWithWebIdentity has no SourceIdentity.
+    assert (integration, token, name) == ("aws", "token-for-sts.amazonaws.com", "kobo-sherlock-primus")
     assert calls[-1] == ("invoke", "123456789012", "ec2", "DescribeInstances", {}, "us-west-2")
     # Near expiry the next call assumes again.
     clock[0] += 3400

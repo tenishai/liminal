@@ -6,6 +6,16 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `aws` handler never completed a real assume** (#217). `AssumeRoleWithWebIdentity`
+  takes no `SourceIdentity` parameter (that belongs to `AssumeRole`), and botocore refused
+  it before the call left the gateway, so every `call` and `whoami` failed with a 500 once a
+  role was configured. The agent's name now travels only in `RoleSessionName`
+  (`kobo-<agent>`), which CloudTrail records in the assumed-role ARN. A client-side botocore
+  failure is now an `AwsError` the agent can read instead of a traceback. Found when the
+  same code made its first live call from bab.
+
 ## [0.7.1] — 2026-10-26
 
 ### Upgrading
