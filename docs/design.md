@@ -396,6 +396,22 @@ auth_method    = "service-token"
 credential_key = "VENDOR_TOKEN"
 session        = "per-persona"
 
+# Key pair in named headers, leased per persona (Datadog's hosted MCP server).
+# Every call carries the calling persona's own keys; the catalog fetch, which no
+# persona makes, carries the gateway's shared pair from its env.
+[[target]]
+name           = "datadog-mcp"
+address        = "https://mcp.us3.datadoghq.com/v1"
+auth_method    = "service-headers"
+session        = "per-persona"
+required_scope = "datadog:read"
+[target.credential_headers]
+DD_API_KEY         = "DD_API_KEY"
+DD_APPLICATION_KEY = "DD_APP_KEY"
+[target.catalog_headers_env]
+DD_API_KEY         = "DD_API_KEY"
+DD_APPLICATION_KEY = "DD_APP_KEY"
+
 # Scope-gated target, DENY-BY-DEFAULT (liminal#78).
 # NOTE there is no target-level `required_scope` here. That is deliberate --
 # see the precedence note below; adding one would DISABLE deny-by-default.
@@ -437,11 +453,13 @@ required_scope = "confluence:use"
 | `trust` | no | `"untrusted"` | `"trusted"` or `"untrusted"`. |
 | `on_untrusted` | no | `"flag"` | `"flag"`, `"strip"`, or `"block"` — how to handle suspicious tools from untrusted targets. |
 | `identity` | no | `"none"` | `"forward"` (http only) sends caller persona as headers. Rejected for stdio. |
-| `auth_method` | no | `"none"` | `"bearer"`, `"service-token"`, or `"none"`. |
+| `auth_method` | no | `"none"` | `"bearer"`, `"service-token"`, `"service-headers"`, or `"none"`. |
 | `bearer_token` | if bearer, unless `bearer_token_env` | — | Static credential, inline. Sent on every call (`initialize` included), encoded per `auth_scheme`. Mutually exclusive with `bearer_token_env`. |
 | `bearer_token_env` | if bearer, unless `bearer_token` | — | Name of an env var holding the static credential, read when the target starts. Keeps the secret out of a reviewed, image-baked config file. Unset or empty fails the target's startup with an error naming the variable. Refused at load unless `auth_method = "bearer"`. |
 | `auth_scheme` | no | `"bearer"` | How the credential rides `Authorization`, for `bearer` and `service-token` alike. `"bearer"`: `Bearer <value>`. `"basic"`: the value is `user:secret` and is sent as `Basic base64(user:secret)`; store the readable form, not a pre-encoded one. `"basic"` needs `auth_method` `"bearer"` or `"service-token"`. |
 | `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
+| `credential_headers` | if service-headers | — | Table of header name → `ctx.credentials` key (http only). Every call sends every header, built fresh from the calling persona's credentials; a missing or blank credential for any of them is a refusal, never a call without it. Names are checked like `headers` (valid field names, case-insensitive, none reserved) and may not repeat a static `headers` name. Refused at load unless `auth_method = "service-headers"`. For upstreams that authenticate with a key pair rather than `Authorization`, such as Datadog's hosted MCP server (`DD_API_KEY`, `DD_APPLICATION_KEY`). |
+| `catalog_headers_env` | no | `{}` | Table of header name → env var name (http only; with `service-token` or `service-headers`). Read when the target starts like `bearer_token_env` (unset or empty fails the target's startup, naming the variable) and sent on the catalog client's requests alone: `initialize` and `tools/list`. Never on a persona's call or session, so a shared catalog credential cannot ride an agent's request. For upstreams that refuse an unauthenticated catalog while every persona call carries its own leased credential. |
 | `timeout_seconds` | no | `30.0` | Per-call timeout. |
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |

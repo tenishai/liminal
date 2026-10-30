@@ -235,6 +235,22 @@ class HttpTarget(Target):
 
     # ---- lifecycle --------------------------------------------------------
 
+    def _catalog_headers(self) -> dict[str, str]:
+        """``catalog_headers_env`` resolved, at startup, for the catalog client
+        alone. A named variable that is unset, empty or whitespace-only is a
+        wiring error like ``bearer_token_env``'s: it raises, naming the
+        variable, before anything is opened or sent."""
+        resolved: dict[str, str] = {}
+        for hname, env_name in self.spec.catalog_headers_env.items():
+            value = (os.environ.get(env_name) or "").strip()
+            if not value:
+                raise RuntimeError(
+                    f"target {self.spec.name!r}: catalog_headers_env[{hname!r}] "
+                    f"${env_name} is unset or empty"
+                )
+            resolved[hname] = value
+        return resolved
+
     def _static_token(self) -> str:
         """The static credential for ``auth_method="bearer"``, else ``""``.
 
@@ -259,6 +275,7 @@ class HttpTarget(Target):
         # Resolve the static credential first so an unset bearer_token_env
         # fails before a client is built or a request leaves.
         base_token = self._static_token()
+        catalog_headers = self._catalog_headers()
         if self._http_client is None:
             # The owned client REJECTS every cookie (liminal#76): dispatches
             # for different personas share this one client, and an upstream
@@ -288,21 +305,23 @@ class HttpTarget(Target):
 
         self._base_token_provider = _base_token_provider
         # With session="per-persona" this client's session is the catalog
-        # fetch's alone: dispatches go through _call_in_session instead.
-        self._client = self._new_client()
+        # fetch's alone: dispatches go through _call_in_session instead. The
+        # catalog headers ride this client only; a persona's session client
+        # (_call_in_session) never carries them.
+        self._client = self._new_client(static_headers={**self.spec.headers, **catalog_headers})
 
         await self._refresh_tools_once(initialize=True)
 
         if self.spec.refresh_tools_interval_seconds > 0:
             self._refresh_task = asyncio.create_task(self._refresh_loop())
 
-    def _new_client(self) -> AsyncMCPClient:
+    def _new_client(self, *, static_headers: dict[str, str] | None = None) -> AsyncMCPClient:
         return AsyncMCPClient(
             base_url=self.spec.address,
             token_provider=self._base_token_provider,
             http_client=self._http_client,
             client_name=self.spec.client_name,
-            static_headers=self.spec.headers,
+            static_headers=self.spec.headers if static_headers is None else static_headers,
             auth_scheme=self.spec.auth_scheme,
             use_session=self.spec.session == "per-persona",
         )
@@ -399,6 +418,18 @@ class HttpTarget(Target):
             if not token:
                 raise _MissingCredential(key or "(no credential_key configured)")
             headers["Authorization"] = _authorization(self.spec.auth_scheme, token)
+
+        # service-headers auth — the same rule, one header per credential key:
+        # every named header is built fresh from this call's credentials, and
+        # any one of them missing or blank refuses the call (liminal#80). The
+        # catalog's shared headers are on the catalog client only, so a
+        # persona's call never falls back to them.
+        if self.spec.auth_method == "service-headers":
+            for hname, key in self.spec.credential_headers.items():
+                value = (ctx.credentials.get(key) or "").strip()
+                if not value:
+                    raise _MissingCredential(key)
+                headers[hname] = value
 
         # #27 correlation-id — carry an inbound one or generate, persist on the
         # context, and forward on every call for end-to-end traceability.
