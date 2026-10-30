@@ -73,6 +73,21 @@ class Multiplexer:
     def targets(self) -> dict[str, Target]:
         return dict(self._targets)
 
+    def add_target(self, target: Target) -> Target | None:
+        """Register (or replace) a target under its name while serving
+        (liminal#222). The caller has started it; the one it replaces is
+        returned for the caller to shut down. Any startup failure recorded
+        for the name is cleared: it described the old target."""
+        old = self._targets.get(target.name)
+        self._targets[target.name] = target
+        self.startup_failures.pop(target.name, None)
+        return old
+
+    def remove_target(self, name: str) -> Target | None:
+        """Unregister a target while serving; the caller shuts it down."""
+        self.startup_failures.pop(name, None)
+        return self._targets.pop(name, None)
+
     async def startup(self) -> None:
         """Start every target in registration order.
 

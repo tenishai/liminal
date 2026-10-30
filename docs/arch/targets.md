@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-targets
 updated: 2026-10-30
-anchor: src/liminal/dispatch/multiplexer.py sha=b82ba7db1212274afbf3b019dc7a2a1e8a7304ed
+anchor: src/liminal/dispatch/multiplexer.py sha=49d3ff34623d81034881ab9bc00c9cce18b10970
 anchor: src/liminal/target/http.py sha=97b96bb56d3451f90830803448bd556e8f926fe3
 anchor: src/liminal/target/config.py sha=80f072f4f29b63297f6cfe256d6de754be0527b7
 anchor: src/liminal/target/inspect.py sha=ac28df939b131dac9756622c02e0a78a98ea15a0
@@ -25,6 +25,7 @@ INVARIANTS:
 - Unsanitizable upstream content → refusal ToolResult naming target and cause, not an exception.
 - A target that raises → `ToolResult.failure("<target>.<tool> raised <Class> (error id <8 hex>)")` via `raised_failure` (dispatch/local.py, shared with InProcessDispatcher). The same id is on the `multiplexer.target_raised` / `dispatch.handler_raised` log line with the exception message; the message never reaches the caller (#193; tests/test_dispatch_error_id.py). Not yet the per-request correlation id of #27.
 - Owned httpx client rejects all cookies (#76).
+- Live targets (#222): `Multiplexer.add_target(target)` registers or replaces under the target's name while serving (returns the old target for the caller to shut down; clears its startup_failures entry) and `remove_target(name)` unregisters; only server/live_targets.py calls them (see policy.md LIVE TARGETS). Names of handlers and file targets are reserved against live ones, so the `tool_name.split('.')[0]` authz key stays unambiguous.
 - Target scopes are operator config only (see policy.md); declaring tool_scopes makes the target deny-by-default.
-CONSUMERS: server/app.py:create_app (builds all targets), server/routes.py (dispatch, /healthz, /readyz, `_meta`). Tests: test_http_target.py, test_untrusted_result_framing.py, test_catalog_depth_bound.py, test_cli_targets.py, test_tool_extras_forwarding.py, test_basic_auth_scheme.py, test_stateful_upstream.py, test_target_header_validation.py, test_readyz.py, test_service_headers.py.
+CONSUMERS: server/app.py:create_app (builds all targets), server/live_targets.py (adds/replaces/removes HttpTargets at runtime, #222), server/routes.py (dispatch, /healthz, /readyz, `_meta`). Tests: test_http_target.py, test_untrusted_result_framing.py, test_catalog_depth_bound.py, test_cli_targets.py, test_tool_extras_forwarding.py, test_basic_auth_scheme.py, test_stateful_upstream.py, test_target_header_validation.py, test_readyz.py, test_service_headers.py.
 API: `liminal.target` exports HttpTarget, InProcessTarget, Target, TargetConfigError, TargetSpec, TrustTier, build_http_targets, inspect_catalog, load_target_specs, scan_tool; `liminal.dispatch` exports Multiplexer, InProcessDispatcher, DispatchError, UnknownTool.

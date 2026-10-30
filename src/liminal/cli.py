@@ -607,6 +607,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+        # Live targets (liminal#222): with a policy DB, the admin plane can add,
+        # replace and remove federated targets while serving; they persist in
+        # that database and come back at boot. The targets file stays the seed.
+        live_targets = None
+        if policy_store is not None:
+            from liminal.server.live_targets import LiveTargets, LiveTargetStore
+
+            live_targets = LiveTargets(LiveTargetStore(args.policy_db))
+            print(
+                "targets: live targets enabled (PUT/DELETE /admin/targets/<name>, "
+                f"stored in {args.policy_db})",
+                file=sys.stderr,
+            )
+
         try:
             app = create_app(
                 jwt_verifier=verifier,
@@ -617,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
                 policy_tool_extras=policy_tool_extras,
                 targets=targets,
                 mount_admin=args.admin_port is None,
+                live_targets=live_targets,
             )
         except TargetConfigError as exc:
             print(f"error: --targets: {exc}", file=sys.stderr)
@@ -638,7 +653,7 @@ def main(argv: list[str] | None = None) -> int:
             from liminal.server import create_admin_app
 
             admin_app = create_admin_app(
-                jwt_verifier=verifier, policy_store=policy_store
+                jwt_verifier=verifier, policy_store=policy_store, live_targets=live_targets
             )
             print(
                 f"admin surface: own listener on "

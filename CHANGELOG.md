@@ -6,6 +6,29 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-30
+
+### Upgrading
+
+- Nothing to run. With `--policy-db` the gateway creates a `live_targets` table in that
+  database on first boot. Without a policy DB nothing changes.
+
+### Added
+
+- **Targets through the admin plane** (#222, #223). `PUT /admin/targets/{name}` with a
+  `[[target]]` body (the same keys the targets file takes, minus `name`), `DELETE
+  /admin/targets/{name}` and `GET /admin/targets`, for the same parent admin personas
+  the policy routes take. A PUT validates the spec, starts the target (catalog fetch
+  included), lets it take the name and shuts down the one it replaced; a DELETE shuts
+  it down and drops it; both persist in the policy database so the target comes back
+  at the next boot. `targets.toml` stays the seed and keeps its names: a live target
+  may not take a handler's or a file target's name (409), and a stored row the file
+  later shadows is skipped with a warning, never a boot failure. No secret travels in
+  a spec (`bearer_token` is refused; env variable names and per-call credentials are
+  the ways in). `required_scope` and `tool_scopes` on a live target are enforced like a
+  file target's. A room that connects a vendor can now add its MCP server to the
+  gateway the moment the credential is accepted, with no pull request and no redeploy.
+
 ## [0.8.0] — 2026-10-30
 
 ### Upgrading

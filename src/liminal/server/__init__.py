@@ -24,6 +24,7 @@ from liminal.server.credentials import (
     CabalCoreCredentialResolver,
     CredentialResolver,
 )
+from liminal.server.live_targets import LiveTargets, LiveTargetStore
 from liminal.server.mcp_types import (
     InitializeParams,
     InitializeResult,
@@ -66,6 +67,8 @@ __all__ = [
     "PolicyStore",
     "ScopeGrant",
     "SqlitePolicyStore",
+    "LiveTargetStore",
+    "LiveTargets",
     "StaticKeySetVerifier",
     "ToolCallParams",
     "ToolCallResult",

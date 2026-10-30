@@ -67,7 +67,11 @@ its own scratchpad, and one that doesn't shares a single bucket.
 **Sovereign registry shape.** A top-level `service_audience`, then `[[issuer]]` tables
 with `id` and `jwks_uri`. Exactly one sets `parent = true`, and it must list
 `admin_personas`; serve exits 2 without them. Those personas, with a token from the
-parent issuer, are the only callers of `/admin/*`: grant, revoke, list and audit.
+parent issuer, are the only callers of `/admin/*`: grant, revoke, list and audit, and
+the live targets: `PUT /admin/targets/<name>` with a `[[target]]` body (minus `name`)
+adds or replaces a federated target while serving, `DELETE` removes it, `GET
+/admin/targets` lists live and file targets. Live targets persist in the policy
+database and come back at boot; the targets file stays the seed and keeps its names.
 `--admin-port` moves `/admin/*` to its own listener (bind with `--admin-host`, default
 `127.0.0.1`) so a network policy can fence it. Without it the admin routes share the
 data port, and liminal warns at startup.
