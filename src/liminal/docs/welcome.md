@@ -127,7 +127,14 @@ auth mode.
   server you run.
 - `auth_method = "bearer"` sends a static token (`bearer_token` or `bearer_token_env`,
   `auth_scheme = "basic"` for Basic auth). `"service-token"` sends the calling persona's
-  own cabal secret named by `credential_key`, so each persona authenticates as itself.
+  own credential named by `credential_key` on `Authorization`, so each persona
+  authenticates as itself. `"service-headers"` does the same for upstreams that want a
+  key pair in named headers instead: `[target.credential_headers]` maps each header name
+  to a key in the persona's credentials (Datadog's hosted MCP server takes `DD_API_KEY`
+  and `DD_APPLICATION_KEY`). A call missing any of them is refused, never sent bare.
+- `[target.catalog_headers_env]` (with `service-token` or `service-headers`) names env
+  variables whose values ride the catalog fetch alone (`initialize`, `tools/list`), for
+  upstreams that refuse an unauthenticated catalog. They never ride a persona's call.
 - `identity = "forward"` sends `x-liminal-persona` and `x-liminal-issuer`.
 - `session = "per-persona"` holds one upstream session per caller, for servers that
   require `Mcp-Session-Id`.

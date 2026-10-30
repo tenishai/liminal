@@ -24,15 +24,30 @@ One ``TargetSpec`` describes one federated target:
     [target.headers]             # static request headers (http only, liminal#130)
     X-MCP-Readonly = "true"
 
+    # auth_method = "service-headers": the calling persona's credentials ride
+    # as named headers, one per entry (header name -> ctx.credentials key),
+    # for upstreams that want a key pair rather than Authorization.
+    [target.credential_headers]
+    DD_API_KEY = "DD_API_KEY"
+    DD_APPLICATION_KEY = "DD_APP_KEY"
+
+    # Headers for the catalog fetch alone (initialize + tools/list), read from
+    # the named env vars at startup; never on a persona's call.
+    [target.catalog_headers_env]
+    DD_API_KEY = "DD_API_KEY"
+    DD_APPLICATION_KEY = "DD_APP_KEY"
+
 Validation is loud (``TargetConfigError``, a ``ValueError``) — No Silent
 Failures. In particular a ``stdio`` target that asks for per-request identity
-(``identity="forward"`` or ``auth_method="service-token"``) is rejected: stdio
+(``identity="forward"``, ``auth_method="service-token"`` or
+``"service-headers"``) is rejected: stdio
 children discard per-request headers, so they are identity-agnostic only (the
 hard constraint from the agentgateway eval / fold-in #13).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
@@ -40,7 +55,7 @@ Transport = Literal["http", "stdio"]
 Trust = Literal["trusted", "untrusted"]
 OnUntrusted = Literal["flag", "strip", "block"]
 Identity = Literal["forward", "none"]
-AuthMethod = Literal["bearer", "service-token", "none"]
+AuthMethod = Literal["bearer", "service-token", "service-headers", "none"]
 AuthScheme = Literal["bearer", "basic"]
 Session = Literal["none", "per-persona"]
 
@@ -81,6 +96,10 @@ RESERVED_HEADERS = frozenset({
 })
 
 
+# An environment variable name, for ``catalog_headers_env`` values.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 class TargetConfigError(ValueError):
     """Raised for an invalid or conflicting target configuration."""
 
@@ -106,8 +125,10 @@ class TargetSpec:
         identity: ``"forward"`` forwards the caller's persona/issuer as
             per-call headers (``http`` only); ``"none"`` sends no identity.
         auth_method: Upstream auth — ``"bearer"`` (static token),
-            ``"service-token"`` (per-call ``ctx.credentials[credential_key]``),
-            or ``"none"``.
+            ``"service-token"`` (per-call ``ctx.credentials[credential_key]``
+            on ``Authorization``), ``"service-headers"`` (per-call
+            ``ctx.credentials`` values on the named headers of
+            ``credential_headers``), or ``"none"``.
         bearer_token: The static credential, inline. When
             ``auth_method == "bearer"`` exactly one of ``bearer_token`` and
             ``bearer_token_env`` is required.
@@ -126,6 +147,25 @@ class TargetSpec:
             needs a credential (``auth_method`` ``"bearer"`` or
             ``"service-token"``).
         credential_key: Required when ``auth_method == "service-token"``.
+        credential_headers: Required, non-empty, when ``auth_method ==
+            "service-headers"`` (refused otherwise): header name ->
+            ``ctx.credentials`` key. Every call sends every header, built
+            fresh from the calling persona's credentials; a missing or blank
+            credential for any of them is a refusal, never a call without it
+            (same guarantee as service-token, liminal#80). Names are checked
+            like ``headers`` (RFC token, case-insensitive, none reserved) and
+            may not repeat a static ``headers`` name. For upstreams that
+            authenticate with a key pair in two headers (Datadog's hosted MCP
+            server: ``DD_API_KEY`` / ``DD_APPLICATION_KEY``).
+        catalog_headers_env: header name -> env var name. Static headers for
+            the catalog's own client only (``initialize`` and ``tools/list``),
+            read at startup like ``bearer_token_env`` (unset, empty or
+            whitespace-only fails the target's startup, naming the variable);
+            never sent on a persona's call, so a shared catalog credential
+            cannot ride an agent's request. Allowed with ``service-token``
+            and ``service-headers`` only: those are the methods whose base
+            client otherwise fetches the catalog unauthenticated, which an
+            upstream that wants a credential on every request refuses.
         timeout_seconds: Per-call timeout for forwarded requests.
         refresh_tools_interval_seconds: Background catalog re-fetch cadence.
             ``0`` disables periodic refresh (still fetched once at startup).
@@ -180,6 +220,8 @@ class TargetSpec:
     bearer_token: str | None = None
     bearer_token_env: str | None = None
     credential_key: str | None = None
+    credential_headers: dict[str, str] = field(default_factory=dict)
+    catalog_headers_env: dict[str, str] = field(default_factory=dict)
     auth_scheme: AuthScheme = "bearer"
     timeout_seconds: float = 30.0
     refresh_tools_interval_seconds: int = 300
@@ -266,6 +308,26 @@ class TargetSpec:
                 f"target {self.name!r}: auth_method='service-token' requires "
                 "credential_key"
             )
+        if self.auth_method == "service-headers" and not self.credential_headers:
+            raise TargetConfigError(
+                f"target {self.name!r}: auth_method='service-headers' requires a "
+                "non-empty [target.credential_headers] table (header name -> "
+                "credential key)"
+            )
+        if self.credential_headers and self.auth_method != "service-headers":
+            raise TargetConfigError(
+                f"target {self.name!r}: credential_headers is set but auth_method "
+                f"is {self.auth_method!r}; it is read only for "
+                "auth_method='service-headers'"
+            )
+        if self.catalog_headers_env and self.auth_method not in (
+            "service-token", "service-headers",
+        ):
+            raise TargetConfigError(
+                f"target {self.name!r}: catalog_headers_env applies to "
+                "auth_method 'service-token' or 'service-headers' (whose catalog "
+                f"fetch is otherwise unauthenticated), not {self.auth_method!r}"
+            )
 
         # `str(...)` COERCION WAS A FAIL-OPEN. It let every non-string through,
         # and the falsy ones -- 0, False, [], {} -- are all valid TOML. app.py
@@ -348,6 +410,24 @@ class TargetSpec:
                     f"{sorted(RESERVED_HEADERS)})"
                 )
 
+        static_names = {h.lower() for h in self.headers}
+        for table, mapping in (
+            ("credential_headers", self.credential_headers),
+            ("catalog_headers_env", self.catalog_headers_env),
+        ):
+            self._check_header_table(table, mapping)
+            for hname, value in mapping.items():
+                if hname.lower() in static_names:
+                    raise TargetConfigError(
+                        f"target {self.name!r}: {table}[{hname!r}] repeats a static "
+                        "headers name; a header comes from one place"
+                    )
+                if table == "catalog_headers_env" and not _ENV_NAME.fullmatch(value):
+                    raise TargetConfigError(
+                        f"target {self.name!r}: catalog_headers_env[{hname!r}] must "
+                        f"name an environment variable, got {value!r}"
+                    )
+
         if self.transport == "http":
             if not self.address:
                 raise TargetConfigError(
@@ -379,12 +459,60 @@ class TargetSpec:
                     "discard per-request headers. Use transport='http' for "
                     "identity-forwarding, or set identity='none'."
                 )
-            if self.auth_method == "service-token":
+            if self.auth_method in ("service-token", "service-headers"):
                 raise TargetConfigError(
                     f"target {self.name!r}: stdio targets cannot use "
-                    "auth_method='service-token' — per-call credential headers "
-                    "do not reach a stdio child. stdio targets are "
+                    f"auth_method={self.auth_method!r} — per-call credential "
+                    "headers do not reach a stdio child. stdio targets are "
                     "identity-agnostic only."
+                )
+            if self.catalog_headers_env:
+                raise TargetConfigError(
+                    f"target {self.name!r}: stdio targets cannot set "
+                    "catalog_headers_env — there is no HTTP request to carry them"
+                )
+
+    def _check_header_table(self, table: str, mapping: object) -> None:
+        """``credential_headers`` / ``catalog_headers_env``: a table of HTTP
+        field names (checked as ``headers`` are, liminal#141) to non-empty
+        strings, no reserved name, no name twice in any case."""
+        if not isinstance(mapping, dict):
+            raise TargetConfigError(
+                f"target {self.name!r}: {table} must be a table mapping header "
+                f"name -> value, got {type(mapping).__name__!r}"
+            )
+        seen: dict[str, str] = {}
+        for hname, value in mapping.items():
+            if not isinstance(hname, str) or not hname.strip():
+                raise TargetConfigError(
+                    f"target {self.name!r}: {table} has an empty/non-string "
+                    f"header name ({hname!r})"
+                )
+            if not isinstance(value, str) or not value.strip():
+                raise TargetConfigError(
+                    f"target {self.name!r}: {table}[{hname!r}] must be a "
+                    f"non-empty string, got {value!r}"
+                )
+            if not set(hname) <= _TOKEN_CHARS:
+                raise TargetConfigError(
+                    f"target {self.name!r}: {table} name {hname!r} is not a valid "
+                    "HTTP field name (letters, digits and !#$%&'*+-.^_`|~ only, "
+                    "no spaces)"
+                )
+            folded = hname.lower()
+            if folded in seen:
+                raise TargetConfigError(
+                    f"target {self.name!r}: {table} names {seen[folded]!r} and "
+                    f"{hname!r} are the same header (names are case-insensitive); "
+                    "declare it once"
+                )
+            seen[folded] = hname
+            if folded in RESERVED_HEADERS:
+                raise TargetConfigError(
+                    f"target {self.name!r}: {table} may not set {hname!r} — "
+                    "liminal owns credentials on Authorization, forwarded "
+                    "identity, the session id and content negotiation "
+                    f"(reserved: {sorted(RESERVED_HEADERS)})"
                 )
 
 

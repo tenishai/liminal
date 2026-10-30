@@ -6,6 +6,32 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-30
+
+### Upgrading
+
+- Nothing to run. Two new `[[target]]` keys, both optional; existing target files load
+  unchanged.
+
+### Added
+
+- **`auth_method = "service-headers"`: a persona's leased credentials as named headers**
+  (#221). `[target.credential_headers]` maps each header name to a key in the calling
+  persona's `ctx.credentials`; every call sends every header, built fresh per call like
+  service-token's `Authorization`, and a call missing any of them is refused rather than
+  sent bare (the #80 guarantee). For upstreams that authenticate with a key pair rather
+  than a bearer token: Datadog's hosted MCP server takes `DD_API_KEY` and
+  `DD_APPLICATION_KEY`, and a permission service can lease the application key per
+  agent. Names are checked like static `headers` (valid field names, case-insensitive,
+  `Authorization` and liminal's own headers reserved) and may not repeat a static one.
+- **`[target.catalog_headers_env]`: headers for the catalog fetch alone** (#221). Env
+  variable names, read at startup like `bearer_token_env` (unset or empty fails the
+  target's startup, naming the variable), sent on `initialize` and `tools/list` only and
+  never on a persona's call or session. For `service-token` and `service-headers`
+  targets, whose catalog fetch otherwise goes out unauthenticated, against upstreams that
+  refuse it. The `liminal guide welcome` target section and `docs/design.md` describe
+  both keys.
+
 ## [0.7.2] — 2026-10-27
 
 ### Fixed
