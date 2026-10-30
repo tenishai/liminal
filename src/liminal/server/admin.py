@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from liminal.handlers import aws as aws_handler
 from liminal.server.auth import AuthError, VerifiedClaims
+from liminal.server.live_targets import FileOwned, LiveTargetError, LiveTargets, UnknownLiveTarget
 from liminal.server.policy import ADMIN_SCOPE, ParentImmutable, PolicyStore
 from liminal.server.routes import _bearer
 
@@ -119,6 +120,57 @@ def build_admin_router() -> APIRouter:
                 for r in rows
             ]
         }
+
+    # ---- live targets (liminal#222) ------------------------------------------
+    # Federated targets added, replaced and removed while serving, persisted in
+    # the policy DB; the config file stays the seed and keeps its names.
+
+    def _live(request: Request) -> LiveTargets:
+        live = getattr(request.app.state, "live_targets", None)
+        if live is None or not live.attached:
+            raise HTTPException(
+                status_code=404,
+                detail="live targets are not enabled on this gateway (they need --policy-db)",
+            )
+        return live
+
+    @router.get("/admin/targets")
+    async def list_targets(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        await _admin_auth(request, authorization)
+        return {"targets": _live(request).list()}
+
+    @router.put("/admin/targets/{name}")
+    async def put_target(
+        name: str, request: Request, body: dict[str, Any],
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        claims, _store = await _admin_auth(request, authorization)
+        live = _live(request)
+        try:
+            status = await live.put(name, body)
+        except FileOwned as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except LiveTargetError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        log.info("admin.target_put", target=name, status=status, by=claims.identity)
+        return {"name": name, "status": status}
+
+    @router.delete("/admin/targets/{name}")
+    async def delete_target(
+        name: str, request: Request, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        claims, _store = await _admin_auth(request, authorization)
+        live = _live(request)
+        try:
+            await live.delete(name)
+        except FileOwned as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnknownLiveTarget as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        log.info("admin.target_removed", target=name, by=claims.identity)
+        return {"removed": name}
 
     @router.get("/admin/aws/identity")
     async def aws_identity(

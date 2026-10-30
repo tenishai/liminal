@@ -27,6 +27,7 @@ from liminal.dispatch import Multiplexer
 from liminal.registry import Registry, discover_handlers
 from liminal.server.admin import build_admin_router
 from liminal.server.auth import JWTVerifier, MultiIssuerJWKSVerifier
+from liminal.server.live_targets import LiveTargets
 from liminal.server.policy import PolicyStore
 from liminal.server.request_guard import allowed_origins_from_env
 from liminal.server.routes import build_router
@@ -170,6 +171,7 @@ def create_app(
     targets: list[TargetSpec] | None = None,
     policy_store: PolicyStore | None = None,
     policy_scope_for: Callable[[str], str | None] | None = None,
+    live_targets: LiveTargets | None = None,
     policy_tool_extras: dict[str, Any] | None = None,
     mount_admin: bool = True,
 ) -> FastAPI:
@@ -216,6 +218,15 @@ def create_app(
         )
 
     dispatcher = Multiplexer(all_targets)
+    if live_targets is not None:
+        # Targets added through the admin plane (liminal#222) join this
+        # multiplexer; handler and file-target names are theirs to keep.
+        live_targets.attach(
+            dispatcher,
+            reserved=set(reg.names()) | {s.name for s in (targets or ())},
+            file_specs=list(targets or ()),
+            scope_fallback=policy_scope_for if policy_scope_for is not None else scope_for(reg, targets or ()),
+        )
 
     auth_disabled = _auth_disabled_from_env()
     if auth_disabled and jwt_verifier is not None:
@@ -258,6 +269,10 @@ def create_app(
         # delegates to its handler's startup() when defined (e.g. to open
         # pooled clients); HttpTarget connects + fetches its catalog.
         await dispatcher.startup()
+        if live_targets is not None:
+            # Stored live targets come back after the file ones, so a name the
+            # file now holds is seen as reserved and skipped (liminal#222).
+            await live_targets.load_at_boot()
         # One line per handler that will refuse every call without per-caller
         # config (liminal#191), so the operator sees it at boot, not from tool
         # errors. Agents still see its tools: a token's claims may supply it.
@@ -294,9 +309,11 @@ def create_app(
     # inert there — the routes.py scope gate only runs when a grant is present,
     # which only sovereign (multi-issuer + policy_store) deployments produce.
     app.state.policy_scope_for = (
-        policy_scope_for if policy_scope_for is not None
+        live_targets.scope_for if live_targets is not None
+        else policy_scope_for if policy_scope_for is not None
         else scope_for(reg, targets or ())
     )
+    app.state.live_targets = live_targets
     # Operator-only tools (cabal#233). Unlike the scope map this gate runs in
     # EVERY mode, so it is not inert in single-cabal: see routes._operator_refusal.
     app.state.operator_only = operator_only_tools(reg)
@@ -332,6 +349,7 @@ def create_admin_app(
     *,
     jwt_verifier: JWTVerifier,
     policy_store: PolicyStore,
+    live_targets: LiveTargets | None = None,
 ) -> FastAPI:
     """A FastAPI app carrying ONLY the federation admin surface (liminal#74).
 
@@ -344,5 +362,8 @@ def create_admin_app(
     app = FastAPI(title="liminal federation admin", version=__version__)
     app.state.jwt_verifier = jwt_verifier
     app.state.policy_store = policy_store
+    # The same controller the data-plane app was built with (liminal#222):
+    # a PUT here lands on that app's multiplexer.
+    app.state.live_targets = live_targets
     app.include_router(build_admin_router())
     return app
