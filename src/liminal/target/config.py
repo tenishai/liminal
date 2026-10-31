@@ -166,6 +166,21 @@ class TargetSpec:
             and ``service-headers`` only: those are the methods whose base
             client otherwise fetches the catalog unauthenticated, which an
             upstream that wants a credential on every request refuses.
+        catalog_token_provider: Name of a catalog token provider from the
+            ``liminal.catalog_tokens`` entry-point group, for the same two auth
+            methods and the same reason, when the upstream wants the catalog
+            credential on ``Authorization`` (GitHub's hosted MCP server, which
+            refuses an unauthenticated ``initialize``). ``catalog_headers_env``
+            may not set ``Authorization`` because liminal owns that header;
+            this is the one way a catalog bearer is given, and it is minted,
+            not stored: the provider is awaited before every catalog fetch
+            (startup and each refresh), so a short-lived credential such as a
+            GitHub App installation token serves without anyone rotating a
+            long-lived one. The token is encoded with ``auth_scheme`` and sent
+            by the catalog client only; a persona's session and calls carry
+            the persona's own credential or go nowhere, as before. An unknown
+            provider name, or a provider that returns an empty token, fails the
+            target's startup naming it.
         timeout_seconds: Per-call timeout for forwarded requests.
         refresh_tools_interval_seconds: Background catalog re-fetch cadence.
             ``0`` disables periodic refresh (still fetched once at startup).
@@ -222,6 +237,7 @@ class TargetSpec:
     credential_key: str | None = None
     credential_headers: dict[str, str] = field(default_factory=dict)
     catalog_headers_env: dict[str, str] = field(default_factory=dict)
+    catalog_token_provider: str | None = None
     auth_scheme: AuthScheme = "bearer"
     timeout_seconds: float = 30.0
     refresh_tools_interval_seconds: int = 300
@@ -328,6 +344,21 @@ class TargetSpec:
                 "auth_method 'service-token' or 'service-headers' (whose catalog "
                 f"fetch is otherwise unauthenticated), not {self.auth_method!r}"
             )
+        if self.catalog_token_provider is not None:
+            if self.auth_method not in ("service-token", "service-headers"):
+                raise TargetConfigError(
+                    f"target {self.name!r}: catalog_token_provider applies to "
+                    "auth_method 'service-token' or 'service-headers' (whose catalog "
+                    f"fetch is otherwise unauthenticated), not {self.auth_method!r}"
+                )
+            if (
+                not isinstance(self.catalog_token_provider, str)
+                or not self.catalog_token_provider.strip()
+            ):
+                raise TargetConfigError(
+                    f"target {self.name!r}: catalog_token_provider must be a "
+                    f"provider name, got {self.catalog_token_provider!r}"
+                )
 
         # `str(...)` COERCION WAS A FAIL-OPEN. It let every non-string through,
         # and the falsy ones -- 0, False, [], {} -- are all valid TOML. app.py
@@ -470,6 +501,11 @@ class TargetSpec:
                 raise TargetConfigError(
                     f"target {self.name!r}: stdio targets cannot set "
                     "catalog_headers_env — there is no HTTP request to carry them"
+                )
+            if self.catalog_token_provider is not None:
+                raise TargetConfigError(
+                    f"target {self.name!r}: stdio targets cannot set "
+                    "catalog_token_provider — there is no HTTP request to carry it"
                 )
 
     def _check_header_table(self, table: str, mapping: object) -> None:

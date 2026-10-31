@@ -6,6 +6,23 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-10-31
+
+### Added
+
+- **`catalog_token_provider`: a bearer for the catalog fetch, minted on demand** (#225).
+  GitHub's hosted MCP server refuses an unauthenticated `initialize` and wants the
+  credential on `Authorization`, which `catalog_headers_env` may not set (liminal owns
+  that header), so a `service-token` target for it had no way to list tools without a
+  long-lived personal token in an env var. A target now names a provider from the new
+  `liminal.catalog_tokens` entry-point group; `HttpTarget` awaits it before every catalog
+  fetch (startup and each refresh) and sends the token on the catalog client's requests
+  alone, encoded with `auth_scheme`. A deployment mints what it likes (a one-hour GitHub
+  App installation token) and nobody rotates anything. Persona sessions and calls are
+  untouched: they carry the persona's own credential or are refused, as before. An unknown
+  provider, or one that returns an empty token, fails the target's startup naming it; a
+  mint that fails on refresh is a failed refresh, and the last good catalog keeps serving.
+
 ## [0.9.1] — 2026-10-31
 
 ### Fixed

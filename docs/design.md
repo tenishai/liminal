@@ -412,6 +412,21 @@ DD_APPLICATION_KEY = "DD_APP_KEY"
 DD_API_KEY         = "DD_API_KEY"
 DD_APPLICATION_KEY = "DD_APP_KEY"
 
+# Every call carries the calling persona's leased token; the catalog fetch
+# carries a token the deployment mints on demand (here from its own GitHub
+# App), since this upstream refuses an unauthenticated initialize and wants
+# the credential on Authorization, which catalog_headers_env may not set.
+[[target]]
+name                   = "github-mcp"
+address                = "https://api.githubcopilot.com"
+auth_method            = "service-token"
+credential_key         = "GITHUB_TOKEN"
+session                = "per-persona"
+required_scope         = "github:read"
+catalog_token_provider = "github-app"   # registered under liminal.catalog_tokens
+[target.headers]
+X-MCP-Readonly = "true"
+
 # Scope-gated target, DENY-BY-DEFAULT (liminal#78).
 # NOTE there is no target-level `required_scope` here. That is deliberate --
 # see the precedence note below; adding one would DISABLE deny-by-default.
@@ -460,6 +475,7 @@ required_scope = "confluence:use"
 | `credential_key` | if service-token | — | Key to look up from `ctx.credentials` per call. |
 | `credential_headers` | if service-headers | — | Table of header name → `ctx.credentials` key (http only). Every call sends every header, built fresh from the calling persona's credentials; a missing or blank credential for any of them is a refusal, never a call without it. Names are checked like `headers` (valid field names, case-insensitive, none reserved) and may not repeat a static `headers` name. Refused at load unless `auth_method = "service-headers"`. For upstreams that authenticate with a key pair rather than `Authorization`, such as Datadog's hosted MCP server (`DD_API_KEY`, `DD_APPLICATION_KEY`). |
 | `catalog_headers_env` | no | `{}` | Table of header name → env var name (http only; with `service-token` or `service-headers`). Read when the target starts like `bearer_token_env` (unset or empty fails the target's startup, naming the variable) and sent on the catalog client's requests alone: `initialize` and `tools/list`. Never on a persona's call or session, so a shared catalog credential cannot ride an agent's request. For upstreams that refuse an unauthenticated catalog while every persona call carries its own leased credential. |
+| `catalog_token_provider` | no | — | Name of a provider from the `liminal.catalog_tokens` entry-point group (http only; with `service-token` or `service-headers`). For an upstream that wants the catalog credential on `Authorization`, which `catalog_headers_env` may not set. The provider is an async callable the deployment registers; liminal awaits it before every catalog fetch (startup and each refresh) and sends the token, encoded with `auth_scheme`, on the catalog client's requests alone. Minted, not stored: a GitHub App installation token (one hour) serves without anyone rotating a long-lived bearer. An unknown provider, or one that returns an empty token, fails the target's startup naming it. |
 | `timeout_seconds` | no | `30.0` | Per-call timeout. |
 | `refresh_tools_interval_seconds` | no | `300` | Catalog re-fetch cadence. `0` disables. |
 | `client_name` | no | `"liminal-target"` | Advertised in `initialize` handshake. |
