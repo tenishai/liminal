@@ -12,12 +12,18 @@ Each line cites the pull request that made the change.
 
 - **A per-persona session an upstream reports lost through a JSON-RPC error is reopened**
   (#224). The streamable-HTTP spec says a gone session is a 404, which liminal already
-  reopens once; Datadog's hosted MCP server instead answers the next call on a session it
-  no longer holds with HTTP 200 and a JSON-RPC error `[0] missing session ID`, which
-  liminal returned to the agent as a tool error on every call after the first. A JSON-RPC
-  error whose message says the session is missing, unknown, expired or invalid now
-  forgets the session (`AsyncMCPClient.forget_session`), reopens it with the persona's own
-  credential and retries once, the same as a 404; a second loss is the error it was.
+  reopens once; Datadog's hosted MCP server instead answers a call that carries no usable
+  `Mcp-Session-Id` with HTTP 200 and a JSON-RPC error `[0] missing session ID`, which
+  liminal returned to the agent as a tool error on every call after the first. Two
+  remedies, both in `HttpTarget._call_in_session`: a JSON-RPC error whose message says the
+  session is missing, unknown, expired or invalid forgets the session
+  (`AsyncMCPClient.forget_session`), reopens it with the persona's own credential and
+  retries once, the same as a 404, and a second loss is the error it was; and a
+  session-keeping client that is initialized but holds no session id
+  (`AsyncMCPClient.has_session`) is reopened before its call instead of calling bare,
+  logged as `http_target.session_missing`. The live gateway showed exactly that shape (one
+  good call, then every later call bare); what dropped the id in that process is not yet
+  known, and the log line is there to catch it.
 
 ## [0.9.0] — 2026-10-30
 

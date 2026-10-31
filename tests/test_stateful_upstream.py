@@ -405,3 +405,27 @@ async def test_a_second_rpc_loss_is_an_error_not_a_loop():
         assert len([s for s in upstream.calls("initialize") if s.session is None]) == 3, "one reopen, no more"
     finally:
         await _stop(target, http)
+
+
+async def test_an_initialized_client_without_a_session_is_reopened_before_it_calls():
+    """Seen live (liminal#224): a persona's client was initialized and had made
+    one good call, then sent its next call with no ``Mcp-Session-Id`` and met
+    "missing session ID". Whatever drops the id, a session-keeping client that
+    is initialized but holds none is reopened before the call, never used bare."""
+    upstream = StatefulUpstream()
+    target, http = await _started(upstream)
+    try:
+        first = await target.dispatch("search", {}, _ctx("alice", "tok-a"))
+        assert first.is_error is False, first.error
+        client = next(iter(target._sessions.values()))
+        assert client.initialized and client.has_session
+        client._session_id = None  # the id is gone, the handshake flag is not
+        assert client.initialized and not client.has_session
+        second = await target.dispatch("search", {}, _ctx("alice", "tok-a"))
+        assert second.is_error is False, second.error
+        calls = upstream.calls()
+        assert [c.session for c in calls] == ["sess-2", "sess-3"], calls
+        assert all(c.session for c in calls), "no call went out without a session id"
+        assert len([s for s in upstream.calls("initialize") if s.session is None]) == 3, "catalog, first, reopened"
+    finally:
+        await _stop(target, http)

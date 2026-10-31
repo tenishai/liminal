@@ -379,6 +379,15 @@ class _RequestHeaders:
     def initialized(self) -> bool:
         return self._initialized
 
+    @property
+    def has_session(self) -> bool:
+        """Whether the next request will carry an ``Mcp-Session-Id``. A
+        session-keeping client that is initialized but holds no id would send
+        every call bare, and a stateful upstream answers each one with its
+        "missing session" error; the target reopens such a client instead
+        (liminal#224)."""
+        return not self._use_session or bool(self._session_id)
+
 
 # ---- Async client ---------------------------------------------------------
 

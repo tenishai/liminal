@@ -472,7 +472,18 @@ class HttpTarget(Target):
                     self._session_locks.pop(old, None)
             self._sessions.move_to_end(key)
             async with self._session_locks[key]:
-                if not client.initialized:
+                if not client.initialized or not client.has_session:
+                    # A client that is initialized but holds no session id
+                    # (seen live against Datadog's hosted server: the first
+                    # call went through, the next went out bare and met
+                    # "missing session ID") is reopened rather than trusted
+                    # to call bare (liminal#224).
+                    if client.initialized:
+                        log.info(
+                            "http_target.session_missing",
+                            target=self.name, persona=ctx.identity,
+                        )
+                        client.forget_session()
                     await client.initialize(extra_headers=headers)
                     log.debug(
                         "http_target.session_opened",
