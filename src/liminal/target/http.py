@@ -95,6 +95,17 @@ MAX_PERSONA_SESSIONS = 256
 _authorization = authorization_value
 
 
+_SESSION_LOST_WORDS = ("missing session", "no session", "unknown session", "session not found",
+                       "session expired", "invalid session")
+
+
+def _session_lost(exc: MCPRemoteError) -> bool:
+    """Whether an upstream's JSON-RPC error says the session is gone (a server
+    that does not use the spec's 404 for it)."""
+    message = (exc.message or "").lower()
+    return any(words in message for words in _SESSION_LOST_WORDS)
+
+
 class _MissingCredential(Exception):
     """A service-token dispatch whose credential did not resolve; str() is
     the credential key. Rendered by dispatch() as a refusal (liminal#80)."""
@@ -461,7 +472,18 @@ class HttpTarget(Target):
                     self._session_locks.pop(old, None)
             self._sessions.move_to_end(key)
             async with self._session_locks[key]:
-                if not client.initialized:
+                if not client.initialized or not client.has_session:
+                    # A client that is initialized but holds no session id
+                    # (seen live against Datadog's hosted server: the first
+                    # call went through, the next went out bare and met
+                    # "missing session ID") is reopened rather than trusted
+                    # to call bare (liminal#224).
+                    if client.initialized:
+                        log.info(
+                            "http_target.session_missing",
+                            target=self.name, persona=ctx.identity,
+                        )
+                        client.forget_session()
                     await client.initialize(extra_headers=headers)
                     log.debug(
                         "http_target.session_opened",
@@ -476,6 +498,18 @@ class HttpTarget(Target):
                     "http_target.session_expired",
                     target=self.name, persona=ctx.identity,
                 )
+            except MCPRemoteError as exc:
+                # The spec says a gone session is a 404, and some servers say it
+                # as a JSON-RPC error instead ("missing session ID", seen live
+                # from Datadog's hosted server after one call). Same remedy:
+                # forget it, reopen once, retry once (liminal#224).
+                if attempt == 2 or not _session_lost(exc):
+                    raise
+                log.info(
+                    "http_target.session_lost",
+                    target=self.name, persona=ctx.identity, message=exc.message[:120],
+                )
+                client.forget_session()
         raise AssertionError("unreachable")
 
     async def _refresh_tools_once(self, *, initialize: bool = False) -> None:

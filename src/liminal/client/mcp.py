@@ -379,6 +379,15 @@ class _RequestHeaders:
     def initialized(self) -> bool:
         return self._initialized
 
+    @property
+    def has_session(self) -> bool:
+        """Whether the next request will carry an ``Mcp-Session-Id``. A
+        session-keeping client that is initialized but holds no id would send
+        every call bare, and a stateful upstream answers each one with its
+        "missing session" error; the target reopens such a client instead
+        (liminal#224)."""
+        return not self._use_session or bool(self._session_id)
+
 
 # ---- Async client ---------------------------------------------------------
 
@@ -486,6 +495,13 @@ class AsyncMCPClient(_RequestHeaders):
         # Per MCP spec, the client sends an initialized notification next.
         await self._notify("notifications/initialized", {}, extra_headers=extra_headers)
         return result
+
+    def forget_session(self) -> None:
+        """Drop the session this client holds without telling the server: for
+        an upstream that has already lost it (it answered a JSON-RPC error
+        saying the session is missing instead of the spec's 404). The next
+        call re-initializes, exactly as after a 404 (liminal#224)."""
+        self._session_id, self._initialized = None, False
 
     async def terminate_session(self) -> None:
         """Best effort: tell the server to end this client's session (HTTP

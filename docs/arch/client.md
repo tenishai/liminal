@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-client
-updated: 2026-10-13
-anchor: src/liminal/client/mcp.py sha=e98f666410078d8994b764f7a23d3a6468b962ff
+updated: 2026-10-31
+anchor: src/liminal/client/mcp.py sha=cd4a59e3987f4590319c264a1668e371e80559b7
 anchor: src/liminal/client/library.py sha=bdd50eae29e0bb949cbe4b5d1d55c00fbdb2382f
 ---
 # client — MCP client library other repos import
@@ -14,3 +14,4 @@ INVARIANTS:
 - Keep MCPTransportError vs MCPRemoteError distinct: HttpTarget maps them to different refusal reasons, and cabal catches by type.
 CONSUMERS: cabal/src/cabal/core/tools/mcp_proxy.py (lazy `from liminal import client`; AsyncMCPClient, ToolCallOutcome); target/http.py (HttpTarget wraps AsyncMCPClient for upstreams). Tests: test_client.py, test_client_sse.py, test_client_sse_pool.py, test_liminal_client_protocol.py, test_client_auth_header_omitted.py, test_basic_auth_scheme.py, test_stateful_upstream.py.
 API: exports LiminalClient, LibraryLiminalClient, ProxyLiminalClient, from_config, AsyncMCPClient, MCPClient, MCPError, MCPRemoteError, MCPSessionExpired, MCPTransportError, Tool, ToolCallOutcome.
+- `forget_session()` (#224): drop the held session and the initialized flag without a round trip, for an upstream that already lost it; the next call re-initializes.
