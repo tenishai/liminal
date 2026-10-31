@@ -47,6 +47,11 @@ class StatefulUpstream:
     # Forget every persona session right after issuing it (the catalog's,
     # sess-1, survives): each call then meets a 404.
     forget_persona_sessions: bool = False
+    # Lose the persona session once, the way Datadog's hosted server does: a
+    # JSON-RPC error "missing session ID" (HTTP 200) instead of the spec's 404
+    # (liminal#224). The session is forgotten, so a reopened one works.
+    lose_persona_sessions_as_rpc_error: int = 0  # how many calls in a row meet it
+    rpc_losses: int = 0
     sessions: dict[str, str | None] = field(default_factory=dict)  # sid -> opening auth
     seen: list[Seen] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
@@ -76,6 +81,12 @@ class StatefulUpstream:
             )
         if self.forget_persona_sessions:
             self.sessions = {k: v for k, v in self.sessions.items() if k == "sess-1"}
+        if (method == "tools/call" and sid and sid != "sess-1"
+                and self.rpc_losses < self.lose_persona_sessions_as_rpc_error):
+            self.rpc_losses += 1
+            self.sessions.pop(sid, None)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid,
+                                             "error": {"code": 0, "message": "missing session ID"}})
         if not self.stateless:
             if sid is None:
                 return httpx.Response(400, json={
@@ -361,3 +372,36 @@ def test_bad_session_config_is_refused(over, fragment):
     spec = TargetSpec(**{"name": "t", "address": "https://x", **over})
     with pytest.raises(TargetConfigError, match=fragment):
         spec.validate()
+
+
+# ---- a lost session told as a JSON-RPC error (liminal#224) --------------------
+
+
+async def test_a_session_lost_as_an_rpc_error_is_reopened_once():
+    """Datadog's hosted server answers a call on a session it no longer holds
+    with a JSON-RPC error "missing session ID" (HTTP 200), not the spec's 404.
+    The persona's client forgets the session, reopens one, and the call goes
+    through; the model never sees the loss."""
+    upstream = StatefulUpstream(lose_persona_sessions_as_rpc_error=1)
+    target, http = await _started(upstream)
+    try:
+        result = await target.dispatch("search", {}, _ctx("alice", "tok-a"))
+        assert result.is_error is False, result.error
+        inits = [s for s in upstream.calls("initialize") if s.session is None]
+        assert len(inits) == 3, "catalog, alice's first session, alice's reopened session"
+        calls = upstream.calls()
+        assert [c.session for c in calls][-1] == "sess-3", calls
+        assert upstream.rpc_losses == 1
+    finally:
+        await _stop(target, http)
+
+
+async def test_a_second_rpc_loss_is_an_error_not_a_loop():
+    upstream = StatefulUpstream(lose_persona_sessions_as_rpc_error=2)
+    target, http = await _started(upstream)
+    try:
+        result = await target.dispatch("search", {}, _ctx("alice", "tok-a"))
+        assert result.is_error is True and "returned error [0]" in (result.error or "")
+        assert len([s for s in upstream.calls("initialize") if s.session is None]) == 3, "one reopen, no more"
+    finally:
+        await _stop(target, http)

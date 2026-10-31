@@ -487,6 +487,13 @@ class AsyncMCPClient(_RequestHeaders):
         await self._notify("notifications/initialized", {}, extra_headers=extra_headers)
         return result
 
+    def forget_session(self) -> None:
+        """Drop the session this client holds without telling the server: for
+        an upstream that has already lost it (it answered a JSON-RPC error
+        saying the session is missing instead of the spec's 404). The next
+        call re-initializes, exactly as after a 404 (liminal#224)."""
+        self._session_id, self._initialized = None, False
+
     async def terminate_session(self) -> None:
         """Best effort: tell the server to end this client's session (HTTP
         DELETE, per the streamable-HTTP spec) and forget it. A server that
