@@ -49,6 +49,7 @@ import http.cookiejar
 import os
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -64,6 +65,7 @@ from liminal.client.mcp import (
 )
 from liminal.protocol import Context, ToolResult, ToolSpec
 from liminal.target.base import Target, TrustTier
+from liminal.target.catalog_tokens import CatalogTokenProvider, load_catalog_token_provider
 from liminal.target.config import (
     HEADER_CORRELATION_ID,
     HEADER_ISSUER,
@@ -145,6 +147,12 @@ class HttpTarget(Target):
         # successful catalog fetch, or "catalog fetch failed: ..." -- a failed
         # target is visible, never a silently-empty tool list.
         self.catalog_status: str = "not started"
+        # catalog_token_provider only: the provider, loaded at startup, and the
+        # token it minted last, which the CATALOG client's token_provider
+        # returns. Persona clients never read it (their token provider is the
+        # base one, empty for service-token / service-headers).
+        self._catalog_token_provider: CatalogTokenProvider | None = None
+        self._catalog_token: str = ""
 
     # ---- Target protocol --------------------------------------------------
 
@@ -246,6 +254,21 @@ class HttpTarget(Target):
 
     # ---- lifecycle --------------------------------------------------------
 
+    async def _mint_catalog_token(self) -> None:
+        """Ask the catalog token provider for the bearer the next catalog
+        fetch carries. A provider that raises propagates; one that returns an
+        empty or whitespace-only value is a wiring error named here, since an
+        empty bearer would mean an unauthenticated fetch (the header is
+        omitted for an empty token) against an upstream that refuses one."""
+        assert self._catalog_token_provider is not None
+        token = (await self._catalog_token_provider() or "").strip()
+        if not token:
+            raise RuntimeError(
+                f"target {self.spec.name!r}: catalog_token_provider "
+                f"{self.spec.catalog_token_provider!r} returned an empty token"
+            )
+        self._catalog_token = token
+
     def _catalog_headers(self) -> dict[str, str]:
         """``catalog_headers_env`` resolved, at startup, for the catalog client
         alone. A named variable that is unset, empty or whitespace-only is a
@@ -287,6 +310,12 @@ class HttpTarget(Target):
         # fails before a client is built or a request leaves.
         base_token = self._static_token()
         catalog_headers = self._catalog_headers()
+        if self.spec.catalog_token_provider:
+            # Unknown or broken provider: fail here, before a client is built,
+            # the same posture as an unset bearer_token_env.
+            self._catalog_token_provider = load_catalog_token_provider(
+                self.spec.catalog_token_provider
+            )
         if self._http_client is None:
             # The owned client REJECTS every cookie (liminal#76): dispatches
             # for different personas share this one client, and an upstream
@@ -319,17 +348,34 @@ class HttpTarget(Target):
         # fetch's alone: dispatches go through _call_in_session instead. The
         # catalog headers ride this client only; a persona's session client
         # (_call_in_session) never carries them.
-        self._client = self._new_client(static_headers={**self.spec.headers, **catalog_headers})
+        # A catalog token provider gives the catalog client a token provider
+        # of its own, reading the token minted before each fetch; base_token
+        # (empty for these auth methods) stays with the persona clients.
+        self._client = self._new_client(
+            static_headers={**self.spec.headers, **catalog_headers},
+            token_provider=(lambda: self._catalog_token) if self._catalog_token_provider else None,
+        )
 
+        if self._catalog_token_provider is not None:
+            # Minted BEFORE the first fetch and outside its try: a provider
+            # that cannot mint at startup fails the target like an unset
+            # bearer_token_env does, naming the provider, rather than leaving
+            # a target up with "catalog fetch failed".
+            await self._mint_catalog_token()
         await self._refresh_tools_once(initialize=True)
 
         if self.spec.refresh_tools_interval_seconds > 0:
             self._refresh_task = asyncio.create_task(self._refresh_loop())
 
-    def _new_client(self, *, static_headers: dict[str, str] | None = None) -> AsyncMCPClient:
+    def _new_client(
+        self,
+        *,
+        static_headers: dict[str, str] | None = None,
+        token_provider: Callable[[], str] | None = None,
+    ) -> AsyncMCPClient:
         return AsyncMCPClient(
             base_url=self.spec.address,
-            token_provider=self._base_token_provider,
+            token_provider=token_provider or self._base_token_provider,
             http_client=self._http_client,
             client_name=self.spec.client_name,
             static_headers=self.spec.headers if static_headers is None else static_headers,
@@ -516,6 +562,11 @@ class HttpTarget(Target):
         if self._client is None:
             return
         try:
+            if self._catalog_token_provider is not None and not initialize:
+                # Each refresh fetches with a freshly minted token: the
+                # provider's credential may be short-lived (an installation
+                # token lasts an hour; refreshes come every five minutes).
+                await self._mint_catalog_token()
             if initialize:
                 init_result = await self._client.initialize()
                 self._protocol_version = init_result.get("protocolVersion")
