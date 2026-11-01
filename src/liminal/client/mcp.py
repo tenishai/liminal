@@ -111,11 +111,32 @@ class ToolCallOutcome:
 
     @property
     def text(self) -> str:
-        """Concatenated text from text content blocks (if any)."""
+        """The result as text: every ``text`` block, and the text of every
+        embedded ``resource`` block (MCP ``EmbeddedResource``: a file or
+        document returned inline, ``resource.text`` with a ``uri`` and a
+        ``mimeType``). Servers return files that way -- GitHub's hosted MCP
+        server answers ``get_file_contents`` with a one-line text block
+        ("successfully downloaded text file") and the file itself as a
+        resource -- and a text-only flattening handed the model the
+        confirmation and lost the file (kobo wire test, 2026-10-31). A
+        resource is introduced by one line naming its uri and type so the
+        model can tell the file from the server's own words; a binary
+        resource (``blob``) is named and not expanded. Other block kinds
+        (``json``, ``image``) are still skipped."""
         out: list[str] = []
         for block in self.content:
-            if block.get("type") == "text" and "text" in block:
+            kind = block.get("type")
+            if kind == "text" and "text" in block:
                 out.append(block["text"])
+            elif kind == "resource" and isinstance(block.get("resource"), dict):
+                res = block["resource"]
+                uri = res.get("uri") or ""
+                mime = res.get("mimeType") or ""
+                head = f"[resource {uri}" + (f" ({mime})" if mime else "") + "]"
+                if isinstance(res.get("text"), str):
+                    out.append(f"\n{head}\n{res['text']}\n")
+                elif res.get("blob") is not None:
+                    out.append(f"\n{head} binary, {len(str(res['blob']))} base64 chars, not shown\n")
         return "".join(out)
 
 
