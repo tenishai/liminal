@@ -6,6 +6,17 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-11-01
+
+### Fixed
+
+- **`ToolCallOutcome.text` includes embedded resources** (#226). A file a server returns as an
+  MCP `EmbeddedResource` (GitHub's hosted server answers `get_file_contents` with a one-line text
+  block and the file as a resource) was dropped by the text-only flattening, so a runtime that
+  reads `outcome.text` handed the model "successfully downloaded text file" and no file. The
+  resource's text now follows a line naming its uri and type; a binary resource is named, not
+  expanded. Found by the kobo agent-layer wire test on 2026-10-31.
+
 ## [0.9.2] — 2026-10-31
 
 ### Added

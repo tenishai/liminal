@@ -233,6 +233,25 @@ def test_tool_outcome_text_property() -> None:
     assert o.text == "hello world"
 
 
+def test_tool_outcome_text_includes_embedded_resources() -> None:
+    """A file returned as an embedded resource reaches the caller's text, named
+    by uri and type; a binary resource is named, not expanded."""
+    from liminal.client import ToolCallOutcome
+
+    o = ToolCallOutcome(content=[
+        {"type": "text", "text": "successfully downloaded text file (SHA: abc)"},
+        {"type": "resource", "resource": {"uri": "repo://acme/infra/contents/requirements.txt",
+                                          "mimeType": "text/plain", "text": "fastapi==0.115\nhttpx==0.27\n"}},
+        {"type": "resource", "resource": {"uri": "repo://acme/infra/contents/logo.png",
+                                          "mimeType": "image/png", "blob": "iVBORw0KGgo="}},
+    ])
+    assert o.text == (
+        "successfully downloaded text file (SHA: abc)"
+        "\n[resource repo://acme/infra/contents/requirements.txt (text/plain)]\nfastapi==0.115\nhttpx==0.27\n\n"
+        "\n[resource repo://acme/infra/contents/logo.png (image/png)] binary, 12 base64 chars, not shown\n"
+    )
+
+
 def test_tool_outcome_text_property_empty_when_no_text() -> None:
     from liminal.client import ToolCallOutcome
 
