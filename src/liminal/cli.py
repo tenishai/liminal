@@ -380,7 +380,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             issuers = [
                 IssuerConfig(
-                    id=i["id"], jwks_uri=i["jwks_uri"], parent=bool(i.get("parent", False))
+                    id=i["id"], jwks_uri=i["jwks_uri"], parent=bool(i.get("parent", False)),
+                    exchange_uri=i.get("exchange_uri"),
                 )
                 for i in cfg.get("issuer", [])
             ]

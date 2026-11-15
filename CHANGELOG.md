@@ -6,6 +6,18 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Added
+
+- **`exchange_uri` on a trust-registry issuer: liminal trades a standing token itself**
+  (sovereign mode, off by default). A caller that is a team's own code had to write the
+  trade of its issuer's standing token for a short `aud`-scoped one, and the refresh, by
+  hand. With `exchange_uri` set on its `[[issuer]]`, it presents the standing token and
+  liminal makes the trade: only after the signature and issuer hold (`AudienceError`),
+  POSTed as a bearer, the answer verified in full, the identity reused for five minutes at
+  most. The trade hands a caller nothing it could not fetch with one request of its own.
+  What changes is that the standing token reaches liminal, so it is opt-in per issuer and
+  the guide says what it costs. A registry without the key behaves as before.
+
 ## [0.9.3] — 2026-11-01
 
 ### Fixed
