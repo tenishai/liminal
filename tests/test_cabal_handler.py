@@ -289,3 +289,56 @@ async def test_answer_with_neither_task_nor_message_is_a_failure() -> None:
     result = await handler.dispatch("answer", {"agent": "wright-secundus", "task_id": "t-1", "text": "B"}, _ctx())
     assert result.is_error
     assert "neither a task nor a message" in result.error
+
+
+
+# ---- inbox ---------------------------------------------------------------
+
+
+async def test_inbox_lists_waiting_tasks_across_personas_once_each() -> None:
+    group_task = _task("TASK_STATE_INPUT_REQUIRED", metadata={"cabal_group": "wright"})
+    group_task["status"]["message"]["parts"] = [{"text": "option A or B?"}]
+    group_task["status"]["timestamp"] = "2026-11-18T10:00:00Z"
+    older = dict(_task("TASK_STATE_INPUT_REQUIRED"), id="t-2")
+    older["status"] = dict(older["status"], timestamp="2026-11-17T09:00:00Z")
+
+    def fn(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["method"] == "ListTasks"
+        assert body["params"] == {"status": "TASK_STATE_INPUT_REQUIRED", "pageSize": 100}
+        tasks = {"/agents/wright-secundus/a2a": [group_task, older], "/agents/wright-tertius/a2a": [group_task]}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {
+            "tasks": tasks[request.url.path], "nextPageToken": "", "pageSize": 100, "totalSize": 1}})
+
+    handler, seen = _handler(fn)
+    creds = {"CABAL_TOKEN_WRIGHT_SECUNDUS": "a", "CABAL_TOKEN_WRIGHT_TERTIUS": "b"}
+    data = _data(await handler.dispatch("inbox", {}, _ctx(creds)))
+    assert [e["task_id"] for e in data["waiting"]] == ["t-1", "t-2"]  # newest first, t-1 once
+    first = data["waiting"][0]
+    assert first["question"] == "option A or B?"
+    assert first["group"] == "wright"
+    assert first["state"] == "input-required"
+    assert "status_message" not in first
+    assert "errors" not in data
+    assert {r.headers["Authorization"] for r in seen} == {"Bearer a", "Bearer b"}
+
+
+async def test_inbox_reports_a_persona_it_could_not_read() -> None:
+    def fn(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/agents/prudence/a2a":
+            return httpx.Response(401, json={"detail": "revoked"})
+        rid = json.loads(request.content)["id"]
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {
+            "tasks": [], "nextPageToken": "", "pageSize": 100, "totalSize": 0}})
+
+    handler, _ = _handler(fn)
+    creds = {"CABAL_TOKEN_WRIGHT_SECUNDUS": "a", "CABAL_TOKEN_PRUDENCE": "b"}
+    data = _data(await handler.dispatch("inbox", {}, _ctx(creds)))
+    assert data["waiting"] == []
+    assert data["errors"] == [{"agent": "prudence", "error": "cabal refused ListTasks on prudence: HTTP 401 revoked"}]
+
+
+async def test_inbox_with_no_tokens_is_empty_without_a_call() -> None:
+    handler, seen = _handler(_ok({}))
+    assert _data(await handler.dispatch("inbox", {}, _ctx({}))) == {"waiting": []}
+    assert seen == []

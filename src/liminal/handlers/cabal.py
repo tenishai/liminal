@@ -59,6 +59,7 @@ CARD = {
         {"name": "send", "description": "Send a task to a persona; returns its id at once."},
         {"name": "task", "description": "Read a task's state, last status message and artifacts."},
         {"name": "tasks", "description": "List this caller's tasks on a persona, newest first."},
+        {"name": "inbox", "description": "The caller's tasks waiting on it (input-required), across every persona."},
         {"name": "answer", "description": "Answer a task that stopped in input-required."},
         {"name": "cancel", "description": "Cancel a running task."},
     ],
@@ -210,11 +211,20 @@ class CabalHandler:
                 },
             ),
             ToolSpec(
+                name="inbox",
+                description=(
+                    "Every task you sent that is now waiting on you (input-required), across all "
+                    "the personas you hold a token for, newest first. Each entry carries the "
+                    "agent's question; reply with cabal.answer."
+                ),
+                input_schema={"type": "object", "properties": {}},
+            ),
+            ToolSpec(
                 name="answer",
                 description=(
-                    "Answer a task that stopped in input-required. cabal accepts this today for "
-                    "group tasks (the answer re-queues the task to the next idle member); other "
-                    "tasks are refused until cabal can pause one (cabal#145)."
+                    "Answer a task that stopped in input-required (cabal.inbox lists them). The "
+                    "answer puts it back in the queue: a group task for the next idle member, any "
+                    "other for the agent that asked. A cabal without issue 145 answers group tasks only."
                 ),
                 input_schema={
                     "type": "object",
@@ -241,6 +251,8 @@ class CabalHandler:
         try:
             if name == "agents":
                 return await self._agents(ctx)
+            if name == "inbox":
+                return await self._inbox(ctx)
             agent = payload.get("agent")
             if not isinstance(agent, str) or not _AGENT_RE.match(agent):
                 return ToolResult.failure("'agent' must be a persona's bulletin name (see cabal.agents)")
@@ -360,6 +372,41 @@ class CabalHandler:
         result = await self._rpc(agent, token, "ListTasks", params)
         tasks = [summarize(t) for t in result.get("tasks") or [] if isinstance(t, dict)]
         return ToolResult.json({"tasks": tasks, "total": result.get("totalSize", len(tasks))})
+
+    async def _inbox(self, ctx: Context) -> ToolResult:
+        """An "owed by you" view derived from cabal's state, not from
+        notifications, so a missed hook or a restart drops nothing
+        (cabal#314). A group task shows on every member's list (cabal PR
+        446), so it is kept once, by task id."""
+        names = agents_in(ctx.credentials)
+
+        async def waiting(agent: str) -> tuple[str, list[dict[str, Any]] | str]:
+            params = {"status": _STATE_PREFIX + "INPUT_REQUIRED", "pageSize": 100}
+            try:
+                result = await self._rpc(agent, ctx.credentials[token_key(agent)], "ListTasks", params)
+            except (CabalCallError, UncertainDelivery) as exc:
+                return agent, str(exc)
+            return agent, [t for t in result.get("tasks") or [] if isinstance(t, dict)]
+
+        seen: dict[str, dict[str, Any]] = {}
+        errors: list[dict[str, str]] = []
+        for agent, found in await asyncio.gather(*(waiting(n) for n in names)):
+            if isinstance(found, str):
+                errors.append({"agent": agent, "error": found})
+                continue
+            for task in found:
+                entry = summarize(task)
+                tid = entry.get("task_id")
+                if tid and tid not in seen:
+                    entry["agent"] = agent  # a path that holds it, for answer and task
+                    entry["question"] = entry.pop("status_message")
+                    seen[tid] = entry
+        waiting_on_you = sorted(seen.values(), key=lambda e: str(e.get("updated") or ""), reverse=True)
+        out: dict[str, Any] = {"waiting": waiting_on_you}
+        if errors:
+            out["errors"] = errors
+        log.debug("cabal.inbox", agents=len(names), waiting=len(waiting_on_you), errors=len(errors))
+        return ToolResult.json(out)
 
     # ---- transport -----------------------------------------------------
 

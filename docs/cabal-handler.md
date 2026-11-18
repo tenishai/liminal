@@ -11,7 +11,8 @@ them. Those agents speak MCP, not A2A; the handler makes the A2A v1.0 calls to
 | `cabal.send` | SendMessage, `returnImmediately` | Sends a task, returns its id at once. `group` queues it to the next idle member |
 | `cabal.task` | GetTask | State, last status message, artifacts |
 | `cabal.tasks` | ListTasks | Your tasks on a persona; filter by `context_id` or `state` |
-| `cabal.answer` | SendMessage with `taskId` | Answers an `input-required` task. cabal accepts this for group tasks today; other tasks wait on cabal#145 |
+| `cabal.inbox` | ListTasks, `input-required`, every persona | The tasks waiting on you, each with the agent's question, newest first |
+| `cabal.answer` | SendMessage with `taskId` | Answers an `input-required` task: it goes back in the queue (cabal issues 423 and 145) |
 | `cabal.cancel` | CancelTask | Cancels a running task |
 
 ```mermaid
@@ -107,6 +108,37 @@ Run these against the cabal whose personas you want (`CABAL_HOME` and
    claude mcp add --transport http cabal http://127.0.0.1:19720/mcp \
      --header "Authorization: Bearer $(cat client.jwt)"
    ```
+
+## Inbox: hear when an agent asks you something
+
+An agent that needs you ends its turn with the task in `input-required` and its
+question as the status message. `cabal.inbox` lists every such task you sent,
+across all the personas you hold a token for. It reads cabal's state, not
+notifications, so a missed hook or a restart loses nothing. A group task shows
+once, whichever member asked (it needs cabal PR 446).
+
+`contrib/claude-code/cabal_inbox_hook.py` puts that list in front of a Claude
+Code session. At session start it prints everything waiting. On each prompt it
+prints only tasks this session hasn't been told about yet. It needs Python 3.11
+or later and nothing else, and it never blocks the session: on any failure it
+prints nothing.
+
+```toml
+# ~/.config/liminal/cabal-inbox.toml (or CABAL_INBOX_URL / _TOKEN_FILE / _TIMEOUT)
+url = "http://127.0.0.1:19720/mcp"
+token_file = "~/.config/liminal/client.jwt"
+```
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/liminal/contrib/claude-code/cabal_inbox_hook.py", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/liminal/contrib/claude-code/cabal_inbox_hook.py", "timeout": 10 }] }]
+  }
+}
+```
+
+Set `CABAL_INBOX_DEBUG=1` to have it say on stderr what it did.
 
 ## Revoke
 
