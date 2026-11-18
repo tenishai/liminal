@@ -267,7 +267,14 @@ class CabalHandler:
                     "parts": [{"text": text}],
                 }
                 result = await self._rpc(agent, token, "SendMessage", {"message": message})
-                return ToolResult.json(summarize(result.get("task") or {}))
+                task = result.get("task")
+                if isinstance(task, dict):
+                    return ToolResult.json(summarize(task))
+                reply = result.get("message")
+                if isinstance(reply, dict):
+                    # A persona may answer with a direct Message, as on send.
+                    return ToolResult.json({"outcome": "replied", "agent": agent, "reply": _text(reply.get("parts"))})
+                return ToolResult.failure(f"cabal answered SendMessage on {agent} with neither a task nor a message")
             if name == "cancel":
                 tid = _required_str(payload, "task_id")
                 result = await self._rpc(agent, token, "CancelTask", {"id": tid})

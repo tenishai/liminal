@@ -275,3 +275,17 @@ async def test_missing_task_id_is_refused() -> None:
     assert result.is_error
     assert "'task_id'" in result.error
     assert seen == []
+
+
+async def test_answer_reports_a_direct_message_reply() -> None:
+    reply = {"messageId": "m", "role": "ROLE_AGENT", "parts": [{"text": "noted"}]}
+    handler, _ = _handler(_ok({"message": reply}))
+    data = _data(await handler.dispatch("answer", {"agent": "wright-secundus", "task_id": "t-1", "text": "B"}, _ctx()))
+    assert data == {"outcome": "replied", "agent": "wright-secundus", "reply": "noted"}
+
+
+async def test_answer_with_neither_task_nor_message_is_a_failure() -> None:
+    handler, _ = _handler(_ok({}))
+    result = await handler.dispatch("answer", {"agent": "wright-secundus", "task_id": "t-1", "text": "B"}, _ctx())
+    assert result.is_error
+    assert "neither a task nor a message" in result.error
