@@ -93,6 +93,17 @@ def render(waiting: list[dict], errors: list[dict], header: str) -> str:
 
 
 def main() -> int:
+    """The hook's promise is that it never blocks or breaks the session, so
+    every failure, from a config typo to a malformed reply, ends here: nothing
+    printed, exit 0, the reason on stderr."""
+    try:
+        return _main()
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        print(f"cabal-inbox: {type(exc).__name__}: {exc}"[:300], file=sys.stderr)
+        return 0
+
+
+def _main() -> int:
     try:
         event = json.load(sys.stdin)
     except (ValueError, OSError):

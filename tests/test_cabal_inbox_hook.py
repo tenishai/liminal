@@ -106,3 +106,22 @@ def test_fetch_reads_the_handlers_text_content(hook, monkeypatch) -> None:
     assert hook.fetch_inbox("http://x/mcp", "tok", 5)["waiting"][0]["task_id"] == "t-9"
     assert sent["auth"] == "Bearer tok"
     assert sent["body"]["params"] == {"name": "cabal.inbox", "arguments": {}}
+
+
+def test_a_broken_config_file_never_blocks_the_session(hook, tmp_path, monkeypatch, capsys) -> None:
+    """Temperance on PR 231: a TOML typo raised outside every try."""
+    bad = tmp_path / "bad.toml"
+    bad.write_text('url = "http://x/mcp\n')  # unterminated string
+    monkeypatch.setattr(hook, "CONFIG", bad)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"hook_event_name": "SessionStart", "session_id": "s"})))
+    assert hook.main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "TOMLDecodeError" in captured.err
+
+
+def test_a_malformed_inbox_entry_never_blocks_the_session(hook, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(hook, "fetch_inbox", lambda *a: {"waiting": [{"question": "no id or agent"}]})
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"hook_event_name": "SessionStart", "session_id": "s"})))
+    assert hook.main() == 0
+    assert capsys.readouterr().out == ""
