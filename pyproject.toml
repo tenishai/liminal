@@ -60,6 +60,7 @@ files      = "liminal.handlers.files:get_handler"
 memory     = "liminal.handlers.memory:get_handler"
 notify     = "liminal.handlers.notify:get_handler"
 aws        = "liminal.handlers.aws:get_handler"
+cabal      = "liminal.handlers.cabal:get_handler"
 
 [project.urls]
 Source = "https://github.com/tenishai/liminal"

@@ -6,6 +6,20 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Added
+
+- **`cabal` handler** (#189). A person's own MCP agent (Claude Code, goose, pi) sends tasks to
+  cabal's personas and collects them: `cabal.agents`, `send`, `task`, `tasks`, `answer`,
+  `cancel`, made as A2A v1.0 calls to `/agents/{agent}/a2a`. The caller's grant is its credential
+  set, one `CABAL_TOKEN_<AGENT>` dispatch token per persona. `send` returns at once; a send that
+  may have reached cabal without a reply returns `outcome: "uncertain"` with its contextId, which
+  `tasks` settles. Setup and revocation: docs/cabal-handler.md.
+
+### Changed
+
+- `serve --cabal-url` exports `LIMINAL_CABAL_URL` before handler discovery when the variable is
+  unset, so handlers that read it (the cabal handler) get the flag's value.
+
 ## [0.9.3] — 2026-11-01
 
 ### Fixed
