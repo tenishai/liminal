@@ -14,6 +14,10 @@ Each line cites the pull request that made the change.
   set, one `CABAL_TOKEN_<AGENT>` dispatch token per persona. `send` returns at once; a send that
   may have reached cabal without a reply returns `outcome: "uncertain"` with its contextId, which
   `tasks` settles. Setup and revocation: docs/cabal-handler.md.
+- **`cabal.inbox`** (cabal#314). The tasks waiting on the caller (`input-required`) across every
+  persona it holds a token for, newest first, each with the agent's question, a group task once.
+  `contrib/claude-code/cabal_inbox_hook.py` prints them into a Claude Code session at start and
+  when a new one arrives (docs/cabal-handler.md, "Inbox").
 
 ### Changed
 
