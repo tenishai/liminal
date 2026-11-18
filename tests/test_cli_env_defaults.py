@@ -83,3 +83,29 @@ def _serve_args(cli, extra: list[str], monkeypatch):
     except SystemExit:
         pass
     return captured["ns"]
+
+
+def test_cabal_url_flag_reaches_handler_factories(monkeypatch) -> None:
+    """Handler factories read the environment, so `serve --cabal-url` exports
+    LIMINAL_CABAL_URL before discovery when it is unset: the cabal handler then
+    sends its A2A calls to the same cabal (liminal#189)."""
+    import os
+
+    import liminal.registry
+
+    seen = {}
+
+    def spy(*a, **kw):
+        seen["url"] = os.environ.get("LIMINAL_CABAL_URL")
+        raise SystemExit(0)  # stop before serving
+
+    # setenv, not delenv: it records the old value, so the export main() makes
+    # is undone after the test instead of leaking into later ones.
+    monkeypatch.setenv("LIMINAL_CABAL_URL", "")
+    monkeypatch.setattr(liminal.registry, "discover_handlers", spy)
+    cli = _parser()
+    try:
+        cli.main(["serve", "--cabal-url", "http://cabal.test:7400"])
+    except SystemExit:
+        pass
+    assert seen["url"] == "http://cabal.test:7400"

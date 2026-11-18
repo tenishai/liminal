@@ -71,6 +71,19 @@ Run these against the cabal whose personas you want (`CABAL_HOME` and
    `secret set` without `--value` prompts with hidden input, so the token stays
    out of shell history and `ps`; paste the file's contents there.
 
+   `--aud` is the persona's dispatch audience, which is its bulletin name for a
+   persona this cabal runs. ergon registers its agents as `federated` rows, so
+   for an ergon set the audience is the row's `federation_audience`,
+   `ergon-<set>-<agent>` (the wright set's `wright-secundus` is
+   `ergon-wright-wright-secundus`). With the bare name cabal refuses the send:
+   `token aud='wright-secundus' cannot dispatch to 'wright-secundus' (requires
+   operator or colleague scope)`. The secret key stays the bulletin name,
+   `CABAL_TOKEN_WRIGHT_SECUNDUS`.
+
+   To send to a cabal group (`send` with `group`), hold a token for any one
+   member and name it as `agent`; cabal starts the task on whichever member is
+   idle.
+
    If the cabal sets `[guardrails] delegation_edges = true`, add
    `"agent:ext-operator-local" = ["<persona>", ...]` under
    `[guardrails.caller_edges]`, or every send is refused.
@@ -102,7 +115,11 @@ curl -X POST "$CABAL_URL/admin/token/revoke" -H "Authorization: Bearer $OPERATOR
   -H "Content-Type: application/json" -d '{"sub": "agent:ext-operator-local"}'
 ```
 
-That stops the client token at liminal and every dispatch token at cabal.
+Every dispatch token stops at cabal at once: each `cabal.*` call then fails with
+`HTTP 401 ... was revoked`. liminal does not read cabal's revocation list
+(issue 228), so the client token still opens liminal, and `tools/list` still
+answers, until it expires. With `--allowed-handler cabal` that leaves nothing
+usable, but keep the client token's TTL short.
 
 ## Behaviour worth knowing
 
