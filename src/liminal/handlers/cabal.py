@@ -19,9 +19,10 @@ Fire-and-collect. `send` always asks cabal to return immediately, so a task that
 runs for an hour doesn't hold the MCP call open; the caller polls `task`.
 
 Uncertain delivery. If the request may have reached cabal but no reply came
-back (a read timeout, a dropped connection), the task may or may not exist. The
-handler says so (`outcome: "uncertain"`) instead of guessing, and returns the
-contextId it generated for the send, so `tasks(agent, context_id)` settles it.
+back (a read timeout, a dropped connection, a 5xx), the task may or may not exist.
+The handler says so (`outcome: "uncertain"`) instead of guessing, and returns the
+contextId the send carried (the caller's, or one generated when it gave none), so
+`tasks(agent, context_id)` settles it.
 
 Server config (environment, read once):
     LIMINAL_CABAL_A2A_URL     cabal's base URL for A2A calls (default LIMINAL_CABAL_URL)
