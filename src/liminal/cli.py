@@ -358,6 +358,11 @@ def main(argv: list[str] | None = None) -> int:
         # (Prudence #41 review).
         from liminal.registry import discover_handlers
 
+        # Handler factories read their config from the environment. The cabal
+        # handler sends A2A calls to the same cabal --cabal-url names, so a
+        # flag given without the variable still reaches it (liminal#189).
+        if args.cabal_url and not os.environ.get("LIMINAL_CABAL_URL"):
+            os.environ["LIMINAL_CABAL_URL"] = args.cabal_url
         reg = discover_handlers()
         if args.trust_registry:
             import tomllib

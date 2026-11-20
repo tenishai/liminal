@@ -1,7 +1,7 @@
 ---
 card: repo-card:liminal
-updated: 2026-10-30
-anchor: pyproject.toml sha=130daedbe085b562227e47579ce5cf540bae34f5
+updated: 2026-11-17
+anchor: pyproject.toml sha=b34799a72998b63fc078838f02ee877dae99eb53
 anchor: src/liminal/server/routes.py sha=04a35efd8275fa5216f499ac97babd331986a5e7
 ---
 # liminal — repo card
@@ -26,7 +26,7 @@ SEAMS → card:
 - client            src/liminal/client/mcp.py + library.py  (MCP client lib cabal imports)  → docs/arch/client.md
 - (uncarded) server/secret_guard.py: shape-based pre-dispatch scan of files.write/memory.commit/notify.send content; fail-closed, ON unless `LIMINAL_SECRET_GUARD` is falsey.
 - (uncarded) server/auth.py: JWTVerifier Protocol; URLJWKSVerifier (RS256 pin, iss/aud/exp/iat, needs `cabal_persona`|`persona` AND `sub`), MultiIssuerJWKSVerifier (peeks unverified `iss` only to pick keys), ExchangingVerifier (an issuer with `exchange_uri` in the registry: a genuine wrong-audience token is traded at the issuer and the answer verified in full; off unless set).
-- (uncarded) handlers/: scratchpad (in-memory per (identity,agent)), files (empty allowlist default; `LIMINAL_FILES_ALLOWED_PATHS`, os.pathsep-separated absolute paths, is a GRANT for a caller with no `files.allowed_paths` claim and a CEILING for one that has the claim; `files.write` to protected paths, hard-linked files and `LIMINAL_FILES_PROTECTED_PATTERNS` matches is refused without `files:protected_writes`), web (host allowlist + private-range SSRF deny), memory (techne), notify (webhook transport), aws (read-only AWS through one IAM role per account trusting the gateway's own Google identity over OIDC; accounts from `[tool_extras."aws.roles"]`, an agent reaches `<name>` when its grant holds `<name>:read`; read verbs only, data-plane reads refused by name; admin routes /admin/aws/identity and /admin/aws/probe for a set-up page).
+- (uncarded) handlers/: scratchpad (in-memory per (identity,agent)), files (empty allowlist default; `LIMINAL_FILES_ALLOWED_PATHS`, os.pathsep-separated absolute paths, is a GRANT for a caller with no `files.allowed_paths` claim and a CEILING for one that has the claim; `files.write` to protected paths, hard-linked files and `LIMINAL_FILES_PROTECTED_PATTERNS` matches is refused without `files:protected_writes`), web (host allowlist + private-range SSRF deny), memory (techne), notify (webhook transport), cabal (sends tasks to cabal personas over A2A v1.0 for a person's own MCP agent, #189: one `CABAL_TOKEN_<AGENT>` dispatch token per persona in the caller's credential set is its grant; `send` always returnImmediately; a send that may have arrived without a reply returns `outcome: uncertain` with its contextId; `inbox` lists the caller's input-required tasks across its personas, and contrib/claude-code/cabal_inbox_hook.py surfaces them in a Claude Code session; URL from `LIMINAL_CABAL_A2A_URL` or `LIMINAL_CABAL_URL`, which `serve --cabal-url` exports when unset; docs/cabal-handler.md), aws (read-only AWS through one IAM role per account trusting the gateway's own Google identity over OIDC; accounts from `[tool_extras."aws.roles"]`, an agent reaches `<name>` when its grant holds `<name>:read`; read verbs only, data-plane reads refused by name; admin routes /admin/aws/identity and /admin/aws/probe for a set-up page).
 
 DEPS:
 - cabal → liminal: cabal/src/cabal/core/tools/mcp_proxy.py lazily imports `liminal.client.AsyncMCPClient`; cabal's pyproject registers `patterns`/`documents`/`code`/`archivist` into the `liminal.handlers` group; cabal serves `GET /admin/secrets/{persona}/{handler}` and mints the JWTs liminal verifies (single-cabal defaults `--issuer cabal-core`, `--audience liminal`).

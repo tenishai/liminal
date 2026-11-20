@@ -8,8 +8,18 @@ Each line cites the pull request that made the change.
 
 ### Added
 
+- **`cabal` handler** (#189). A person's own MCP agent (Claude Code, goose, pi) sends tasks to
+  cabal's personas and collects them: `cabal.agents`, `send`, `task`, `tasks`, `answer`,
+  `cancel`, made as A2A v1.0 calls to `/agents/{agent}/a2a`. The caller's grant is its credential
+  set, one `CABAL_TOKEN_<AGENT>` dispatch token per persona. `send` returns at once; a send that
+  may have reached cabal without a reply returns `outcome: "uncertain"` with its contextId, which
+  `tasks` settles. Setup and revocation: docs/cabal-handler.md.
+- **`cabal.inbox`** (cabal#314). The tasks waiting on the caller (`input-required`) across every
+  persona it holds a token for, newest first, each with the agent's question, a group task once.
+  `contrib/claude-code/cabal_inbox_hook.py` prints them into a Claude Code session at start and
+  when a new one arrives (docs/cabal-handler.md, "Inbox").
 - **`exchange_uri` on a trust-registry issuer: liminal trades a standing token itself**
-  (sovereign mode, off by default). A caller that is a team's own code had to write the
+  (#227; sovereign mode, off by default). A caller that is a team's own code had to write the
   trade of its issuer's standing token for a short `aud`-scoped one, and the refresh, by
   hand. With `exchange_uri` set on its `[[issuer]]`, it presents the standing token and
   liminal makes the trade: only after the signature and issuer hold (`AudienceError`),
@@ -17,6 +27,11 @@ Each line cites the pull request that made the change.
   most. The trade hands a caller nothing it could not fetch with one request of its own.
   What changes is that the standing token reaches liminal, so it is opt-in per issuer and
   the guide says what it costs. A registry without the key behaves as before.
+
+### Changed
+
+- `serve --cabal-url` exports `LIMINAL_CABAL_URL` before handler discovery when the variable is
+  unset, so handlers that read it (the cabal handler) get the flag's value.
 
 ## [0.9.3] — 2026-11-01
 
