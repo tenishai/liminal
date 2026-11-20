@@ -352,6 +352,27 @@ _RESULT_OPEN = (
 
 _RESULT_CLOSE = "[END UNTRUSTED TOOL RESULT {nonce}]"
 
+# An empty result framed as a bare BEGIN/END pair tells the model nothing: it
+# cannot tell a refusal from a success with no body (liminal#233). The notice
+# goes INSIDE the envelope so the nonce and `_meta` contract are unchanged.
+_EMPTY_RESULT_NOTICE = (
+    "(liminal: target {target!r} returned no content. This is not a "
+    "confirmation that the call succeeded or had any effect.)"
+)
+
+
+def is_empty_result(content: list[dict[str, Any]]) -> bool:
+    """True when a result carries nothing the model could read: no blocks, or
+    only text blocks that are blank once hidden unicode is stripped. Any
+    non-text block (image, resource, json) counts as content."""
+    for block in content:
+        if block.get("type") != "text":
+            return False
+        text = block.get("text")
+        if not isinstance(text, str) or _strip_hidden_unicode(text).strip():
+            return False
+    return True
+
 
 def new_envelope_nonce() -> str:
     """A fresh envelope nonce. Separate from ``frame_untrusted_result`` so a
@@ -379,6 +400,9 @@ def frame_untrusted_result(
     Block STRUCTURE is preserved — keys, nesting and non-string values are
     untouched; only string contents are rewritten.
 
+    An empty result (see ``is_empty_result``) gets an explicit notice inside
+    the envelope instead of a bare open/close pair (liminal#233).
+
     Returns a NEW list — the input is not mutated.
     """
     framed: list[dict[str, Any]] = [
@@ -386,5 +410,9 @@ def frame_untrusted_result(
     ]
     for block in content:
         framed.append(_strip_hidden_deep(block))
+    if is_empty_result(content):
+        framed.append(
+            {"type": "text", "text": _EMPTY_RESULT_NOTICE.format(target=target_name)}
+        )
     framed.append({"type": "text", "text": _RESULT_CLOSE.format(nonce=nonce)})
     return framed
