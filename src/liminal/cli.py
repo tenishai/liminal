@@ -658,7 +658,10 @@ def main(argv: list[str] | None = None) -> int:
             from liminal.server import create_admin_app
 
             admin_app = create_admin_app(
-                jwt_verifier=verifier, policy_store=policy_store, live_targets=live_targets
+                jwt_verifier=verifier,
+                policy_store=policy_store,
+                live_targets=live_targets,
+                registry=reg,
             )
             print(
                 f"admin surface: own listener on "

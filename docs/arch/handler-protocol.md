@@ -1,6 +1,6 @@
 ---
 card: arch-card:liminal-handler-protocol
-updated: 2026-10-26
+updated: 2026-11-19
 anchor: src/liminal/protocol/handler.py sha=adfe378e757a7889f1a9a6f48983859fccb44296
 anchor: src/liminal/registry/discover.py sha=86f56acb6ddbc4bced63386de8d0f2ddb97d8579
 anchor: src/liminal/protocol/card.py sha=9e018dcdfcd627b674cd1ee69848c03367ed3e3f
@@ -9,7 +9,7 @@ anchor: src/liminal/protocol/context.py sha=5b7f5acd34f387424f37b19dbf51eff3f0c8
 # handler-protocol — the in-process extension surface
 
 WHAT / SEAM: `Handler` (typing.Protocol, runtime_checkable; protocol/handler.py): `tools() -> list[ToolSpec]` (sync), `capability_card() -> dict`, `async dispatch(name, payload, ctx: Context) -> ToolResult`. Optional `startup()`/`shutdown()` coroutines and a sync `status() -> str | None` (unconfigured message for /healthz, #191) are called if present (target/inprocess.py). Structural: no base class needed.
-TYPES: ToolSpec(name, description, input_schema) and ToolResult(content, is_error, error; `.text/.json/.failure`) in protocol/tool.py, both pydantic `extra="allow"`. CapabilityCard (protocol/card.py): handler, description, tools[{name, description, required_scope, requires_operator}], activation (always|on_demand; only `always` is used), credential_keys (documentation only, not enforced), labels, required_scope.
+TYPES: ToolSpec(name, description, input_schema) and ToolResult(content, is_error, error; `.text/.json/.failure`) in protocol/tool.py, both pydantic `extra="allow"`. CapabilityCard (protocol/card.py): handler, description, tools[{name, description, required_scope, requires_operator}], activation (always|on_demand; only `always` is used), credential_keys (documentation only, not enforced), labels, required_scope. Cards and tool entries are `extra="allow"`, and GET /admin/cards (server/admin.py) returns every loaded card as written, so a field a handler adds is a contract with whoever reads it, not with liminal. kobo reads card `labels.vendor` and `labels.audience` (`own-code`), and per tool `permissions` (catalogue names, `["*"]` = any of the vendor's) and `risk` (`low|write|irreversible`) to derive which handlers and scopes a permission opens (docs/writing-a-handler.md, "Fields a room reads from your card"). liminal validates none of them.
 Context (protocol/context.py): identity (persona), agent_name, credentials, issuer, extra (sandbox config), granted_scopes (server grant only), audit (hook; sovereign only).
 OPS / FLOW: registry/discover.py:discover_handlers scans entry-point group `liminal.handlers` → `ep.load()` → factory() → isinstance(Handler) → validate_card → Registry keyed by ENTRY-POINT NAME (not card.handler). create_app wraps each record as an InProcessTarget in the Multiplexer. Tool is exposed as `<ep-name>.<tool>`.
 INVARIANTS:

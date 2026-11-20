@@ -617,3 +617,5 @@ def test_admin_port_splits_the_surfaces(monkeypatch, tmp_path) -> None:
             assert (await admin_client.post("/mcp", json={})).status_code == 404
 
     asyncio.run(_probe())
+    # The admin listener lists the handlers the data plane loaded (GET /admin/cards).
+    assert admin_app.state.registry is data_app.state.registry

@@ -16,7 +16,7 @@ version; `liminal version` says which one that is.
 | techne | Backs the `memory` handler (the `[memory]` extra). | Optional. Without it `memory` refuses every call. |
 | cabal | Mints the JWTs liminal verifies and publishes the JWKS for them, serves per-persona secrets at `/admin/secrets/{persona}/{handler}`, and ships four handlers (`patterns`, `documents`, `code`, `archivist`) through liminal's `liminal.handlers` entry points. cabal personas reach liminal through `liminal.client` (cabal's `[mcp]` extra). | Optional. Any RS256 JWT issuer works, and auth-off needs none. |
 | daedalus | An agent runtime that uses liminal as its tool provider (`tools.provider: liminal`, or a `liminal.url` sidecar). | Optional consumer. |
-| kobo | Drives a sovereign liminal's admin plane: writes each agent's grant (`/admin/policy/grant`), reads per-agent activity from the audit log (`/admin/policy/audit`), and runs the AWS set-up checks (`/admin/aws/*`). It also bakes `liminal_url` into the bundles it composes. | Optional consumer. |
+| kobo | Drives a sovereign liminal's admin plane: writes each agent's grant (`/admin/policy/grant`), reads per-agent activity from the audit log (`/admin/policy/audit`), reads the loaded handlers' cards to work out what each permission opens (`/admin/cards`), and runs the AWS set-up checks (`/admin/aws/*`). It also bakes `liminal_url` into the bundles it composes. | Optional consumer. |
 | gojira | Deploys liminal from `gojira.yaml` in the repo (gateway class, port 9100, `/healthz`). | Optional. |
 
 liminal imports none of these at module scope. techne and botocore load lazily inside
@@ -72,6 +72,7 @@ the live targets: `PUT /admin/targets/<name>` with a `[[target]]` body (minus `n
 adds or replaces a federated target while serving, `DELETE` removes it, `GET
 /admin/targets` lists live and file targets. Live targets persist in the policy
 database and come back at boot; the targets file stays the seed and keeps its names.
+`GET /admin/cards` lists every loaded handler's capability card, labels included.
 `--admin-port` moves `/admin/*` to its own listener (bind with `--admin-host`, default
 `127.0.0.1`) so a network policy can fence it. Without it the admin routes share the
 data port, and liminal warns at startup.
