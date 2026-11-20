@@ -350,6 +350,7 @@ def create_admin_app(
     jwt_verifier: JWTVerifier,
     policy_store: PolicyStore,
     live_targets: LiveTargets | None = None,
+    registry: Registry | None = None,
 ) -> FastAPI:
     """A FastAPI app carrying ONLY the federation admin surface (liminal#74).
 
@@ -365,5 +366,8 @@ def create_admin_app(
     # The same controller the data-plane app was built with (liminal#222):
     # a PUT here lands on that app's multiplexer.
     app.state.live_targets = live_targets
+    # The registry the data-plane app serves, so `GET /admin/cards` lists the
+    # handlers that are actually loaded. Without it that route answers 404.
+    app.state.registry = registry
     app.include_router(build_admin_router())
     return app

@@ -95,6 +95,32 @@ Use per-tool `required_scope` to split a handler's tools into a stricter and
 a looser group (e.g. memory recall vs. commit, files read vs. write) — never
 to accidentally loosen a tool below what the handler already declares.
 
+## Fields a room reads from your card
+
+liminal checks a card's shape and passes the rest through: `labels` on the card
+(strings only) and any extra key on a tool. `GET /admin/cards` on the admin plane
+returns every loaded card as written. kobo reads four of these fields to work out
+which handlers and scopes an agent's permissions open. A handler can then put a
+vendor's tools in front of a room's agents with no change to the room:
+
+- `labels.vendor`: the vendor whose permissions open this handler, as the room's
+  permission catalogue names it (`gcp`, `okta`). No permission opens a card without
+  one; only a grant someone writes by hand reaches that handler.
+- `labels.audience: own-code`: only an agent that runs its team's own code may hold
+  the handler. Use it when a tool hands a credential to its caller, because a model
+  must never hold one.
+- `permissions` on each tool: the catalogue permissions that open it. `["*"]` means
+  any permission of the vendor. A tool with no `permissions` is opened by none.
+- `risk` on each tool: `low` (reads, changes nothing), `write` (changes something a
+  person can change back) or `irreversible` (cannot be undone).
+
+Scopes still come from `required_scope`. For each tool a permission opens, the room
+puts that tool's scope on the grant: the tool's own `required_scope`, or the card's
+if the tool has none.
+
+liminal enforces none of these fields, and a mistake in one does not make the card
+invalid. Test them in your handler package.
+
 ## Testing convention
 
 Every shipped handler has its own test module: `test_files_handler.py`,

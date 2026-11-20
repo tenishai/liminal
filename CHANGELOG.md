@@ -6,8 +6,20 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-19
+
 ### Added
 
+- **`GET /admin/cards`: every loaded handler's capability card** (#232). The admin plane
+  returns each handler's card under the name a grant's `allowed_handlers` and a tool name
+  use. Fields a handler adds beside the schema's come back as written: the card's `labels`,
+  and keys on a tool such as `permissions` and `risk`. A governing service can then work
+  out what a grant opens from the handlers themselves. kobo uses it to derive which
+  handlers and scopes each permission opens, instead of keeping a table of another
+  install's handlers (docs/writing-a-handler.md, "Fields a room reads from your card"). An
+  admin plane built without the registry answers 404, never an empty list, so a reader
+  keeps what it knew. `create_admin_app` takes `registry=`, and `serve --admin-port`
+  passes the registry it discovered.
 - **`cabal` handler** (#189). A person's own MCP agent (Claude Code, goose, pi) sends tasks to
   cabal's personas and collects them: `cabal.agents`, `send`, `task`, `tasks`, `answer`,
   `cancel`, made as A2A v1.0 calls to `/agents/{agent}/a2a`. The caller's grant is its credential
@@ -32,6 +44,16 @@ Each line cites the pull request that made the change.
 
 - `serve --cabal-url` exports `LIMINAL_CABAL_URL` before handler discovery when the variable is
   unset, so handlers that read it (the cabal handler) get the flag's value.
+
+### Upgrading
+
+- An embedding that builds its admin listener with `create_admin_app` passes `registry=`
+  (the data plane's) to serve `GET /admin/cards`; without it that route answers 404.
+  `liminal serve` already does.
+- The `cabal` handler ships in liminal's own entry points, so every install now loads it. A
+  persona whose grant allows every handler (`allowed_handlers` unset) also sees `cabal.*`.
+  Those tools refuse every call until `LIMINAL_CABAL_A2A_URL` or `LIMINAL_CABAL_URL` is set
+  and the caller holds a `CABAL_TOKEN_<AGENT>` credential.
 
 ## [0.9.3] — 2026-11-01
 

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from liminal.handlers import aws as aws_handler
+from liminal.registry import Registry
 from liminal.server.auth import AuthError, VerifiedClaims
 from liminal.server.live_targets import FileOwned, LiveTargetError, LiveTargets, UnknownLiveTarget
 from liminal.server.policy import ADMIN_SCOPE, ParentImmutable, PolicyStore
@@ -200,6 +201,32 @@ def build_admin_router() -> APIRouter:
             return await aws_handler.probe(body.role_arn, body.audience, who=claims.identity)
         except aws_handler.AwsError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/admin/cards")
+    async def cards(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        """Every loaded handler's capability card, under the name a grant's
+        `allowed_handlers` and a tool name use. Fields a handler adds beside
+        the schema's (card `labels`, a tool's `permissions` or `risk`) come
+        back as written, so a governing service can derive what a grant
+        opens from the handlers themselves instead of a table of its own.
+        Federated targets are not handlers; `GET /admin/targets` lists them.
+        Never an empty list for "unknown": an admin plane built without the
+        registry answers 404, so a reader keeps what it knew."""
+        await _admin_auth(request, authorization)
+        registry: Registry | None = getattr(request.app.state, "registry", None)
+        if registry is None:
+            raise HTTPException(
+                status_code=404,
+                detail="handler cards are not served by this admin plane (it was built without the registry)",
+            )
+        return {
+            "cards": [
+                {"name": record.name, "card": record.card.model_dump(mode="json")}
+                for record in sorted(registry, key=lambda r: r.name)
+            ]
+        }
 
     @router.get("/admin/policy/audit")
     async def audit(
