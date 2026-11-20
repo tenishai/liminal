@@ -77,6 +77,20 @@ database and come back at boot; the targets file stays the seed and keeps its na
 `127.0.0.1`) so a network policy can fence it. Without it the admin routes share the
 data port, and liminal warns at startup.
 
+**Standing-token exchange (off by default).** A caller normally trades its issuer's
+long-lived standing token for a short one whose `aud` is this service, and presents the
+short one. Add `exchange_uri = "https://issuer/its/exchange/route"` to an `[[issuer]]`
+and callers from that issuer may present the standing token instead: liminal verifies
+its signature and issuer, POSTs it to that route as a bearer, and uses the
+`access_token` that comes back exactly as if the caller had sent it. The issuer keeps
+its own gates, revocation included. An identity is reused for five minutes at most, so
+that is how long a revoked standing token still works here; a refusal (401, 403) is
+remembered for thirty seconds; an issuer that does not answer denies the caller. Turn
+it on for callers that cannot reasonably write the trade and its refresh themselves,
+and know the cost: the standing token then travels to liminal on every request, so
+serve `/mcp` over TLS or keep it on a private network. liminal never logs or stores it.
+Sovereign mode only; `--jwks-url` has no such option.
+
 ### Per-persona scoping
 
 - **Which handlers a caller sees.** The `liminal.allowed_handlers` list in the token's

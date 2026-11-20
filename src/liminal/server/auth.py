@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -41,6 +42,16 @@ DEFAULT_LEEWAY_SECONDS = 30
 
 class AuthError(RuntimeError):
     """JWT could not be verified."""
+
+
+class AudienceError(AuthError):
+    """A token this issuer really signed, aimed at a different service.
+
+    Raised by `_verify_against_keyset` only after the signature, the RS256 pin
+    and `iss` have held, so catching it means the token is genuine and merely
+    carries another audience. `ExchangingVerifier` relies on that order: it is
+    what keeps an unsigned or forged token from ever being sent to an issuer.
+    """
 
 
 @dataclass(slots=True)
@@ -235,7 +246,9 @@ def _verify_against_keyset(
         raise AuthError(f"unexpected iss: {claims.get('iss')!r}")
 
     if not _aud_ok(claims.get("aud"), expected_audience):
-        raise AuthError("invalid_audience")
+        # Keep this after the signature, alg and iss checks above: see
+        # AudienceError.
+        raise AudienceError("invalid_audience")
 
     exp = claims.get("exp")
     if exp is None or now > int(exp) + leeway_seconds:
@@ -256,6 +269,145 @@ def _verify_against_keyset(
         raw=claims,
         issuer=str(claims.get("iss")),
     )
+
+
+# ---- Standing-token exchange (sovereign, opt-in per issuer) ---------------
+
+# How long an exchanged identity is reused before the issuer is asked again.
+# It is also how long a revoked standing token keeps working here, so it stays
+# well inside the exchanged token's own life.
+EXCHANGE_CACHE_SECONDS = 300.0
+# How long an issuer's refusal is remembered, so a caller looping on a revoked
+# token costs the issuer one request per window and not one per call.
+EXCHANGE_REFUSAL_SECONDS = 30.0
+# An exchanged token is dropped from the cache this long before it expires.
+EXCHANGE_EXPIRY_MARGIN_SECONDS = 60.0
+EXCHANGE_CACHE_MAX = 4096
+
+
+@dataclass
+class ExchangingVerifier:
+    """Accepts an issuer's standing token by exchanging it at that issuer.
+
+    A caller normally exchanges its standing token (long-lived, audience = its
+    issuer) for a short one aimed at this service, and presents the short one.
+    A caller that is somebody's own code has to write that exchange and its
+    refresh by hand. With `exchange_uri` set for its issuer, it may present the
+    standing token instead and this verifier makes the exchange for it:
+
+      1. `gateway` verifies the token as usual. A token already aimed at this
+         service passes here and no request is made.
+      2. Only on `AudienceError` (signature, alg and iss already held) the token
+         is POSTed to `exchange_uri` as a bearer. The issuer applies its own
+         gates there, revocation among them, and answers `access_token`.
+      3. `gateway` verifies that answer in full. Its claims are what the caller
+         gets, exactly as if it had made the exchange itself.
+
+    So the exchange hands a caller nothing it could not already fetch with one
+    request of its own; what changes is that the standing token travels to this
+    service. It is never logged and never stored: the cache is keyed by its
+    SHA-256 and holds only the verified claims of the exchanged token.
+
+    The standing token's own audience is never accepted as authority here. An
+    issuer that stops answering, or refuses, denies the caller (fail closed).
+    """
+
+    gateway: JWTVerifier
+    exchange_uri: str
+    cache_seconds: float = EXCHANGE_CACHE_SECONDS
+    refusal_seconds: float = EXCHANGE_REFUSAL_SECONDS
+
+    # sha256(standing token) -> (monotonic deadline, claims or the refusal text)
+    _cache: dict[str, tuple[float, VerifiedClaims | str]] = field(
+        default_factory=dict, init=False
+    )
+    _locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False)
+    # Injectable AsyncClient for tests; production creates per-request clients.
+    _client: httpx.AsyncClient | None = field(default=None, init=False)
+
+    async def verify(self, token: str) -> VerifiedClaims:
+        try:
+            return await self.gateway.verify(token)
+        except AudienceError:
+            pass
+        key = hashlib.sha256(token.encode()).hexdigest()
+        hit = self._cached(key)
+        if hit is not None:
+            return hit
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                # Another request for the same token may have just finished.
+                hit = self._cached(key)
+                if hit is not None:
+                    return hit
+                return await self._exchange(key, token)
+        finally:
+            if not lock.locked():
+                self._locks.pop(key, None)
+
+    def _cached(self, key: str) -> VerifiedClaims | None:
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        deadline, value = entry
+        if time.monotonic() >= deadline:
+            self._cache.pop(key, None)
+            return None
+        if isinstance(value, str):
+            raise AuthError(value)
+        return value
+
+    def _remember(self, key: str, seconds: float, value: VerifiedClaims | str) -> None:
+        if seconds <= 0:
+            return
+        if len(self._cache) >= EXCHANGE_CACHE_MAX:
+            now = time.monotonic()
+            for stale in [k for k, (deadline, _) in self._cache.items() if deadline <= now]:
+                self._cache.pop(stale, None)
+            while len(self._cache) >= EXCHANGE_CACHE_MAX:
+                self._cache.pop(next(iter(self._cache)))
+        self._cache[key] = (time.monotonic() + seconds, value)
+
+    async def _exchange(self, key: str, token: str) -> VerifiedClaims:
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            if self._client is not None:
+                resp = await self._client.post(self.exchange_uri, headers=headers)
+            else:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                    resp = await client.post(self.exchange_uri, headers=headers)
+        except httpx.HTTPError as exc:
+            # Not remembered: the issuer being away says nothing about the token.
+            # Only the error's type is reported, never its text or the request.
+            log.warning("auth.exchange.unavailable", url=self.exchange_uri, error=type(exc).__name__)
+            raise AuthError(
+                f"token exchange unavailable at {self.exchange_uri}: {type(exc).__name__}"
+            ) from None
+        if resp.status_code in (401, 403):
+            why = f"token exchange refused by its issuer ({resp.status_code})"
+            self._remember(key, self.refusal_seconds, why)
+            log.warning("auth.exchange.refused", url=self.exchange_uri, status=resp.status_code)
+            raise AuthError(why)
+        if resp.status_code != 200:
+            log.warning("auth.exchange.failed", url=self.exchange_uri, status=resp.status_code)
+            raise AuthError(f"token exchange failed at {self.exchange_uri} ({resp.status_code})")
+        try:
+            exchanged = resp.json().get("access_token")
+        except (ValueError, AttributeError):
+            exchanged = None
+        if not isinstance(exchanged, str) or not exchanged:
+            raise AuthError("token exchange returned no access_token")
+        # The full check, audience included. A second wrong-audience token is
+        # an AudienceError out of here, never another exchange.
+        claims = await self.gateway.verify(exchanged)
+        try:
+            remaining = float(claims.raw["exp"]) - time.time() - EXCHANGE_EXPIRY_MARGIN_SECONDS
+        except (KeyError, TypeError, ValueError):
+            remaining = 0.0
+        self._remember(key, min(self.cache_seconds, remaining), claims)
+        log.info("auth.exchange.ok", issuer=claims.issuer, persona=claims.identity)
+        return claims
 
 
 # ---- Multi-issuer (sovereign / federated) ---------------------------------
@@ -316,6 +468,10 @@ class IssuerConfig:
     id: str
     jwks_uri: str
     parent: bool = False
+    # Where this issuer exchanges its standing token for one aimed at this
+    # service. Unset (the default): a standing token is refused for its
+    # audience, as it always was. See ExchangingVerifier.
+    exchange_uri: str | None = None
 
 
 def build_multi_issuer_verifier(
@@ -340,13 +496,21 @@ def build_multi_issuer_verifier(
         raise ValueError(
             f"exactly one parent issuer required, got {len(parents)}: {sorted(parents)}"
         )
-    registry: dict[str, JWTVerifier] = {
-        i.id: URLJWKSVerifier(
+    registry: dict[str, JWTVerifier] = {}
+    for i in issuers:
+        inner: JWTVerifier = URLJWKSVerifier(
             jwks_url=i.jwks_uri,
             expected_issuer=i.id,
             expected_audience=service_audience,
             cache_ttl_seconds=cache_ttl_seconds,
         )
-        for i in issuers
-    }
+        if i.exchange_uri is not None:
+            if not isinstance(i.exchange_uri, str) or not i.exchange_uri.startswith(
+                ("http://", "https://")
+            ):
+                raise ValueError(
+                    f"issuer {i.id!r}: exchange_uri must be an http(s) URL, got {i.exchange_uri!r}"
+                )
+            inner = ExchangingVerifier(gateway=inner, exchange_uri=i.exchange_uri)
+        registry[i.id] = inner
     return MultiIssuerJWKSVerifier(registry=registry, parents=parents)
