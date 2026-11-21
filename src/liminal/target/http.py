@@ -77,6 +77,7 @@ from liminal.target.inspect import (
     UnsanitizableResult,
     frame_untrusted_result,
     inspect_catalog,
+    is_empty_result,
     new_envelope_nonce,
 )
 
@@ -239,6 +240,11 @@ class HttpTarget(Target):
                 return ToolResult.failure(
                     f"refused: {self.name!r} returned content that could not be "
                     f"sanitised ({exc}); it is not forwarded"
+                )
+            if is_empty_result(content):
+                log.warning(
+                    "http_target.result_empty",
+                    target=self.name, tool=tool, is_error=outcome.is_error,
                 )
             return ToolResult(
                 content=framed,

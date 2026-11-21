@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog
 
 from liminal.protocol import Context
 from liminal.target import HttpTarget, TargetSpec
@@ -516,3 +517,58 @@ def test_the_retracted_starlette_claim_is_not_stated_as_fact_anywhere() -> None:
         + "\n  ".join(offenders)
         + "\nMultiplexer.dispatch catches it; it never reaches Starlette."
     )
+
+
+# ---- empty results (liminal#233) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [],
+        [{"type": "text", "text": ""}],
+        [{"type": "text", "text": "  \n"}],
+        [{"type": "text", "text": "\u200b\u202e"}],  # blank once hidden unicode goes
+    ],
+)
+def test_empty_result_gets_an_explicit_notice_inside_the_envelope(content) -> None:
+    framed = frame_untrusted_result(content, "evil", "n")
+    assert framed[0]["text"].startswith("[BEGIN UNTRUSTED TOOL RESULT n")
+    assert framed[-1]["text"] == "[END UNTRUSTED TOOL RESULT n]"
+    notice = framed[-2]["text"]
+    assert "returned no content" in notice
+    assert "not a confirmation" in notice
+    assert "'evil'" in notice
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "text", "text": "hit"}],
+        [{"type": "image", "data": "", "mimeType": "image/png"}],
+        [{"type": "text", "text": ""}, {"type": "resource", "resource": {"uri": "x://y"}}],
+    ],
+)
+def test_non_empty_result_gets_no_notice(content) -> None:
+    framed = frame_untrusted_result(content, "evil", "n")
+    assert not any("returned no content" in b.get("text", "") for b in framed)
+    assert len(framed) == len(content) + 2
+
+
+@pytest.mark.asyncio
+async def test_empty_upstream_result_is_flagged_and_logged() -> None:
+    target = HttpTarget(
+        _spec(trust="untrusted"),
+        http_client=_client(_responder(on_call={"search": {"content": []}})),
+    )
+    await target.startup()
+    with structlog.testing.capture_logs() as logs:
+        result = await target.dispatch("search", {}, _ctx())
+    await target.shutdown()
+
+    assert result.liminal_untrusted is True
+    assert "not a confirmation" in _text(result)
+    empty = [e for e in logs if e["event"] == "http_target.result_empty"]
+    assert len(empty) == 1
+    assert empty[0]["target"] == "evil" and empty[0]["tool"] == "search"
+    assert empty[0]["log_level"] == "warning"
