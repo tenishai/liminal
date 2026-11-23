@@ -18,10 +18,15 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
+- **Security: `liminal serve` refuses `LIMINAL_AUTH_DISABLED=1` on a non-loopback bind** (#214). Auth off with `--host 0.0.0.0` used to start with only a warning, so anyone who could reach the port got every tool. Startup now exits 2 unless the host is 127.0.0.0/8, `::1` or `localhost`; any other value (`0.0.0.0`, `::`, a LAN IP, a hostname) counts as non-loopback. `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` overrides it, with a loud warning, for a container whose port is published to loopback only. **Breaking** for anyone running auth-off on a non-loopback bind; see Upgrading.
 - **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed. It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.
 - **CI runs on GitHub-hosted runners.** `unit` and `integration` moved off the self-hosted runner, fork PRs run the unit suite (the `fork-pr` job is gone), and a `ci` summary job fails unless `unit` succeeded, so a skipped job cannot pass. A branch ruleset requires `ci` and `dco`.
 - **Licence: MIT.** The project moves from AGPL-3.0-or-later to MIT, with the agreement of every contributor (tenishai/agora discussion 69). Releases already published keep the licence they shipped under.
 - **Docs:** README and docs corrected against the code (handler count, credential and wire-format claims, JWT issuer requirements, `labels` validation, stale CI text).
+
+### Upgrading
+
+- A deployment that sets `LIMINAL_AUTH_DISABLED=1` with a non-loopback `--host` (including the Docker image's default `--host 0.0.0.0`) now fails at startup with exit 2. Bind `127.0.0.1`, configure a verifier, or set `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` and publish the port to loopback only (`-p 127.0.0.1:9100:9100`).
 
 ## [0.10.0] — 2026-11-19
 

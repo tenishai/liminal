@@ -124,6 +124,52 @@ def _parse_trust_registry_extra(
     return policy_tool_extras, None
 
 
+_ALLOW_NONLOOPBACK_ENV = "LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK"
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True only for 127.0.0.0/8, ::1 and `localhost`. Anything else (0.0.0.0, ::,
+    a LAN IP, any other hostname, a value that does not parse) is not loopback:
+    the check fails closed."""
+    import ipaddress
+
+    h = host.strip().strip("[]").lower()
+    if h == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_loopback
+
+
+def _check_auth_off_bind(host: str, auth_disabled: bool) -> str | None:
+    """Gate for `serve` (liminal#214): auth off plus a non-loopback bind hands
+    every tool to anyone who can reach the port. Returns an error message to
+    exit 2 with, or None to proceed. LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1
+    overrides, with a warning, for a container whose port is published to
+    loopback only."""
+    if not auth_disabled or _is_loopback_host(host):
+        return None
+    if (os.environ.get(_ALLOW_NONLOOPBACK_ENV, "").lower()) in {"1", "true", "yes", "on"}:
+        print(
+            f"warning: LIMINAL_AUTH_DISABLED=1 with --host {host} (not loopback), "
+            f"allowed by {_ALLOW_NONLOOPBACK_ENV}=1. Anyone who can reach this port "
+            "has every tool, with no authentication. The port must be published to "
+            "loopback only (e.g. docker -p 127.0.0.1:9100:9100).",
+            file=sys.stderr,
+        )
+        return None
+    return (
+        f"LIMINAL_AUTH_DISABLED=1 with --host {host} (not loopback): anyone who can "
+        "reach the port would get every tool with no authentication. Bind "
+        "127.0.0.1, configure --jwks-url or --trust-registry, or, for a container "
+        f"whose port is published to loopback only, set {_ALLOW_NONLOOPBACK_ENV}=1."
+    )
+
+
 def _env(name: str, fallback: str | None = None) -> str | None:
     """A `serve` flag's default from the environment: a container image bakes
     its CMD once, so where a deployment cannot change argv (a platform that
@@ -174,8 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         "--host",
         default="127.0.0.1",
         help=(
-            "Bind address (default 127.0.0.1). 0.0.0.0 listens on every interface; "
-            "never pair that with LIMINAL_AUTH_DISABLED=1."
+            "Bind address (default 127.0.0.1). 0.0.0.0 listens on every interface. "
+            "With LIMINAL_AUTH_DISABLED=1 a non-loopback host is refused (exit 2) "
+            "unless LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1."
         ),
     )
     serve_p.add_argument("--port", type=int, default=9100, help="Bind port (default 9100).")
@@ -330,6 +377,11 @@ def main(argv: list[str] | None = None) -> int:
             create_app,
         )
         from liminal.server.app import _auth_disabled_from_env
+
+        bind_error = _check_auth_off_bind(args.host, _auth_disabled_from_env())
+        if bind_error:
+            print(f"error: {bind_error}", file=sys.stderr)
+            return 2
 
         # Config guards: single-issuer (--jwks-url) XOR sovereign
         # (--trust-registry + --policy-db).

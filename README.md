@@ -210,7 +210,10 @@ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
 #   LIMINAL_ALLOWED_ORIGINS=https://ui.example:8443
 
 # production — verify caller JWTs against Cabal Core's JWKS (swap in your host).
-# --host defaults to 127.0.0.1; 0.0.0.0 listens on every interface:
+# --host defaults to 127.0.0.1; 0.0.0.0 listens on every interface. (With
+# LIMINAL_AUTH_DISABLED=1, serve refuses any non-loopback --host and exits 2, unless
+# LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1 is set for a container whose port is
+# published to loopback only.)
 liminal serve --host 0.0.0.0 --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
 ```
 
