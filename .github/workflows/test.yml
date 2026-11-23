@@ -106,6 +106,71 @@ jobs:
         working-directory: liminal
         run: pytest -q
 
+  # ---- dco: sign-off check, hosted, every PR ----------------------------------
+  # Each non-merge commit the PR adds needs a Signed-off-by line matching its
+  # author (CONTRIBUTING.md, "Developer Certificate of Origin"). Hosted, with a
+  # read-only token and no secrets: it executes nothing from the PR, so fork PRs
+  # are safe to run here and need no guard. The check runs git only, before any
+  # install step.
+  #
+  # DEPENDABOT EXEMPTION: a commit authored EXACTLY as
+  # `dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>` is
+  # skipped, but only on same-repo PRs. Dependabot signs off as
+  # `dependabot[bot] <support@github.com>`, which never matches its noreply
+  # author address, so every Dependabot PR would otherwise fail. A fork PR can
+  # forge any commit author, so it gets no exemption.
+  dco:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout liminal
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: liminal
+
+      - name: DCO sign-off check
+        working-directory: liminal
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          export GIT_NO_REPLACE_OBJECTS=1
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --quiet --unshallow origin "$BASE_SHA" "$HEAD_SHA"
+          else
+            git fetch --no-tags --quiet origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+          commits=$(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA")
+          if [ -z "$commits" ]; then
+            echo "::error::DCO: no non-merge commits in $BASE_SHA..$HEAD_SHA, so nothing was checked"
+            exit 1
+          fi
+          bad=0
+          skipped=0
+          for c in $commits; do
+            author=$(git log -1 --format='%an <%ae>' "$c")
+            if [ "$SAME_REPO" = true ] && [ "$author" = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>" ]; then
+              echo "DCO: skipping ${c:0:12} as a bot commit ($author)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            # no `grep -q`: an early exit SIGPIPEs `tr`, and pipefail reads that as a miss
+            if ! git log -1 --format=%B "$c" | tr -d '\r' | grep -Fxi -- "Signed-off-by: $author" >/dev/null; then
+              echo "::error::DCO: commit ${c:0:12} has no 'Signed-off-by: $author' trailer"
+              bad=1
+            fi
+          done
+          if [ "$bad" -ne 0 ]; then
+            echo "Sign off with 'git commit -s'. To fix existing commits, see 'Developer Certificate of Origin' in CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "DCO: $(($(echo "$commits" | wc -l | tr -d ' ') - skipped)) commit(s) signed off by their authors$( [ "$skipped" -gt 0 ] && printf ' (%s skipped as bot commits)' "$skipped" )"
+
   # ---- ci: the one check a branch ruleset requires, with dco ----------------
   # Required by name, so it must always report. `if: always()` runs it when unit
   # fails or is cancelled, and the step fails on anything but success: a skipped
