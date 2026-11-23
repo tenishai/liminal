@@ -1,9 +1,12 @@
 name: test
 
-# unit runs on every push to main and every same-repo PR (fork PRs run fork-pr,
-# its hosted twin) — no private deps, no secret required.
+# Every job runs on GitHub-hosted runners: this repo is public, and no runner we
+# operate may be reachable from it. tests/test_ci_workflow.py pins that.
+# unit runs on every push to main and every pull request, fork PRs included —
+# no private deps, no secret required.
 # integration runs on workflow_dispatch only. It clones the techne sibling
 # without a token, so it works once techne is public (agora#31).
+# `ci` and `dco` are the two checks a branch ruleset requires.
 on:
   push:
     branches: [main]
@@ -16,20 +19,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---- unit: no sibling deps; push, dispatch, same-repo PRs -----------------
-  # Fork PRs run fork-pr instead. tests/test_ci_workflow.py pins the guard below.
-  # Runs on a self-hosted runner (since 2026-09-23, after hosted Actions stopped on a billing failure).
-  # The `if:` below is DEFENCE IN DEPTH for honest fork PRs, not a security boundary:
-  # for `pull_request` GitHub runs the PR's own copy of this file, so a fork can
-  # delete the guard (see the ATTACKER-EDITABLE block in tenishai/techne's test.yml).
-  # The real controls: this repo is private, "Run workflows from fork pull requests"
-  # is off (checked 2026-09-23), and the runner stops before the go-public flip.
-  # That flip is tracked in tenishai/agora#20; the sequence is
-  # docs/go-public-runbook.md in tenishai/techne.
+  # ---- unit: no sibling deps; push, dispatch, every pull request ------------
+  # No `if:` on purpose: a skipped unit would leave fork PRs ungated. The `ci` job
+  # below turns anything but success into a failure.
   unit:
-    runs-on: [self-hosted, linux, x64, liminal-ci]
-    timeout-minutes: 20  # one small runner; a hung job starves it
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
@@ -47,15 +42,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: liminal/pyproject.toml
-      # The runner CONTAINER persists between jobs (same machine name across legs), so
-      # setup-python's interpreter in _work/_tool is shared: a bare `pip install` would
-      # let one job's packages satisfy the next job's imports (liminal#103 r1). A fresh
-      # venv per job, first on PATH, keeps each run to what it installed itself.
-      # setup-python stays (proven on this runner) rather than the image's interpreters.
-      - name: Fresh venv for this job
-        run: |
-          python -m venv --clear "$GITHUB_WORKSPACE/.venv-ci"
-          echo "$GITHUB_WORKSPACE/.venv-ci/bin" >> "$GITHUB_PATH"
 
       - name: Install (no siblings)
         working-directory: liminal
@@ -74,8 +60,8 @@ jobs:
   # ---- integration: full suite with techne ----------------------------------
   integration:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, linux, x64, liminal-ci]
-    timeout-minutes: 20  # one small runner; a hung job starves it
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.12']
@@ -108,15 +94,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: liminal/pyproject.toml
-      # The runner CONTAINER persists between jobs (same machine name across legs), so
-      # setup-python's interpreter in _work/_tool is shared: a bare `pip install` would
-      # let one job's packages satisfy the next job's imports (liminal#103 r1). A fresh
-      # venv per job, first on PATH, keeps each run to what it installed itself.
-      # setup-python stays (proven on this runner) rather than the image's interpreters.
-      - name: Fresh venv for this job
-        run: |
-          python -m venv --clear "$GITHUB_WORKSPACE/.venv-ci"
-          echo "$GITHUB_WORKSPACE/.venv-ci/bin" >> "$GITHUB_PATH"
 
       - name: Install (with techne)
         working-directory: liminal
@@ -129,105 +106,18 @@ jobs:
         working-directory: liminal
         run: pytest -q
 
-  # ---- fork-pr: the complement of unit's guard, on a hosted runner -----------
-  fork-pr:
+  # ---- ci: the one check a branch ruleset requires, with dco ----------------
+  # Required by name, so it must always report. `if: always()` runs it when unit
+  # fails or is cancelled, and the step fails on anything but success: a skipped
+  # job counts as passing in GitHub's UI, and must not here.
+  ci:
     runs-on: ubuntu-latest
-    # Techne's spelling (tenishai/techne#590): the literal negation, so an event nobody named still
-    # gets a hosted run instead of an empty Checks tab.
-    if: ${{ !(github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
-    strategy:
-      matrix:
-        python-version: ['3.12', '3.13']
-      fail-fast: false
-
+    needs: [unit]
+    if: always()
     steps:
-      - name: Checkout liminal
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          path: liminal
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: liminal/pyproject.toml
-
-      - name: Install (no siblings)
-        working-directory: liminal
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Ruff lint
-        working-directory: liminal
-        run: ruff check src tests
-
-      - name: Pytest (unit — memory handler tests auto-skip via importorskip)
-        working-directory: liminal
-        run: pytest -q
-
-  # ---- dco: sign-off check, hosted, every PR ----------------------------------
-  # Each non-merge commit the PR adds needs a Signed-off-by line matching its
-  # author (CONTRIBUTING.md, "Developer Certificate of Origin"). Hosted, with a
-  # read-only token and no secrets: it executes nothing from the PR, so fork PRs
-  # are safe to run here and need no guard. The check runs git only, before any
-  # install step.
-  #
-  # DEPENDABOT EXEMPTION: a commit authored EXACTLY as
-  # `dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>` is
-  # skipped, but only on same-repo PRs. Dependabot signs off as
-  # `dependabot[bot] <support@github.com>`, which never matches its noreply
-  # author address, so every Dependabot PR would otherwise fail. A fork PR can
-  # forge any commit author, so it gets no exemption.
-  dco:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout liminal
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          path: liminal
-
-      - name: DCO sign-off check
-        working-directory: liminal
+      - name: Fail unless unit succeeded
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          UNIT_RESULT: ${{ needs.unit.result }}
         run: |
-          set -euo pipefail
-          export GIT_NO_REPLACE_OBJECTS=1
-          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-            git fetch --no-tags --quiet --unshallow origin "$BASE_SHA" "$HEAD_SHA"
-          else
-            git fetch --no-tags --quiet origin "$BASE_SHA" "$HEAD_SHA"
-          fi
-          commits=$(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA")
-          if [ -z "$commits" ]; then
-            echo "::error::DCO: no non-merge commits in $BASE_SHA..$HEAD_SHA, so nothing was checked"
-            exit 1
-          fi
-          bad=0
-          skipped=0
-          for c in $commits; do
-            author=$(git log -1 --format='%an <%ae>' "$c")
-            if [ "$SAME_REPO" = true ] && [ "$author" = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>" ]; then
-              echo "DCO: skipping ${c:0:12} as a bot commit ($author)"
-              skipped=$((skipped + 1))
-              continue
-            fi
-            # no `grep -q`: an early exit SIGPIPEs `tr`, and pipefail reads that as a miss
-            if ! git log -1 --format=%B "$c" | tr -d '\r' | grep -Fxi -- "Signed-off-by: $author" >/dev/null; then
-              echo "::error::DCO: commit ${c:0:12} has no 'Signed-off-by: $author' trailer"
-              bad=1
-            fi
-          done
-          if [ "$bad" -ne 0 ]; then
-            echo "Sign off with 'git commit -s'. To fix existing commits, see 'Developer Certificate of Origin' in CONTRIBUTING.md."
-            exit 1
-          fi
-          echo "DCO: $(($(echo "$commits" | wc -l | tr -d ' ') - skipped)) commit(s) signed off by their authors$( [ "$skipped" -gt 0 ] && printf ' (%s skipped as bot commits)' "$skipped" )"
+          echo "unit: $UNIT_RESULT"
+          [ "$UNIT_RESULT" = success ]

@@ -1,46 +1,26 @@
-"""Every self-hosted CI job keeps the fork guard (#104).
+"""CI runs on GitHub-hosted runners only, and `ci` is a gate a skip cannot pass (#104).
 
-Ported from tenishai/techne's tests/test_ci_workflow_triggers.py, where this
-exists because a copied job twice inherited the self-hosted runner without the
-guard. A new job copies `runs-on` from its neighbour and does not copy the
-`if:`, and nothing fails when it doesn't. Now something does.
+Ported from tenishai/techne's tests/test_ci_workflow_triggers.py. The repo is
+public, so three rules hold and this file pins each:
 
-The guard is defence in depth only. For `pull_request` GitHub runs the PR's own
-copy of test.yml, so a fork can delete it. The real controls are private
-visibility and fork-PR workflows being off; see the comment in test.yml. This
-test keeps honest copies honest.
+1. No job in any workflow targets a self-hosted runner. A self-hosted runner
+   reachable from a public repo would run a stranger's pull request.
+2. `unit` has no `if:`, so it runs for every pull request, forks included. A
+   fork PR runs the real tests rather than a guarded twin.
+3. A `ci` job, which a branch ruleset requires by name together with `dco`,
+   fails unless `unit` succeeded. GitHub counts a skipped job as passing, so
+   `ci` runs with `if: always()` and checks the result itself.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "test.yml"
-
-# The one allow-list, spelled once, in techne's form (techne#590). Compared
-# EXACTLY rather than fuzzily ("does the `if` mention fork?"), because the
-# realistic regression is not a missing guard but a subtly different one.
-# Dropping the `github.event_name` clause reads correct and fails open.
-TRUSTED_POOL = (
-    "github.event_name == 'push' "
-    "|| github.event_name == 'workflow_dispatch' "
-    "|| (github.event_name == 'pull_request' "
-    "&& github.event.pull_request.head.repo.full_name == github.repository)"
-)
-FORK_GUARD = "${{ " + TRUSTED_POOL + " }}"
-# The literal negation of the same string, not a hand-written mirror, so an
-# event nobody named gets a hosted run instead of an empty Checks tab.
-FORK_ONLY = "${{ !(" + TRUSTED_POOL + ") }}"
-# `integration` is manual dispatch only. That is narrower than the allow-list
-# (workflow_dispatch is one of its three branches, and needs write access), so
-# it is the one other exact `if:` a self-hosted job may carry. Widening it, for
-# example with `|| github.ref == 'refs/heads/main'` once techne is public, must
-# move it onto FORK_GUARD's shape and fails here until it does.
-DISPATCH_ONLY = "github.event_name == 'workflow_dispatch'"
-SELF_HOSTED_GUARDS = (FORK_GUARD, DISPATCH_ONLY)
 
 
 def _jobs() -> dict:
@@ -51,30 +31,15 @@ def _jobs() -> dict:
 # runners" reference (read 2026-10-04). An exact set, not a pattern: a pattern
 # such as `ubuntu-*` would also pass a custom label like `ubuntu-liminal-ci`.
 # Anything not listed, including larger-runner labels, is treated as
-# self-hosted and must carry the guard; add a label here when CI starts using it.
+# self-hosted; add a label here when CI starts using it.
 HOSTED_LABELS = frozenset(
     {
-        "ubuntu-slim",
-        "ubuntu-latest",
-        "ubuntu-22.04",
-        "ubuntu-24.04",
-        "ubuntu-26.04",
-        "ubuntu-22.04-arm",
-        "ubuntu-24.04-arm",
-        "ubuntu-26.04-arm",
-        "windows-latest",
-        "windows-2022",
-        "windows-2025",
-        "windows-2025-vs2026",
-        "windows-11-arm",
-        "windows-11-vs2026-arm",
-        "macos-latest",
-        "macos-14",
-        "macos-15",
-        "macos-26",
-        "macos-15-intel",
-        "macos-26-intel",
-        "xcode-27",
+        "ubuntu-slim", "ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04",
+        "ubuntu-22.04-arm", "ubuntu-24.04-arm", "ubuntu-26.04-arm",
+        "windows-latest", "windows-2022", "windows-2025", "windows-2025-vs2026",
+        "windows-11-arm", "windows-11-vs2026-arm",
+        "macos-latest", "macos-14", "macos-15", "macos-26",
+        "macos-15-intel", "macos-26-intel", "xcode-27",
     }
 )
 
@@ -85,10 +50,10 @@ def _is_self_hosted(runs_on) -> bool:
 
     Decided by allow-listing hosted labels, not by looking for `self-hosted`. A
     runner is addressed by any label it carries, so `runs-on: spark` or
-    `runs-on: liminal-ci` reaches the self-hosted pool without the word appearing.
+    `runs-on: liminal-ci` reaches a self-hosted runner without the word appearing.
     An expression (`${{ vars.CI_RUNNER }}`) cannot be resolved here, a `group:`
     names a runner group, and an unreadable value is unknown, so all of those
-    count as self-hosted and must carry the guard. Fail closed.
+    count as self-hosted. Fail closed.
     """
     if isinstance(runs_on, dict):
         return bool(runs_on.get("group")) or _is_self_hosted(runs_on.get("labels"))
@@ -100,12 +65,17 @@ def _is_self_hosted(runs_on) -> bool:
 
 
 # Events only someone with write access can fire. A workflow triggered by
-# nothing else cannot be started from a fork, so its self-hosted jobs are in the
-# same trust pool as FORK_GUARD without a per-job `if:`. Deliberately narrow:
+# nothing else cannot be started from a fork. Deliberately narrow:
 # `pull_request` (forks), `pull_request_target`, `workflow_run`, `issue_comment`
-# and the rest are not here, and a workflow using any of them must guard each
-# self-hosted job instead.
+# and the rest are not here.
 TRUSTED_TRIGGERS = frozenset({"push", "workflow_dispatch"})
+
+# The one `runs-on` an unresolvable expression may carry: gojira-ci.yaml, which
+# Gojira generates (so it cannot be edited here). Unset, the variable falls back
+# to a hosted runner; set, it names a runner an operator chose. It is allowed
+# only in a workflow that a fork cannot trigger (TRUSTED_TRIGGERS), so the
+# generated file may never gain a `pull_request` trigger without this failing.
+GOJIRA_RUNS_ON = "${{ vars.CI_RUNNER || 'ubuntu-latest' }}"
 
 
 def _triggers(doc: dict) -> set[str]:
@@ -125,40 +95,36 @@ def _triggers(doc: dict) -> set[str]:
     return {"<unreadable on:>"}
 
 
-def _unguarded_self_hosted_jobs(doc: dict) -> dict:
-    """Self-hosted jobs that neither carry an exact guard nor sit in a workflow
-    only trusted events can trigger (name -> its `if`)."""
-    if _triggers(doc) <= TRUSTED_TRIGGERS:
-        return {}
+def _self_hosted_jobs(doc: dict) -> dict:
+    """Jobs that target a self-hosted runner (name -> its `runs-on`), minus the
+    one allowed exception: GOJIRA_RUNS_ON in a workflow only trusted events can
+    trigger."""
+    trusted_only = _triggers(doc) <= TRUSTED_TRIGGERS
     jobs = doc.get("jobs") or {}
     return {
-        name: job.get("if")
+        name: job.get("runs-on")
         for name, job in sorted(jobs.items())
-        if _is_self_hosted(job.get("runs-on")) and job.get("if") not in SELF_HOSTED_GUARDS
+        if _is_self_hosted(job.get("runs-on"))
+        and not (trusted_only and job.get("runs-on") == GOJIRA_RUNS_ON)
     }
 
 
-def test_every_workflow_guards_its_self_hosted_jobs():
+def test_no_workflow_targets_a_self_hosted_runner():
     """Every workflow file, not only test.yml (`*.y*ml` because Actions reads
-    both). This replaced a tripwire that failed on any second workflow: a new
-    file is now checked rather than refused, so a workflow added by another
-    tool (Gojira's, for one) passes when it is safe and fails when it is not.
-    Like the rest of this file it keeps honest copies honest: a fork's pull
-    request runs the fork's own workflow files (see the module docstring)."""
+    both), so a workflow added by another tool passes when it is safe and fails
+    when it is not."""
     workflows = sorted(WORKFLOW.parent.glob("*.y*ml"))
-    assert WORKFLOW in workflows, (
-        "test.yml is missing; this test would read nothing it was written for"
-    )
+    assert WORKFLOW in workflows, "test.yml is missing; this test would read nothing it was written for"
     offenders = {}
     for path in workflows:
-        bad = _unguarded_self_hosted_jobs(yaml.safe_load(path.read_text()))
+        bad = _self_hosted_jobs(yaml.safe_load(path.read_text()))
         if bad:
             offenders[path.name] = bad
     assert not offenders, (
-        "a self-hosted job can be started from a fork (#104).\n"
-        f"offenders (workflow -> job -> its `if`): {offenders}\n"
-        f"Either trigger the workflow only on {sorted(TRUSTED_TRIGGERS)}, or give each "
-        f"self-hosted job the exact guard:\n  {FORK_GUARD}\n  or: {DISPATCH_ONLY}"
+        "this repo is public: no job may run on a self-hosted runner, because a fork's "
+        "pull request would run its code there.\n"
+        f"offenders (workflow -> job -> its `runs-on`): {offenders}\n"
+        "Use a GitHub-hosted label from HOSTED_LABELS."
     )
 
 
@@ -182,7 +148,7 @@ def test_triggers_reads_every_spelling(on, expected):
         ("ubuntu-latest", False),
         (["ubuntu-24.04-arm"], False),
         ("macos-15", False),
-        ("spark", True),  # a bare custom label reaches the pool
+        ("spark", True),  # a bare custom label reaches a runner
         ("liminal-ci", True),
         ("ubuntu-liminal-ci", True),  # a hosted-looking prefix is not enough
         ("windows-spark", True),
@@ -200,74 +166,75 @@ def test_is_self_hosted_allow_lists_hosted_images(runs_on, self_hosted):
     assert _is_self_hosted(runs_on) is self_hosted
 
 
-SELF_HOSTED_JOB = {"runs-on": "${{ vars.CI_RUNNER || 'ubuntu-latest' }}"}
-
-
 @pytest.mark.parametrize(
-    ("on", "job", "unguarded"),
+    ("on", "runs_on", "flagged"),
     [
-        # push + dispatch only: safe without a per-job `if:` (gojira-ci.yaml's shape).
-        ({"push": {"branches": ["main"]}, "workflow_dispatch": {}}, SELF_HOSTED_JOB, False),
-        # A fork PR could start it, whatever spelling reaches the pool.
-        (["push", "pull_request"], SELF_HOSTED_JOB, True),
-        (["pull_request"], {"runs-on": "spark"}, True),
-        (["pull_request"], {"runs-on": ["self-hosted", "liminal-ci"]}, True),
-        (["pull_request"], {"runs-on": {"labels": ["spark"]}}, True),
-        (["pull_request"], {"runs-on": {"group": "large"}}, True),
-        (["pull_request"], {"runs-on": "ubuntu-liminal-ci"}, True),
-        (["pull_request"], {"runs-on": []}, True),
-        (["pull_request"], {}, True),  # no runs-on at all
-        ("pull_request_target", SELF_HOSTED_JOB, True),
-        ({"workflow_run": {"workflows": ["test"]}}, SELF_HOSTED_JOB, True),
-        # The same exposure is fine once the job carries the exact guard.
-        (["push", "pull_request"], {**SELF_HOSTED_JOB, "if": FORK_GUARD}, False),
-        # A hosted job is out of scope whatever the triggers.
-        (["pull_request"], {"runs-on": "ubuntu-latest"}, False),
+        # Every spelling that reaches a self-hosted runner is flagged on a PR workflow.
+        (["pull_request"], "spark", True),
+        (["pull_request"], ["self-hosted", "linux", "x64", "liminal-ci"], True),
+        (["pull_request"], {"labels": ["spark"]}, True),
+        (["pull_request"], {"group": "large"}, True),
+        (["pull_request"], "ubuntu-liminal-ci", True),
+        (["pull_request"], "${{ vars.CI_RUNNER }}", True),  # unresolvable: fail closed
+        (["pull_request"], GOJIRA_RUNS_ON, True),  # the exception needs trusted triggers
+        (["pull_request"], [], True),
+        (["pull_request"], None, True),  # no runs-on at all
+        # Flagged on a push-only workflow too: trusted triggers do not excuse a pool.
+        (["push"], "spark", True),
+        (["push"], "${{ vars.CI_RUNNER }}", True),
+        # Hosted is fine whatever the triggers.
+        (["pull_request"], "ubuntu-latest", False),
+        (["pull_request"], {"labels": ["ubuntu-24.04"]}, False),
+        # The one exception: gojira's expression, in a workflow a fork cannot trigger.
+        ({"push": {"branches": ["main"]}, "workflow_dispatch": {}}, GOJIRA_RUNS_ON, False),
         # An unreadable `on:` is never trusted.
-        (None, SELF_HOSTED_JOB, True),
+        (None, GOJIRA_RUNS_ON, True),
     ],
 )
-def test_the_rule_decides_each_shape(on, job, unguarded):
+def test_the_rule_decides_each_shape(on, runs_on, flagged):
+    job = {} if runs_on is None else {"runs-on": runs_on}
     doc = {True: on, "jobs": {"build": job}}
-    assert bool(_unguarded_self_hosted_jobs(doc)) is unguarded
+    assert bool(_self_hosted_jobs(doc)) is flagged
 
 
-def test_every_self_hosted_job_carries_the_fork_guard():
-    jobs = _jobs()
-    self_hosted = {name for name, job in jobs.items() if _is_self_hosted(job.get("runs-on"))}
-    # Without this, a classifier that never matches would pass every job.
-    assert self_hosted, (
-        "no self-hosted job found in test.yml. If CI left the self-hosted runner, "
-        "retire this test deliberately rather than letting it pass on nothing."
+def test_unit_is_never_skipped_on_a_pull_request():
+    """A fork PR must run the real tests. Any job-level `if:` on unit can skip
+    it (and a skipped job reads as passing), so there must be none."""
+    unit = _jobs().get("unit")
+    assert unit is not None, "test.yml has no `unit` job"
+    assert "if" not in unit, (
+        f"unit has `if: {unit.get('if')}`; it must run on every pull_request, forks included"
     )
-
-    offenders = {
-        name: jobs[name].get("if")
-        for name in sorted(self_hosted)
-        if jobs[name].get("if") not in SELF_HOSTED_GUARDS
-    }
-    assert not offenders, (
-        "every self-hosted job must carry the exact fork guard (#104).\n"
-        f"expected: {FORK_GUARD}\n"
-        f"      or: {DISPATCH_ONLY}\n"
-        f"offending jobs (name -> its `if`): {offenders}\n"
-        "A fork PR reaching the runner runs attacker code on the CI host."
+    assert "pull_request" in _triggers(yaml.safe_load(WORKFLOW.read_text())), (
+        "test.yml must trigger on pull_request, or unit never runs for a PR"
     )
 
 
-def test_fork_pr_is_the_literal_negation_on_a_hosted_runner():
-    """The other half. Guarding the self-hosted jobs without a hosted path would
-    leave a fork PR with an empty Checks tab, which reads like "nothing to
-    report"."""
-    fork_pr = _jobs()["fork-pr"]
-    assert fork_pr.get("if") == FORK_ONLY, (
-        f"fork-pr's `if:` must be the literal negation of the fork guard.\n"
-        f"expected: {FORK_ONLY}\n"
-        f"found:    {fork_pr.get('if')}"
+def _ci_step_exit_code(step: dict, unit_result: str) -> int:
+    """Run the `ci` job's step in bash with `${{ needs.unit.result }}` set to
+    `unit_result`, and return its exit code. The substitution is textual, in
+    `run:` and in `env:` values, which covers how a step reads the expression."""
+    expr = "${{ needs.unit.result }}"
+    env = {k: str(v).replace(expr, unit_result) for k, v in (step.get("env") or {}).items()}
+    script = step["run"].replace(expr, unit_result)
+    return subprocess.run(["bash", "-e", "-c", script], env={"PATH": "/usr/bin:/bin", **env}).returncode
+
+
+def test_ci_job_gates_on_unit_succeeding():
+    ci = _jobs().get("ci")
+    assert ci is not None, "test.yml has no `ci` job; a branch ruleset requires it by name"
+    needs = ci.get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "unit" in needs, f"ci must need unit, found needs: {needs}"
+    assert str(ci.get("if")).strip().removeprefix("${{").removesuffix("}}").strip() == "always()", (
+        f"ci must run `if: always()` so it reports when unit fails, is cancelled or is skipped; found {ci.get('if')!r}"
     )
-    assert not _is_self_hosted(fork_pr.get("runs-on")), (
-        "fork-pr runs only for fork PRs; on the self-hosted pool it is the exposure, inverted"
-    )
+    assert not _is_self_hosted(ci.get("runs-on"))
+    steps = ci.get("steps") or []
+    assert len(steps) == 1 and "run" in steps[0], f"ci must be one `run` step, found {steps}"
+    assert _ci_step_exit_code(steps[0], "success") == 0, "ci must pass when unit succeeded"
+    for result in ("failure", "cancelled", "skipped", ""):
+        assert _ci_step_exit_code(steps[0], result) != 0, f"ci must fail when unit's result is {result!r}"
 
 
 def test_every_third_party_action_is_pinned_to_a_full_commit_sha():
