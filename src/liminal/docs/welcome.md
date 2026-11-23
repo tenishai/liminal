@@ -51,11 +51,13 @@ their handlers.
 `LIMINAL_AUTH_DISABLED=1` alongside a verifier. With no verifier and auth on, liminal
 starts but refuses every `tools/list` and `tools/call`.
 
-**When auth-off is acceptable.** Only on loopback. liminal does not check this: the
-default `--host` is `127.0.0.1`, but nothing stops `--host 0.0.0.0` with auth off, and
-then anyone who can reach the port has every tool. The repo's Docker image runs
-`--host 0.0.0.0`, so under auth-off publish it only to loopback (`-p 127.0.0.1:9100:9100`)
-or don't use auth-off there. The startup log prints a `liminal.AUTH_DISABLED` warning so
+**When auth-off is acceptable.** Only on loopback, and liminal enforces it: with
+`LIMINAL_AUTH_DISABLED=1`, `serve` exits 2 unless `--host` is `127.0.0.1` (or another
+127.0.0.0/8 address), `::1` or `localhost`; `0.0.0.0`, `::`, a LAN IP or any other
+hostname is refused. The one override is `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1`,
+for a container whose port is published only to loopback (`-p 127.0.0.1:9100:9100`);
+it starts with a warning. The repo's Docker image runs `--host 0.0.0.0`, so under
+auth-off it needs that override and that port mapping. The startup log prints a `liminal.AUTH_DISABLED` warning so
 it is visible. Two guards stay on in every mode: `POST
 /mcp` refuses an `Origin` that is not loopback (403; allow more with
 `LIMINAL_ALLOWED_ORIGINS`, comma-separated) and any Content-Type other than

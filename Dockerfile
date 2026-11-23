@@ -139,4 +139,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:9100/healthz || exit 1
 
 # --jwks-url and --cabal-url are injected by docker-compose via `command:`.
+# Auth is on in that run. Under LIMINAL_AUTH_DISABLED=1 this 0.0.0.0 bind is
+# refused at startup unless LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1 is also
+# set, and then the port must be published to loopback only (-p 127.0.0.1:9100:9100).
 CMD ["liminal", "serve", "--host", "0.0.0.0", "--port", "9100"]
