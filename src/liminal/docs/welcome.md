@@ -113,7 +113,7 @@ Sovereign mode only; `--jwks-url` has no such option.
   `GET /auth/revocations` (same `LIMINAL_CABAL_TOKEN` bearer) every `--revocation-ttl`
   seconds (default 30) and refuses a token from that cabal (in sovereign mode, the
   parent issuer) whose subject was revoked. It needs a cabal that serves the route
-  (cabal 0.5.0); against an older cabal (404) or one that is down, tokens are accepted
+  (cabal after 0.5.0rc1, unreleased when this was written); against an older cabal (404) or one that is down, tokens are accepted
   until `exp` as before, with one warning.
 
 ### Built-in handlers

@@ -8,10 +8,10 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
-- **Security: liminal refuses tokens whose subject cabal has revoked** (issue 228). It
+- **Security: liminal refuses tokens whose subject cabal has revoked** (issue 228, #245). It
   checked a cabal token's signature, `iss`, `aud` and `exp` but never cabal's revocation
   list, so after `POST /admin/token/revoke` a subject kept every tool that does not call
-  cabal (`web`, `files`, `notify`...) until its token expired, up to 365 days. With
+  cabal (`web`, `files`, `notify`...) until its token expired (a cabal service token can last up to 365 days). With
   `--cabal-url` set, liminal now fetches that cabal's `GET /auth/revocations` (new
   `--revocation-ttl`, default 30s) and refuses its tokens with `iat` before the subject's
   cutoff, as it refuses an expired token. Only that cabal's issuer is checked (in
@@ -24,20 +24,20 @@ Each line cites the pull request that made the change.
   (IPv4-compatible), each carrying the cloud metadata address 169.254.169.254, or to a
   NAT64-wrapped private address such as `64:ff9b::a00:1`, passed. `web` already unwrapped
   these. Both handlers now use one address policy, `liminal/handlers/_netpolicy.py` (deny
-  ranges plus embedded-IPv4 unwrapping), so the two checks cannot drift again.
+  ranges plus embedded-IPv4 unwrapping), so the two checks cannot drift again (#242).
 
 ### Changed
 
-- **An empty result from an untrusted target now carries an explicit notice** (#233). A federated upstream's result with no blocks, or only text that is blank once hidden Unicode is stripped, used to come back as a bare BEGIN/END marker pair, which the model could not tell from a refusal. The envelope now says the target returned no content and that this is not a confirmation, and `http_target.result_empty` is logged with the target and tool name. The nonce and `_meta` contract are unchanged.
-- **Security: `liminal serve` refuses `LIMINAL_AUTH_DISABLED=1` on a non-loopback bind** (#214). Auth off with `--host 0.0.0.0` used to start with only a warning, so anyone who could reach the port got every tool. Startup now exits 2 unless the host is 127.0.0.0/8, `::1` or `localhost`; any other value (`0.0.0.0`, `::`, a LAN IP, a hostname) counts as non-loopback. `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` overrides it, with a loud warning, for a container whose port is published to loopback only. **Breaking** for anyone running auth-off on a non-loopback bind; see Upgrading.
-- **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed. It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.
-- **CI runs on GitHub-hosted runners.** `unit` and `integration` moved off the self-hosted runner, fork PRs run the unit suite (the `fork-pr` job is gone), and a `ci` summary job fails unless `unit` succeeded, so a skipped job cannot pass. A branch ruleset requires `ci` and `dco`.
-- **Licence: MIT.** The project moves from AGPL-3.0-or-later to MIT, with the agreement of every contributor (tenishai/agora discussion 69). Releases already published keep the licence they shipped under.
-- **Docs:** README and docs corrected against the code (handler count, credential and wire-format claims, JWT issuer requirements, `labels` validation, stale CI text).
+- **An empty result from an untrusted target now carries an explicit notice** (#233, fixed in #234). A federated upstream's result with no blocks, or only text that is blank once hidden Unicode is stripped, used to come back as a bare BEGIN/END marker pair, which the model could not tell from a refusal. The envelope now says the target returned no content and that this is not a confirmation, and `http_target.result_empty` is logged with the target and tool name. The nonce and `_meta` contract are unchanged.
+- **Security: `liminal serve` refuses `LIMINAL_AUTH_DISABLED=1` on a non-loopback bind** (#214, #244). Auth off with `--host 0.0.0.0` used to start with only a warning, so anyone who could reach the port got every tool. Startup now exits 2 unless the host is 127.0.0.0/8, `::1` or `localhost`; any other value (`0.0.0.0`, `::`, a LAN IP, a hostname) counts as non-loopback. `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` overrides it, with a loud warning, for a container whose port is published to loopback only. **Breaking** for anyone running auth-off on a non-loopback bind; see Upgrading.
+- **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed (#239). It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.
+- **CI runs on GitHub-hosted runners.** `unit` and `integration` moved off the self-hosted runner, fork PRs run the unit suite (the `fork-pr` job is gone), and a `ci` summary job fails unless `unit` succeeded, so a skipped job cannot pass (#236, #237). A branch ruleset requires `ci` and `dco`.
+- **Licence: MIT.** The project moves from AGPL-3.0-or-later to MIT, with the agreement of every contributor (tenishai/agora discussion 69). Releases already published keep the licence they shipped under (#235).
+- **Docs:** README and docs corrected against the code (handler count, credential and wire-format claims, JWT issuer requirements, `labels` validation, stale CI text) (#241).
 
 ### Upgrading
 
-- Revocation checking (`--revocation-ttl`, default 30s) takes effect only against a cabal that serves `GET /auth/revocations`, which is cabal 0.5.0 and later. Against an older cabal (404) liminal logs one warning and accepts tokens until `exp` as before. It needs `--cabal-url` and the `LIMINAL_CABAL_TOKEN` bearer.
+- Revocation checking (`--revocation-ttl`, default 30s) takes effect only against a cabal that serves `GET /auth/revocations`, which is in cabal after 0.5.0rc1 (merged on cabal main in tenishai/cabal pull request 455, unreleased when this was written). Against an older cabal (404) liminal logs one warning and accepts tokens until `exp` as before. It needs `--cabal-url` and the `LIMINAL_CABAL_TOKEN` bearer.
 - A deployment that sets `LIMINAL_AUTH_DISABLED=1` with a non-loopback `--host` (including the Docker image's default `--host 0.0.0.0`) now fails at startup with exit 2. Bind `127.0.0.1`, configure a verifier, or set `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` and publish the port to loopback only (`-p 127.0.0.1:9100:9100`).
 
 ## [0.10.0] — 2026-11-19
