@@ -8,8 +8,9 @@ README or `docs/design.md`, because they only show up in source.
 
 ## `ctx.extra` is the per-handler operator-config channel
 
-Every shipped handler reads its own operator-supplied config out of
-`ctx.extra` under a `<handler>.<setting>` key: `files.allowed_paths`,
+The `files`, `web`, `memory`, `notify` and `aws` handlers read their own
+operator-supplied config out of `ctx.extra` under a `<handler>.<setting>` key
+(`scratchpad` reads only `mcp.session_id`, and `cabal` reads none): `files.allowed_paths`,
 `web.allowed_hosts`, `memory.db_path`, `notify.allowed_hosts`,
 `notify.webhook_url`, `notify.transport`, `aws.roles`. There's no registration step for
 this — a handler just reads `ctx.extra.get("<handler>.<setting>")` and falls
@@ -37,8 +38,8 @@ config, and a handler must not treat it as if the calling agent chose it.
 Two keys are exceptions, because routes.py copies them from request headers, so
 they are caller input:
 
-- `correlation_id`, from `x-correlation-id` (clamped to 200 characters), on every
-  HTTP `tools/call`.
+- `correlation_id`, from `x-correlation-id` (clamped to 200 characters), on any
+  HTTP `tools/call` that sends the header.
 - `mcp.session_id`, from `Mcp-Session-Id` (clamped to 128 characters), only under
   `LIMINAL_AUTH_DISABLED=1` (#192). The scratchpad keys its buckets on it.
 
@@ -118,14 +119,15 @@ Scopes still come from `required_scope`. For each tool a permission opens, the r
 puts that tool's scope on the grant: the tool's own `required_scope`, or the card's
 if the tool has none.
 
-liminal enforces none of these fields, and a mistake in one does not make the card
-invalid. Test them in your handler package.
+liminal enforces none of these fields. A wrong `permissions` or `risk` does not make
+the card invalid, but a non-string `labels` value does, and the handler is then
+skipped. Test them in your handler package.
 
 ## Testing convention
 
 Every shipped handler has its own test module: `test_files_handler.py`,
 `test_memory_handler.py`, `test_notify_handler.py`, `test_web_handler.py`,
-`test_scratchpad.py`, `test_aws_handler.py`. There's no enforcement of this, but it's the
+`test_scratchpad.py`, `test_aws_handler.py`, `test_cabal_handler.py`. There's no enforcement of this, but it's the
 expectation — a new handler should ship with its own `tests/test_<name>*.py`
 alongside it.
 
