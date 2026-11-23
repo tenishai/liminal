@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1073" height="322" viewBox="0 0 1073 322" role="img" aria-label="liminal">
+<rect width="1073" height="322" rx="10" fill="#1c1917"/>
+<circle cx="20" cy="18" r="5.5" fill="#57534e"/><circle cx="38" cy="18" r="5.5" fill="#57534e"/><circle cx="56" cy="18" r="5.5" fill="#57534e"/>
+<text x="536.5" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#a8a29e">liminal</text>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" xml:space="preserve">
+<text x="18" y="54" fill="#fafaf9" font-weight="600">$ liminal list-handlers</text>
+<text x="18" y="74" fill="#e7e5e4">aws         Read-only AWS calls through a role the account owner granted the gateway</text>
+<text x="18" y="94" fill="#e7e5e4">cabal       Send tasks to cabal&#x27;s personas over A2A, then poll, answer or cancel them.</text>
+<text x="18" y="114" fill="#e7e5e4">files       Scoped file I/O against operator-allowlisted paths</text>
+<text x="18" y="134" fill="#e7e5e4">memory      techne-backed knowledge recall + commit (per-persona DB)</text>
+<text x="18" y="154" fill="#e7e5e4">notify      Transport-agnostic notifications (webhook in v1)</text>
+<text x="18" y="174" fill="#e7e5e4">scratchpad  Per-agent ephemeral key/value notes (process-local; cleared on restart)</text>
+<text x="18" y="194" fill="#e7e5e4">web         HTTP fetch with hostname allowlist + SSRF defense</text>
+<text x="18" y="214" fill="#e7e5e4"></text>
+<text x="18" y="234" fill="#fafaf9" font-weight="600">$ LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100 &amp;</text>
+<text x="18" y="254" fill="#fafaf9" font-weight="600">$ curl -s localhost:9100/mcp -H &#x27;Content-Type: application/json&#x27; \</text>
+<text x="18" y="274" fill="#e7e5e4">    -d &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;scratchpad.set&quot;,&quot;arguments&quot;:{&quot;key&quot;:&quot;color&quot;,&quot;value&quot;:&quot;blue&quot;}}}&#x27;</text>
+<text x="18" y="294" fill="#e7e5e4">{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;set &#x27;color&#x27;&quot;}],&quot;isError&quot;:false}}</text>
+</g>
+</svg>
