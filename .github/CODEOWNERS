@@ -1,20 +1,16 @@
 # Code changes need Prudence's review before they merge (agents REVIEW-PROCESS.md,
-# tenishai/agora discussion 71). Docs don't: Markdown anywhere is unowned, because
-# the last matching line wins. Owners need write access; prudence-tenishai has it.
-/src/ @prudence-tenishai
-/tests/ @prudence-tenishai
-/scripts/ @prudence-tenishai
-/contrib/ @prudence-tenishai
-/k8s/ @prudence-tenishai
-/.github/ @prudence-tenishai
-/pyproject.toml @prudence-tenishai
-/requirements-sources.txt @prudence-tenishai
-/Dockerfile @prudence-tenishai
-/.dockerignore @prudence-tenishai
-/gojira.yaml @prudence-tenishai
+# tenishai/agora discussion 71); docs changes don't. Last match wins:
+#   1. everything is owned, so a path added later starts out reviewed;
+#   2. Markdown is unowned: docs;
+#   3. Markdown that code or agents load and act on is owned again: agent
+#      instructions, and the guides, skills and agent definitions the package ships.
+# Keep group 3 in step with the package data in pyproject.toml.
+* @prudence-tenishai
 
-# Docs: no owner, so no code-owner review is required.
 *.md
 
-# This file is itself code: changing who reviews needs a review.
+/AGENTS.md @prudence-tenishai
+/CLAUDE.md @prudence-tenishai
+/src/liminal/docs/ @prudence-tenishai
+
 /.github/CODEOWNERS @prudence-tenishai
