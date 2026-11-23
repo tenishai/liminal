@@ -25,12 +25,15 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 import structlog
 from joserfc import jwt as jwt_lib
 from joserfc.jwk import KeySet
+
+if TYPE_CHECKING:
+    from liminal.server.revocations import RevocationList
 
 log = structlog.get_logger(__name__)
 
@@ -87,15 +90,18 @@ class StaticKeySetVerifier:
     expected_issuer: str = DEFAULT_ISS
     expected_audience: str | None = DEFAULT_AUD
     leeway_seconds: int = DEFAULT_LEEWAY_SECONDS
+    revocations: RevocationList | None = None
 
     async def verify(self, token: str) -> VerifiedClaims:
-        return _verify_against_keyset(
+        claims = _verify_against_keyset(
             token,
             key_set=self.key_set,
             expected_issuer=self.expected_issuer,
             expected_audience=self.expected_audience,
             leeway_seconds=self.leeway_seconds,
         )
+        await _refuse_if_revoked(claims, self.revocations)
+        return claims
 
 
 # ---- Remote JWKS (production) ---------------------------------------------
@@ -121,6 +127,10 @@ class URLJWKSVerifier:
     # drive cache-busting outbound JWKS fetches. A real key rotation is still
     # picked up on the first kid-miss; only the *rate* is capped.
     refetch_min_interval_seconds: float = 10.0
+    # The cabal's revocation list (liminal#228), checked after every other
+    # check has passed. None: no revocation check (not a cabal liminal fetches
+    # from, or no --cabal-url).
+    revocations: RevocationList | None = None
 
     _cached: KeySet | None = field(default=None, init=False)
     _cached_at: float = field(default=0.0, init=False)
@@ -167,6 +177,11 @@ class URLJWKSVerifier:
             return self._cached
 
     async def verify(self, token: str) -> VerifiedClaims:
+        claims = await self._verify_signed(token)
+        await _refuse_if_revoked(claims, self.revocations)
+        return claims
+
+    async def _verify_signed(self, token: str) -> VerifiedClaims:
         # First attempt against cached set; if the kid is missing, force a
         # fresh fetch (key rotation just happened).
         try:
@@ -204,6 +219,31 @@ class URLJWKSVerifier:
 
 
 # ---- shared verify helper -------------------------------------------------
+
+
+async def _refuse_if_revoked(
+    claims: VerifiedClaims, revocations: RevocationList | None
+) -> None:
+    """Refuse a verified token whose subject its cabal has revoked.
+
+    Runs only after signature and claims have held. Applies a list only to the
+    issuer it belongs to, so one cabal's list never touches another issuer's
+    tokens. The caller sees the same refusal as an expired token; only the log
+    says why, and the cutoff is never returned.
+    """
+    if revocations is None or claims.issuer != revocations.issuer:
+        return
+    iat = claims.raw.get("iat")
+    if iat is None:
+        return  # unreachable: _verify_against_keyset requires iat
+    if await revocations.is_revoked(claims.agent_name, float(iat)):
+        log.info(
+            "auth.token_refused",
+            reason="revoked",
+            issuer=claims.issuer,
+            sub=claims.agent_name,
+        )
+        raise AuthError("token expired")
 
 
 def _aud_ok(aud: Any, expected: str | None) -> bool:
@@ -479,12 +519,16 @@ def build_multi_issuer_verifier(
     *,
     service_audience: str,
     cache_ttl_seconds: float = 300.0,
+    revocations: RevocationList | None = None,
 ) -> MultiIssuerJWKSVerifier:
     """Wire a `MultiIssuerJWKSVerifier` from trust-registry config.
 
     `service_audience` is this sovereign persona's stable service id, which
     every caller must mint into the token `aud`. Exactly one issuer must be
     flagged `parent` — the guardian that graduated this persona.
+
+    `revocations`, when given, is checked only for the issuer whose id it names
+    (the cabal at `--cabal-url`, which the CLI takes to be the parent).
     """
     if not issuers:
         raise ValueError("trust registry is empty; at least one issuer required")
@@ -503,6 +547,11 @@ def build_multi_issuer_verifier(
             expected_issuer=i.id,
             expected_audience=service_audience,
             cache_ttl_seconds=cache_ttl_seconds,
+            revocations=(
+                revocations
+                if revocations is not None and revocations.issuer == i.id
+                else None
+            ),
         )
         if i.exchange_uri is not None:
             if not isinstance(i.exchange_uri, str) or not i.exchange_uri.startswith(

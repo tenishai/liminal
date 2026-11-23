@@ -320,6 +320,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     serve_p.add_argument(
+        "--revocation-ttl",
+        type=float,
+        default=30.0,
+        help=(
+            "Seconds between fetches of cabal's revocation list "
+            "(GET <cabal-url>/auth/revocations, default 30). Tokens from the "
+            "cabal at --cabal-url whose subject it revoked are refused within "
+            "this window. Needs --cabal-url."
+        ),
+    )
+    serve_p.add_argument(
         "--targets",
         default=_env("LIMINAL_TARGETS"),
         metavar="PATH",
@@ -416,6 +427,31 @@ def main(argv: list[str] | None = None) -> int:
         if args.cabal_url and not os.environ.get("LIMINAL_CABAL_URL"):
             os.environ["LIMINAL_CABAL_URL"] = args.cabal_url
         reg = discover_handlers()
+
+        def _revocations_for(issuer: str):
+            # liminal#228: refuse tokens whose subject the cabal at --cabal-url
+            # revoked. Only that cabal's own issuer is checked, with the same
+            # bearer the credential resolver presents. Fetched on demand, so
+            # under LIMINAL_AUTH_DISABLED=1 (no verifier) nothing is fetched.
+            if not args.cabal_url:
+                return None
+            from liminal.server.revocations import RevocationList
+
+            print(
+                f"revocations: checking issuer {issuer!r} against "
+                f"{args.cabal_url.rstrip('/')}/auth/revocations "
+                f"(refresh {args.revocation_ttl}s)",
+                file=sys.stderr,
+            )
+            return RevocationList(
+                cabal_url=args.cabal_url,
+                issuer=issuer,
+                token_provider=lambda _env_name=args.cabal_token_env: os.environ.get(
+                    _env_name, ""
+                ),
+                ttl_seconds=args.revocation_ttl,
+            )
+
         if args.trust_registry:
             import tomllib
 
@@ -447,9 +483,17 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
+            # --cabal-url is the parent's cabal: the credential resolver is only
+            # called for the parent's callers (liminal#143), so its revocation
+            # list applies to the parent issuer's tokens and no other's.
+            _parents = [i.id for i in issuers if i.parent]
             try:
                 verifier = build_multi_issuer_verifier(
-                    issuers, service_audience=service_audience
+                    issuers,
+                    service_audience=service_audience,
+                    revocations=(
+                        _revocations_for(_parents[0]) if len(_parents) == 1 else None
+                    ),
                 )
             except ValueError as exc:
                 # No parent, several parents, no issuers, or duplicate ids:
@@ -588,6 +632,7 @@ def main(argv: list[str] | None = None) -> int:
                 jwks_url=args.jwks_url,
                 expected_issuer=args.issuer,
                 expected_audience=args.audience,
+                revocations=_revocations_for(args.issuer),
             )
         elif not _auth_disabled_from_env():
             # Under LIMINAL_AUTH_DISABLED=1 no verifier is the required setup

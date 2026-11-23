@@ -56,6 +56,13 @@ push/PR. Run `pytest -q` for the current suite.
   server-side grant for its `(issuer, persona)`. An auth failure on `/mcp` (wrong
   audience, no scope, no grant) is HTTP 200 carrying JSON-RPC error `-32001`; only
   `/admin/*` answers with a real 401.
+- **Revocation** — with `--cabal-url` set, liminal reads that cabal's
+  `GET /auth/revocations` with the `LIMINAL_CABAL_TOKEN` bearer and refuses a token
+  from that cabal (in sovereign mode, the parent) whose subject it revoked, within
+  the refresh window (`--revocation-ttl`, 30s by default). The check is fail-soft:
+  an older cabal that answers 404, or one that is down at start, leaves tokens
+  accepted until their `exp` as before (one warning), and a failed refresh keeps
+  the last good list.
 - **`cabal_tool_extras` clamping** — operator config is the ceiling. JWTs can
   narrow allowed paths/hosts/webhooks but cannot widen past the server-side bound.
 - **Credential flow** — `CabalCoreCredentialResolver` fetches per-`(persona, handler)`
