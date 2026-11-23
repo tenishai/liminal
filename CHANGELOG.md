@@ -6,6 +6,10 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Changed
+
+- **Licence: MIT.** The project moves from AGPL-3.0-or-later to MIT, with the agreement of every contributor (tenishai/agora discussion 69). Releases already published keep the licence they shipped under.
+
 ## [0.10.0] — 2026-11-19
 
 ### Added
