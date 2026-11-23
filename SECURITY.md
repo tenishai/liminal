@@ -75,7 +75,7 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   and cannot remove from it). The `files:protected_writes` grant that lifts
   those refusals exists only in sovereign mode: without a policy grant,
   `ctx.granted_scopes` is empty. Also in scope: the `web` handler's built-in
-  SSRF denylist (`PRIVATE_NETWORKS` in `handlers/web.py`), and the federation admin API (`server/admin.py`, which
+  SSRF denylist (`PRIVATE_NETWORKS` in `handlers/_netpolicy.py`), and the federation admin API (`server/admin.py`, which
   requires an `admin:*` grant from a parent issuer);
 - federation: results from an upstream server being trusted when they
   shouldn't be, and a target's static `headers` table setting a header
