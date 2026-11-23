@@ -261,7 +261,7 @@ Each line cites the pull request that made the change.
 ### Fixed
 
 - **`/healthz` says which handlers are unconfigured** (tenishai/liminal#191, partly). A
-  handler that refuses every call for want of server config reported "ready", and on dev04
+  handler that refuses every call for want of server config reported "ready", and on a workstation
   14 of 25 advertised tools always refused. A handler may now define an optional
   `status()`; `/healthz` shows its answer, e.g. `unconfigured: LIMINAL_FILES_ALLOWED_PATHS is
   unset`, and startup logs `liminal.handler_unconfigured` for each; a `status()` that raises
