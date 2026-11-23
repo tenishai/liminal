@@ -148,10 +148,11 @@ curl -X POST "$CABAL_URL/admin/token/revoke" -H "Authorization: Bearer $OPERATOR
 ```
 
 Every dispatch token stops at cabal at once: each `cabal.*` call then fails with
-`HTTP 401 ... was revoked`. liminal does not read cabal's revocation list
-(issue 228), so the client token still opens liminal, and `tools/list` still
-answers, until it expires. With `--allowed-handler cabal` that leaves nothing
-usable, but keep the client token's TTL short.
+`HTTP 401 ... was revoked`. liminal started with `--cabal-url` refuses the client
+token too, within its refresh window (`--revocation-ttl`, 30s by default), provided
+cabal serves `GET /auth/revocations`. An older cabal answers 404 there, and then the
+client token still opens liminal, and `tools/list` still answers, until it expires;
+keep its TTL short.
 
 ## Behaviour worth knowing
 

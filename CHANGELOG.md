@@ -8,6 +8,16 @@ Each line cites the pull request that made the change.
 
 ### Fixed
 
+- **Security: liminal refuses tokens whose subject cabal has revoked** (issue 228). It
+  checked a cabal token's signature, `iss`, `aud` and `exp` but never cabal's revocation
+  list, so after `POST /admin/token/revoke` a subject kept every tool that does not call
+  cabal (`web`, `files`, `notify`...) until its token expired, up to 365 days. With
+  `--cabal-url` set, liminal now fetches that cabal's `GET /auth/revocations` (new
+  `--revocation-ttl`, default 30s) and refuses its tokens with `iat` before the subject's
+  cutoff, as it refuses an expired token. Only that cabal's issuer is checked (in
+  sovereign mode, the parent). Fail-soft: against an older cabal (404) or one that is
+  down, tokens are accepted as before with one warning; a failed refresh keeps the last
+  good list.
 - **Security: `notify` refuses a webhook host that resolves to an IPv4 address embedded in
   IPv6.** The webhook check tested only the raw resolved address, so a host resolving to
   `64:ff9b::a9fe:a9fe` (NAT64), `2002:a9fe:a9fe::1` (6to4) or `::a9fe:a9fe`
