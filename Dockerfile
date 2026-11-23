@@ -6,10 +6,9 @@
 #   --build-context techne=../techne                       (compose, dev: unchanged)
 #   --build-arg EXTRA_INDEX_URL=https://<index>/simple/    (a package index)
 #     [--secret id=ar_token,env=AR_TOKEN]  for a private Artifact Registry index
-#     (a BuildKit secret: never in the image or the build log; the deploy
-#     platform's generated CI passes it this way). --build-arg AR_TOKEN=… still
-#     works for a local build, but lands in the build log; the
-#     token Gojira's generated CI passes to every build (2026-09-30).
+#     (a BuildKit secret: never in the image or the build log; pass it with
+#     `docker build --secret id=ar_token,env=AR_TOKEN`). --build-arg AR_TOKEN=...
+#     still works for a local build, but lands in the build log.
 # techne itself is fetched from that index ALONE, then installed as a file, so
 # only its dependencies come from PyPI. The name `techne` on PyPI belongs to
 # someone else (0.0.2 as of 2026-10-01); with the index as an *extra* index,

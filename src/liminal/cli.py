@@ -297,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Base URL of Cabal Core (e.g. http://cabal-core:7400). When "
             "combined with --cabal-token-env, wires CabalCoreCredentialResolver "
-            "so credentialed handlers (slack, github, etc.) get their secrets "
+            "so credentialed handlers (such as `cabal`) get their secrets "
             "fetched from Cabal at dispatch time."
         ),
     )

@@ -109,6 +109,12 @@ Sovereign mode only; `--jwks-url` has no such option.
   900). A failed fetch gives the handler empty credentials, not an error. In sovereign
   mode only the parent issuer's callers get credentials, because cabal's secrets path
   has no issuer in it and a foreign cabal could reuse a persona name.
+- **Revocation.** With `--cabal-url` set, liminal also fetches that cabal's
+  `GET /auth/revocations` (same `LIMINAL_CABAL_TOKEN` bearer) every `--revocation-ttl`
+  seconds (default 30) and refuses a token from that cabal (in sovereign mode, the
+  parent issuer) whose subject was revoked. It needs a cabal that serves the route
+  (cabal 0.5.0); against an older cabal (404) or one that is down, tokens are accepted
+  until `exp` as before, with one warning.
 
 ### Built-in handlers
 
@@ -145,7 +151,8 @@ auth mode.
 
 - `trust` defaults to `untrusted`: liminal scans the upstream's tool catalog for
   injection text and hidden Unicode (`on_untrusted = "flag" | "strip" | "block"`) and
-  wraps results, flagging them in `_meta["liminal/untrusted"]`. Set `trusted` only for a
+  wraps results, flagging them in `_meta["liminal/untrusted"]`. A result with no content comes back with a notice saying so
+  (it is not a confirmation) instead of an empty frame. Set `trusted` only for a
   server you run.
 - `auth_method = "bearer"` sends a static token (`bearer_token` or `bearer_token_env`,
   `auth_scheme = "basic"` for Basic auth). `"service-token"` sends the calling persona's

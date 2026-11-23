@@ -74,7 +74,9 @@ the fail-closed default and it has not moved.
 
 - `handlers/files.py` ships with an **empty** allowlist: every read and write is refused
   until an operator supplies one. The empty default is the safe default.
-- `handlers/web.py` denies every range in `PRIVATE_NETWORKS` as SSRF defence: loopback
+- `handlers/_netpolicy.py` (shared by `web` and `notify`) denies every range in
+  `PRIVATE_NETWORKS` as SSRF defence, and unwraps an IPv4 embedded in IPv6 (NAT64, 6to4,
+  IPv4-compatible) before testing it: loopback
   (127/8, ::1), 10/8, 172.16/12, 192.168/16, 169.254/16 (cloud metadata), 100.64/10
   (CGNAT), 0/8, multicast 224/4, reserved 240/4, broadcast, ::/128, fc00::/7, fe80::/10,
   and the `::ffff:0:0/96` IPv4-mapped form. The list in the module is the authority.
