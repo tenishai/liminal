@@ -22,22 +22,28 @@ the package and covers every mode, handler and extra with why you'd pick it.
   the AWS set-up checks on a sovereign liminal's `/admin/*` plane.
 - **gojira** (optional): deploys liminal from `gojira.yaml`.
 
-liminal runs without any of them: auth-off needs no issuer, and any RS256 JWT issuer
-can stand in for cabal.
+liminal runs without any of them: auth-off needs no issuer, and any issuer can stand
+in for cabal if it signs RS256 tokens carrying `iss`, `aud`, `exp`, `iat`, `sub`, a
+`persona` (or `cabal_persona`) claim and, in single-cabal mode, a `scope` array
+containing `dispatch`.
 
 ## Status
 
-All handlers shipped, credential flow complete, MCP spec compliant, async-clean,
-SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
+Seven built-in handlers ship (`docs/design.md` plans more, such as `slack` and
+`github`; none exist). Credentials are fetched per call from Cabal Core with a
+15-minute cache, and a failed fetch gives the handler an empty set. Network, DNS, file
+and SQLite work is awaited or run in a worker thread. SSRF-hardened, CI active on
+push/PR. Run `pytest -q` for the current suite.
 
 ## What works
 
-- **6 built-in handlers** — `scratchpad` (per-agent ephemeral notes), `files`
+- **7 built-in handlers** — `scratchpad` (per-agent ephemeral notes), `files`
   (scoped read/write/list/exists with path-traversal defense), `web` (allowlisted
   HTTP fetch + SSRF DNS-rebinding defense via pinned-IP transport), `memory`
   (techne-backed knowledge recall + commit), `notify` (transport-agnostic
   notifications; webhook in v1), `aws` (read-only AWS calls through an IAM role that
-  trusts the gateway's own Google identity; needs the `[aws]` extra).
+  trusts the gateway's own Google identity; needs the `[aws]` extra), `cabal` (sends
+  tasks to cabal's personas over A2A; see `docs/cabal-handler.md`).
 - **Call audit** — every `tools/call` that reaches a handler logs one `tool.call` line;
   in sovereign mode it also writes an audit row, read with `GET /admin/policy/audit`
   (`persona=`, `agent=`, `since=`, `limit=` up to 1000).
@@ -53,13 +59,19 @@ SSRF-hardened, CI active on push/PR. Run `pytest -q` for the current suite.
 - **`cabal_tool_extras` clamping** — operator config is the ceiling. JWTs can
   narrow allowed paths/hosts/webhooks but cannot widen past the server-side bound.
 - **Credential flow** — `CabalCoreCredentialResolver` fetches per-`(persona, handler)`
-  secrets from Cabal Core with TTL caching. Handlers receive credentials in
-  `ctx.credentials` with no credential material in source or config files.
-- **MCP spec compliance** — all `ToolResult` content blocks are `text` or `image`;
-  the non-spec `json` type is converted at the wire boundary. Notifications get no
+  secrets from Cabal Core with TTL caching; a failed fetch gives the handler an empty
+  set. Handlers receive per-persona secrets in `ctx.credentials`, and they are not
+  stored in this repo. Federated-target tokens (an inline `bearer_token` in a
+  `[[target]]`) and the notify webhook URL (a credential itself, in
+  `LIMINAL_NOTIFY_WEBHOOK_URL` or tool extras) can also sit in config; prefer
+  `bearer_token_env` and Cabal secrets.
+- **MCP wire format** — the non-spec `json` block type is converted to `text` at the
+  wire boundary; other block types (such as `resource` blocks from federated
+  upstreams) pass through as the handler or upstream sent them. Notifications get no
   response.
-- **Async throughout** — JWKS fetch, DNS resolution, file I/O, and SQLite all off
-  the event loop via `anyio.to_thread`.
+- **Async** — network calls are awaited; DNS resolution, file reads and writes, and
+  SQLite run in a worker thread (`anyio.to_thread` or `asyncio.to_thread`). Path
+  resolution in `files` still runs on the event loop.
 - **MCP client lib** — `MCPClient` (sync) and `AsyncMCPClient` (async) in
   `liminal.client` for downstream consumers (Cabal, third-party agents).
 - **Federated targets** — `liminal serve --targets targets.toml` adds upstream MCP
@@ -157,7 +169,7 @@ pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
 Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal
 personas) connects to. Handlers are **auto-discovered** from installed packages — install
 `cabal` alongside liminal and its `patterns` / `documents` / `code` / `archivist`
-handlers register automatically next to liminal's own six.
+handlers register automatically next to liminal's own seven.
 
 ```bash
 # local / trusted-network — single operator on localhost, auth off:
@@ -227,8 +239,8 @@ handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`
 (Gojira's gateway class uses one path for liveness and readiness, so the contract keeps
 `/healthz`; `/readyz` is there for a deployment that probes readiness separately),
 techne from a package index at build time, and the cabal it serves as `LIMINAL_*`
-env. The generated CI passes the index token as a BuildKit secret
-(`--secret id=ar_token`), which the Dockerfile prefers over `--build-arg AR_TOKEN`. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
+env. The Dockerfile takes the index token as a BuildKit secret
+(`--secret id=ar_token`) and prefers it over `--build-arg AR_TOKEN`. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
 (`cbl token mint-service --scope secrets-fetch` on that cabal).
 
 ## Repository layout
@@ -241,7 +253,7 @@ src/liminal/
   server/          MCP HTTP server (POST /mcp), JWT verifiers, credential resolver,
                    policy store, admin surface, secret guard
   target/          Federated targets — the machinery behind `--targets`
-  handlers/        scratchpad, files, web, memory, notify, aws
+  handlers/        scratchpad, files, web, memory, notify, aws, cabal
   client/          LiminalClient protocol, LibraryLiminalClient (in-process),
                    ProxyLiminalClient (HTTP, wraps AsyncMCPClient), from_config,
                    MCPClient (sync) + AsyncMCPClient (async)
