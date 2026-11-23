@@ -7,7 +7,7 @@ name = "tenish-liminal"
 version = "0.10.0"
 description = "MCP gateway — one MCP connection per agent, many backend handlers behind it"
 readme = "README.md"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 authors = [{ name = "tenish" }]
 requires-python = ">=3.12"
 classifiers = [
