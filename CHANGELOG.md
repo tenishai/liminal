@@ -28,6 +28,7 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
+- **An empty result from an untrusted target now carries an explicit notice** (#233). A federated upstream's result with no blocks, or only text that is blank once hidden Unicode is stripped, used to come back as a bare BEGIN/END marker pair, which the model could not tell from a refusal. The envelope now says the target returned no content and that this is not a confirmation, and `http_target.result_empty` is logged with the target and tool name. The nonce and `_meta` contract are unchanged.
 - **Security: `liminal serve` refuses `LIMINAL_AUTH_DISABLED=1` on a non-loopback bind** (#214). Auth off with `--host 0.0.0.0` used to start with only a warning, so anyone who could reach the port got every tool. Startup now exits 2 unless the host is 127.0.0.0/8, `::1` or `localhost`; any other value (`0.0.0.0`, `::`, a LAN IP, a hostname) counts as non-loopback. `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` overrides it, with a loud warning, for a container whose port is published to loopback only. **Breaking** for anyone running auth-off on a non-loopback bind; see Upgrading.
 - **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed. It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.
 - **CI runs on GitHub-hosted runners.** `unit` and `integration` moved off the self-hosted runner, fork PRs run the unit suite (the `fork-pr` job is gone), and a `ci` summary job fails unless `unit` succeeded, so a skipped job cannot pass. A branch ruleset requires `ci` and `dco`.
@@ -36,6 +37,7 @@ Each line cites the pull request that made the change.
 
 ### Upgrading
 
+- Revocation checking (`--revocation-ttl`, default 30s) takes effect only against a cabal that serves `GET /auth/revocations`, which is cabal 0.5.0 and later. Against an older cabal (404) liminal logs one warning and accepts tokens until `exp` as before. It needs `--cabal-url` and the `LIMINAL_CABAL_TOKEN` bearer.
 - A deployment that sets `LIMINAL_AUTH_DISABLED=1` with a non-loopback `--host` (including the Docker image's default `--host 0.0.0.0`) now fails at startup with exit 2. Bind `127.0.0.1`, configure a verifier, or set `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` and publish the port to loopback only (`-p 127.0.0.1:9100:9100`).
 
 ## [0.10.0] — 2026-11-19

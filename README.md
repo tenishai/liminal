@@ -33,7 +33,8 @@ Seven built-in handlers ship (`docs/design.md` plans more, such as `slack` and
 `github`; none exist). Credentials are fetched per call from Cabal Core with a
 15-minute cache, and a failed fetch gives the handler an empty set. Network, DNS, file
 and SQLite work is awaited or run in a worker thread. SSRF-hardened, CI active on
-push/PR. Run `pytest -q` for the current suite.
+push/PR. Run `pytest -q` for the current suite (1053 passed, 2 skipped on 2026-11-23 at
+3e3ac92, Python 3.12, `pip install -e ".[dev]"`, techne not installed: the memory-handler module skips).
 
 ## What works
 
