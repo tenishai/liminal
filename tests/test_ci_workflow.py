@@ -70,11 +70,9 @@ def _is_self_hosted(runs_on) -> bool:
 # and the rest are not here.
 TRUSTED_TRIGGERS = frozenset({"push", "workflow_dispatch"})
 
-# The one `runs-on` an unresolvable expression may carry: gojira-ci.yaml, which
-# Gojira generates (so it cannot be edited here). Unset, the variable falls back
-# to a hosted runner; set, it names a runner an operator chose. It is allowed
-# only in a workflow that a fork cannot trigger (TRUSTED_TRIGGERS), so the
-# generated file may never gain a `pull_request` trigger without this failing.
+# The expression Gojira's generated deploy workflow used. No workflow here may
+# carry it any more: the generated file is gone, and an unresolvable runs-on
+# fails closed like any other.
 GOJIRA_RUNS_ON = "${{ vars.CI_RUNNER || 'ubuntu-latest' }}"
 
 
@@ -96,16 +94,13 @@ def _triggers(doc: dict) -> set[str]:
 
 
 def _self_hosted_jobs(doc: dict) -> dict:
-    """Jobs that target a self-hosted runner (name -> its `runs-on`), minus the
-    one allowed exception: GOJIRA_RUNS_ON in a workflow only trusted events can
-    trigger."""
-    trusted_only = _triggers(doc) <= TRUSTED_TRIGGERS
+    """Jobs that target a self-hosted runner (name -> its `runs-on`). There is
+    no exception: any trigger, any spelling, an unresolvable expression included."""
     jobs = doc.get("jobs") or {}
     return {
         name: job.get("runs-on")
         for name, job in sorted(jobs.items())
         if _is_self_hosted(job.get("runs-on"))
-        and not (trusted_only and job.get("runs-on") == GOJIRA_RUNS_ON)
     }
 
 
@@ -176,7 +171,7 @@ def test_is_self_hosted_allow_lists_hosted_images(runs_on, self_hosted):
         (["pull_request"], {"group": "large"}, True),
         (["pull_request"], "ubuntu-liminal-ci", True),
         (["pull_request"], "${{ vars.CI_RUNNER }}", True),  # unresolvable: fail closed
-        (["pull_request"], GOJIRA_RUNS_ON, True),  # the exception needs trusted triggers
+        (["pull_request"], GOJIRA_RUNS_ON, True),
         (["pull_request"], [], True),
         (["pull_request"], None, True),  # no runs-on at all
         # Flagged on a push-only workflow too: trusted triggers do not excuse a pool.
@@ -185,8 +180,8 @@ def test_is_self_hosted_allow_lists_hosted_images(runs_on, self_hosted):
         # Hosted is fine whatever the triggers.
         (["pull_request"], "ubuntu-latest", False),
         (["pull_request"], {"labels": ["ubuntu-24.04"]}, False),
-        # The one exception: gojira's expression, in a workflow a fork cannot trigger.
-        ({"push": {"branches": ["main"]}, "workflow_dispatch": {}}, GOJIRA_RUNS_ON, False),
+        # Gojira's old expression is flagged even on a workflow a fork cannot trigger.
+        ({"push": {"branches": ["main"]}, "workflow_dispatch": {}}, GOJIRA_RUNS_ON, True),
         # An unreadable `on:` is never trusted.
         (None, GOJIRA_RUNS_ON, True),
     ],

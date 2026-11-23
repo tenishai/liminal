@@ -8,6 +8,7 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
+- **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed. It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.
 - **CI runs on GitHub-hosted runners.** `unit` and `integration` moved off the self-hosted runner, fork PRs run the unit suite (the `fork-pr` job is gone), and a `ci` summary job fails unless `unit` succeeded, so a skipped job cannot pass. A branch ruleset requires `ci` and `dco`.
 - **Licence: MIT.** The project moves from AGPL-3.0-or-later to MIT, with the agreement of every contributor (tenishai/agora discussion 69). Releases already published keep the licence they shipped under.
 
