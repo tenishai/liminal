@@ -6,6 +6,16 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security: `notify` refuses a webhook host that resolves to an IPv4 address embedded in
+  IPv6.** The webhook check tested only the raw resolved address, so a host resolving to
+  `64:ff9b::a9fe:a9fe` (NAT64), `2002:a9fe:a9fe::1` (6to4) or `::a9fe:a9fe`
+  (IPv4-compatible), each carrying the cloud metadata address 169.254.169.254, or to a
+  NAT64-wrapped private address such as `64:ff9b::a00:1`, passed. `web` already unwrapped
+  these. Both handlers now use one address policy, `liminal/handlers/_netpolicy.py` (deny
+  ranges plus embedded-IPv4 unwrapping), so the two checks cannot drift again.
+
 ### Changed
 
 - **CI:** the Gojira-generated `.github/workflows/gojira-ci.yaml` is removed. It deployed to the old dogfood install's cluster, which no longer exists, and it was the last workflow allowed a runner variable. `tests/test_ci_workflow.py` drops that exception. Adds `.github/CODEOWNERS`.

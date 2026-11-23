@@ -274,6 +274,74 @@ async def test_webhook_rejects_metadata_service() -> None:
     assert result.is_error is True
 
 
+# IPv4 embedded in IPv6: a gateway translates these back to the v4 at connect
+# time, so the embedded address must meet the v4 deny ranges. notify once
+# checked only the raw address and let all but v4-mapped through.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        "64:ff9b::a9fe:a9fe",  # NAT64 well-known prefix, 169.254.169.254
+        "2002:a9fe:a9fe::1",  # 6to4, 169.254.169.254
+        "::a9fe:a9fe",  # IPv4-compatible, 169.254.169.254
+        "::ffff:169.254.169.254",  # v4-mapped
+        "64:ff9b::a00:1",  # NAT64, 10.0.0.1
+    ],
+)
+async def test_webhook_rejects_ipv4_embedded_in_ipv6_in_a_denied_range(
+    resolved: str,
+) -> None:
+    posted: list[httpx.Request] = []
+
+    def handler_fn(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(200)
+
+    handler = NotifyHandler(
+        transports={
+            "webhook": _webhook(handler_fn, dns_map={"wrapped.test": [resolved]})
+        }
+    )
+    result = await handler.dispatch(
+        "send",
+        {"message": "x"},
+        _ctx(extra={"notify.webhook_url": "https://wrapped.test/hook"}),
+    )
+    assert result.is_error is True
+    assert "denied network" in result.error
+    assert posted == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        "93.184.216.34",  # plain public v4
+        "64:ff9b::808:808",  # NAT64, 8.8.8.8
+        "2002:808:808::1",  # 6to4, 8.8.8.8
+        "::808:808",  # IPv4-compatible, 8.8.8.8
+    ],
+)
+async def test_webhook_accepts_a_public_address_plain_or_embedded(resolved: str) -> None:
+    """The embedded-v4 check refuses only denied ranges: a public v4, bare or
+    wrapped the same ways, still sends (web accepts these too)."""
+    handler = NotifyHandler(
+        transports={
+            "webhook": _webhook(
+                lambda req: httpx.Response(200),
+                dns_map={"public.test": [resolved]},
+            )
+        }
+    )
+    result = await handler.dispatch(
+        "send",
+        {"message": "x"},
+        _ctx(extra={"notify.webhook_url": "https://public.test/hook"}),
+    )
+    assert result.is_error is False
+    assert result.content[0]["data"]["ok"] is True
+
+
 @pytest.mark.asyncio
 async def test_webhook_rejects_non_http_scheme() -> None:
     handler = NotifyHandler(

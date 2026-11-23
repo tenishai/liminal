@@ -26,7 +26,10 @@ ones they want; capability_card declares the union.
 Defenses on the webhook transport (inherited from web's SSRF lessons):
 - URL must be http/https.
 - URL hostname must resolve to a NON-private IP (loopback, RFC1918,
-  link-local, metadata service all denied).
+  link-local, metadata service all denied), including an IPv4 embedded in
+  an IPv6 address; the policy is shared with web (handlers/_netpolicy.py).
+- The request connects to the validated IP (web._pin_request), so a
+  rebinding name can't swap the address between check and connect.
 - Body capped at WEBHOOK_MAX_BODY_BYTES.
 - Per-persona allowlist via `ctx.extra["notify.allowed_hosts"]`.
 """
@@ -47,7 +50,8 @@ import anyio
 import httpx
 import structlog
 
-from liminal.handlers.web import PRIVATE_NETWORKS, _host_in_allowlist, _pin_request
+from liminal.handlers._netpolicy import PRIVATE_NETWORKS, denied_network
+from liminal.handlers.web import _host_in_allowlist, _pin_request
 from liminal.protocol import Context, Handler, ToolResult, ToolSpec
 
 log = structlog.get_logger(__name__)
@@ -487,12 +491,14 @@ async def _check_url(
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             return f"invalid IP {ip_str!r} from DNS", None
-        for net in denied_networks:
-            if ip in net:
-                return (
-                    f"host {host!r} resolves to {ip_str} in denied "
-                    f"network {net} (SSRF protection)"
-                ), None
+        # Same address policy as web, including IPv4 embedded in IPv6
+        # (NAT64, 6to4, IPv4-compatible, v4-mapped): handlers/_netpolicy.py.
+        net = denied_network(ip, denied_networks)
+        if net is not None:
+            return (
+                f"host {host!r} resolves to {ip_str} in denied "
+                f"network {net} (SSRF protection)"
+            ), None
         if first_valid is None:
             first_valid = ip_str
     return None, first_valid
