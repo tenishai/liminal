@@ -3,9 +3,8 @@
 #   1. everything is owned, so a path added later starts out reviewed;
 #   2. Markdown is unowned: docs;
 #   3. Markdown that works as instructions is owned again: AGENTS.md and
-#      CLAUDE.md, which coding agents load, and the guides, skills and agent
-#      definitions the package ships. Keep that second part in step with the
-#      package data in pyproject.toml.
+#      CLAUDE.md, which coding agents load, and the guide the package ships (`liminal.docs` in pyproject's package
+#      data). Keep that second part in step with pyproject.toml.
 * @prudence-tenishai
 
 *.md
