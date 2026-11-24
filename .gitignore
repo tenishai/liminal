@@ -76,6 +76,7 @@ env/
 ENV/
 
 # IDE
+.vscode/
 *.swo
 
 # Test / coverage
