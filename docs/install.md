@@ -70,5 +70,10 @@ pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
 
 ## Alongside cabal
 
+liminal is standalone — any MCP-speaking agent can use it. Cabal
+(`github.com/tenishai/cabal`) is the primary downstream consumer; Cabal personas
+connect to liminal for their tool surface and liminal asks Cabal Core for
+credentials per `(persona, handler)`.
+
 Sibling-checkout convention: clone `tenishai/liminal` as a sibling of `cabal`
 and `techne`, install with `pip install -e ../liminal`.

@@ -1,6 +1,6 @@
 # Writing a handler
 
-The README's "Wiring a handler (custom)" section shows the mechanism: implement
+The README's "Wiring a handler" section shows the mechanism: implement
 `Handler` (or match its protocol — `tools()`, `dispatch()`, `capability_card()`),
 register it via the `liminal.handlers` entry-point group. That covers how to get a
 handler running. This page covers the things an author needs that aren't in the
