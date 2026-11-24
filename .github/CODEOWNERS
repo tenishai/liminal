@@ -1,2 +1,16 @@
-# Richard's team owns this repo (tenishai/agora discussion 71, rule 8).
-* @dimartin
+# The team's rule (2026-11-23): code changes need Prudence's review before they
+# merge; docs-only changes don't. Last match wins:
+#   1. everything is owned, so a path added later starts out reviewed;
+#   2. Markdown is unowned: docs;
+#   3. Markdown that works as instructions is owned again: AGENTS.md and
+#      CLAUDE.md, which coding agents load, and the guide the package ships (`liminal.docs` in pyproject's package
+#      data). Keep that second part in step with pyproject.toml.
+* @prudence-tenishai
+
+*.md
+
+/AGENTS.md @prudence-tenishai
+/CLAUDE.md @prudence-tenishai
+/src/liminal/docs/ @prudence-tenishai
+
+/.github/CODEOWNERS @prudence-tenishai
