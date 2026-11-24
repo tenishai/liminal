@@ -160,8 +160,8 @@ detail. Run `pytest -q` for the current suite (1053 passed, 2 skipped on 2026-11
 memory-handler module skips).
 
 Not yet: the distribution (`tenish-liminal`) is not on PyPI, so installs come from a
-clone or a git tag; `notify` sends to webhooks, plus stdout when
-`LIMINAL_NOTIFY_STDOUT=1` is set; Slack, Discord and email are not built.
+clone or a git tag; `notify` posts to any webhook (Slack and Discord incoming
+webhooks included), plus stdout when `LIMINAL_NOTIFY_STDOUT=1` is set; there is no email transport.
 
 ## Documentation
 
