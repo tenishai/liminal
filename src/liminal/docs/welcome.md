@@ -221,10 +221,10 @@ count as degraded, because a token's tool extras may still supply the config.
 
 ## How to install
 
-The tenishai repos are private for now. Installing from the git URLs below needs a GitHub
-account with read access to the tenishai organization, with git set up to use it (an SSH
-key, or a token through a credential helper); without that, the install fails at the git
-clone step.
+Installing from the git URLs below needs read access to the tenishai repositories. While a
+repository is private, that means a GitHub account in the tenishai organization with git set
+up to use it (an SSH key, or a token through a credential helper); without it, the install
+fails at the git clone step.
 
 From a tagged release:
 
