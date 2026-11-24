@@ -5,7 +5,7 @@ liminal is an MCP gateway: one MCP connection per agent, many tool handlers behi
 [![CI](https://github.com/tenishai/liminal/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tenishai/liminal/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/tenishai/liminal)](https://github.com/tenishai/liminal/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
+[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
 
 ![liminal lists its handlers, serves them on one endpoint, and answers a tool call](docs/img/serve.svg)
 
@@ -149,7 +149,7 @@ async with AsyncMCPClient(
 
 ## Status
 
-Alpha. Seven built-in handlers ship (`scratchpad`, `files`, `web`, `memory`, `notify`,
+Pre-alpha. Seven built-in handlers ship (`scratchpad`, `files`, `web`, `memory`, `notify`,
 `aws`, `cabal`; `docs/design.md` plans more, such as `slack` and `github`, and none
 exist). The call audit, JWT auth in single-cabal and sovereign modes, revocation, the
 credential flow, federated targets and the sync and async client library all work.
@@ -160,8 +160,9 @@ detail. Run `pytest -q` for the current suite (1053 passed, 2 skipped on 2026-11
 memory-handler module skips).
 
 Not yet: the distribution (`tenish-liminal`) is not on PyPI, so installs come from a
-clone or a git tag; `notify` posts to any webhook (Slack and Discord incoming
-webhooks included), plus stdout when `LIMINAL_NOTIFY_STDOUT=1` is set; there is no email transport.
+clone or a git tag; `notify` has a generic webhook transport (it POSTs a fixed
+JSON body) and a stdout one behind `LIMINAL_NOTIFY_STDOUT=1`; there are no Slack, Discord or
+email transports.
 
 ## Documentation
 
