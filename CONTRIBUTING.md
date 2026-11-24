@@ -34,6 +34,7 @@ A few things worth knowing before you spend effort:
   `import techne`. To run the memory tests, install a techne checkout next to this
   one with `pip install -e ../techne`.
 - **mypy** is configured (`strict = true`) but CI does not run it.
+- **Releasing** is by hand; [RELEASING.md](RELEASING.md) has the steps.
 - **AGENTS.md** is the context file for AI coding agents, and `CLAUDE.md` bridges
   to it. A rule an agent must follow belongs there, not only here.
 
