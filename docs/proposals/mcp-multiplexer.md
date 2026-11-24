@@ -83,7 +83,7 @@ Before implementation, `MCPProxyHandler` mutated a **shared** client's token in 
 A typed `TargetSpec` union, shaped like agentgateway's `McpTargetSpec` for swappability:
 
 ```toml
-# in the serve config (sovereign trust-registry file or a targets file)
+# in the targets file (`--targets`)
 [[target]]
 name = "jira"
 transport = "http"                     # http | stdio
@@ -92,6 +92,7 @@ trust = "untrusted"                    # default for http/stdio
 on_untrusted = "flag"                  # flag | strip | block
 identity = "forward"                   # forward | none  (http only)
 
+# stdio: not served (refused at startup)
 [[target]]
 name = "pdftools"
 transport = "stdio"
@@ -134,12 +135,14 @@ Stages A→B→C are independently shippable PRs. Stage A is the guarded refacto
 
 - **Green the whole existing suite + `test_dispatch_contract.py` at every step of Stage A** — the non-negotiable safety gate.
 - `HttpTarget`: identity header forwarded per-call (no shared-token mutation — a concurrency test proving persona A's token never rides persona B's request); catalog inspection `flag`/`strip`/`block` each exercised; correlation-id propagated.
-- `StdioTarget`: spawn + catalog + dispatch; config rejects identity-forwarding on stdio.
+- `StdioTarget` (not built): spawn + catalog + dispatch; config rejects identity-forwarding on stdio.
 - Multiplexer: mixed in-process + http + stdio targets, `list_tools` prefixing + `dispatch` routing + `grant.allowed_handlers` filtering identical across kinds.
 
 ---
 
 ## Sign-off questions
+
+These were open at design time. Stage A shipped and stdio (Stage B) is not built; see Status.
 
 1. **Staging** — A (refactor + http + #16/#13) → B (stdio) → C (config/#15) as three PRs, or one? (Recommend three — Stage A is the risky core; ship it guarded before adding stdio.)
 2. **Untrusted default** — `http`/`stdio` targets default to `UNTRUSTED` + `on_untrusted="flag"` (visible but annotated)? Or default `block`/`strip` (stricter, but breaks a new proxy until the operator opts in)?

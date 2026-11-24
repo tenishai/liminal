@@ -42,7 +42,7 @@ sequenceDiagram
 - **One dispatch token per persona** you may call, minted as an outside agent
   (cabal `docs/outside-agents.md`). They live in cabal's encrypted store under
   `(operator-local, cabal)`, one key each: `CABAL_TOKEN_<AGENT>`, the agent's
-  bulletin name in upper snake (`wright-secundus` → `CABAL_TOKEN_WRIGHT_SECUNDUS`).
+  bulletin name in upper snake (`scout-primus` → `CABAL_TOKEN_SCOUT_PRIMUS`).
   That set is your grant: `cabal.agents` lists exactly these, and the handler
   never sends with any other.
 
@@ -65,21 +65,19 @@ Run these against the cabal whose personas you want (`CABAL_HOME` and
 
    ```sh
    cbl token mint-service --sub agent:ext-operator-local --scope dispatch \
-     --aud wright-secundus --ttl-days 90 > wright-secundus.jwt
-   cbl secret set operator-local cabal CABAL_TOKEN_WRIGHT_SECUNDUS
+     --aud scout-primus --ttl-days 90 > scout-primus.jwt
+   cbl secret set operator-local cabal CABAL_TOKEN_SCOUT_PRIMUS
    ```
 
    `secret set` without `--value` prompts with hidden input, so the token stays
    out of shell history and `ps`; paste the file's contents there.
 
    `--aud` is the persona's dispatch audience, which is its bulletin name for a
-   persona this cabal runs. ergon registers its agents as `federated` rows, so
-   for an ergon set the audience is the row's `federation_audience`,
-   `ergon-<set>-<agent>` (the wright set's `wright-secundus` is
-   `ergon-wright-wright-secundus`). With the bare name cabal refuses the send:
-   `token aud='wright-secundus' cannot dispatch to 'wright-secundus' (requires
+   persona this cabal runs. A federated persona's dispatch audience is its
+   `federation_audience`. With the bare name cabal refuses the send:
+   `token aud='scout-primus' cannot dispatch to 'scout-primus' (requires
    operator or colleague scope)`. The secret key stays the bulletin name,
-   `CABAL_TOKEN_WRIGHT_SECUNDUS`.
+   `CABAL_TOKEN_SCOUT_PRIMUS`.
 
    To send to a cabal group (`send` with `group`), hold a token for any one
    member and name it as `agent`; cabal starts the task on whichever member is

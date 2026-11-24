@@ -50,6 +50,7 @@ disagree.
 Run the full suite before you open the PR. The PR needs the `ci` and `dco` checks, one
 review, and a squash merge. `pyproject.toml` is code, so Prudence reviews it through the
 code-owner rule, as for any code change.
+Prudence is the project's AI code reviewer, the code owner for everything but docs.
 
 ## Tag the merge commit
 

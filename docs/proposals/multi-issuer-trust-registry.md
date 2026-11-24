@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Implemented (`MultiIssuerJWKSVerifier` and `_aud_ok` in `src/liminal/server/auth.py`) |
+| **Status** | Implemented (`MultiIssuerJWKSVerifier` and `_aud_ok` in `src/liminal/server/auth.py`). Written before implementation; the code and `docs/arch/*.md` are authoritative. |
 | **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-02 |
 | **Implements** | `cabal/docs/proposals/federated-singletons.md` "What's new #1" |
@@ -22,8 +22,8 @@ Before implementation, liminal trusted exactly one issuer (`URLJWKSVerifier` wit
 the token itself carries — `scope` and
 `tool_extras.liminal.allowed_handlers`. That is correct only
 because, in the single-cabal case, **the token's issuer is also the policy
-authority**. Federation breaks that assumption: shaz's Cabal Core would happily
-mint shaz's agents any scope they ask for. So this spec has two halves:
+authority**. Federation breaks that assumption: a foreign cabal's Core would happily
+mint that cabal's agents any scope they ask for. So this spec has two halves:
 
 1. **Authentication** — a `MultiIssuerJWKSVerifier` that selects the right JWKS by
    the token's `iss` and verifies against it (reusing `URLJWKSVerifier` per issuer).
@@ -58,10 +58,10 @@ keep working via the default; set `issuer="local"` there for clarity.
 
 ### 1.2 `_verify_against_keyset` — parametrize issuer + fix `aud` list handling
 
-Two changes to the shared helper (`auth.py:167`):
+Two changes to the shared helper (`_verify_against_keyset` in `auth.py`):
 
 **(a) Record the verified issuer.** It already checks
-`claims.get("iss") != expected_issuer` (`auth.py:187`); now also stamp it onto the
+`claims.get("iss") != expected_issuer`; now also stamp it onto the
 result so callers can route on it:
 
 ```python
@@ -72,7 +72,7 @@ return VerifiedClaims(
 ```
 
 **(b) Accept list-valued `aud`.** This is a real bug for federation, not cosmetic.
-The current check is exact string equality (`auth.py:190`):
+The current check is exact string equality:
 
 ```python
 if expected_audience is not None and claims.get("aud") != expected_audience:
@@ -103,7 +103,7 @@ This benefits the single-cabal path too (it was list-broken before `_aud_ok`).
 ### 1.3 The verifier — compose, don't rewrite
 
 Wrap one `URLJWKSVerifier` **per issuer** so each issuer keeps its own TTL cache and
-kid-miss re-fetch (`auth.py:127`, `auth.py:149`) for free, and one issuer's JWKS
+kid-miss re-fetch for free, and one issuer's JWKS
 outage only affects that issuer's callers:
 
 ```python
@@ -139,7 +139,7 @@ class MultiIssuerJWKSVerifier:
         return await inner.verify(token)
 ```
 
-It satisfies the existing `JWTVerifier` Protocol (`auth.py:56`) verbatim, so it drops
+It satisfies the existing `JWTVerifier` Protocol verbatim, so it drops
 into `request.app.state.jwt_verifier` with no route changes for *authentication*.
 
 Each inner `URLJWKSVerifier` is constructed with `expected_issuer=<that issuer id>`
@@ -177,7 +177,7 @@ def build_multi_issuer_verifier(
 `service_audience` is the graduated persona's stable service id (e.g. `archivist@rd`),
 which is what callers must mint into `aud`. This enforces §3 of the design doc.
 
-CLI wiring (`cli.py:92`) grows a `--trust-registry <path.toml>` branch alongside the
+CLI wiring (`cli.py`) grows a `--trust-registry <path.toml>` branch alongside the
 existing `--jwks-url` single-issuer branch:
 
 ```
@@ -213,18 +213,18 @@ Resolution precedence: exact `(issuer, persona)` → `(issuer, "*")` → deny.
 
 ### 2.2 Where it plugs into `routes.py`
 
-**`_authenticate` (routes.py:55).** After `verifier.verify`, branch on whether a
+**`_authenticate` (routes.py).** After `verifier.verify`, branch on whether a
 `PolicyStore` is configured:
 
 - **No `PolicyStore`** (single-cabal, today): keep the token-embedded check —
-  `scope`/`cabal_scope` must contain `"dispatch"` (routes.py:70-72). Unchanged.
+  `scope`/`cabal_scope` must contain `"dispatch"` (in `_authenticate`). Unchanged.
 - **`PolicyStore` present** (sovereign): **ignore** token-embedded `scope`. Resolve
   `grant = store.resolve(claims.issuer, claims.identity)`; deny if `None`. Require
   the method's needed scope to be in `grant.scopes` (e.g. `tools/call` on a
   `mem:append` handler needs `mem:append`; `admin/*` methods need `admin:*`). Stash
   the grant on the request for the allowlist step.
 
-**`_allowed_handlers_for` (routes.py:210).** Add a sovereign branch: when a grant is
+**`_allowed_handlers_for` (routes.py).** Add a sovereign branch: when a grant is
 present, the allowlist is `grant.allowed_handlers` (server-authoritative), **not**
 `claims.raw["tool_extras"]`. The token-embedded path remains for single-cabal.
 
@@ -261,14 +261,14 @@ safe.
   keys the token can't validate against → rejected.
 - **Fail closed everywhere.** Unknown issuer → deny. Missing `PolicyStore` grant →
   deny. Malformed policy → deny (mirrors `_allowed_handlers_for`'s existing
-  fail-closed posture, routes.py:225/230).
+  fail-closed posture, routes.py).
 - **Revocation via TTL.** Inter-agent tokens are short (cabal: access 5m). Revoking
-  an issuer or narrowing a grant takes effect within a token lifetime; no CRL. JWKS
-  key rotation propagates within the 300s cache TTL or immediately on kid-miss
-  (`auth.py:149`).
+  an issuer takes effect within a token lifetime. Narrowing a grant is live per call. Subject
+  revocation came later (`--revocation-ttl`, `server/revocations.py`). JWKS
+  key rotation propagates within the 300s cache TTL or immediately on kid-miss.
 - **Blast-radius isolation.** Per-issuer `URLJWKSVerifier` means one cabal's JWKS
   endpoint being down denies only that cabal's callers.
-- **Algorithm pin** (RS256, `auth.py:182`) is inherited unchanged — keep it; it's the
+- **Algorithm pin** (RS256) is inherited unchanged — keep it; it's the
   algorithm-confusion defense and every federated cabal already signs RS256.
 
 ---
@@ -289,7 +289,7 @@ Extend the existing `tests/` auth suite:
    append denied. Proves token-embedded authz is ignored in sovereign mode.
 6. **Parent plane** — parent issuer with `admin:*` reaches `admin/*`; non-parent with
    full data scope is rejected at `admin/*` by the `parents` guard.
-7. **kid-miss re-fetch** still works per-issuer (regression over `auth.py:149`).
+7. **kid-miss re-fetch** still works per-issuer.
 
 ---
 
