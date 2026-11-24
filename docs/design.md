@@ -263,8 +263,8 @@ Per-identity overrides go in the persona's `identity.toml` (e.g., `wright` doesn
 
 - **One MCP connection per agent** instead of N — each Cabal persona agent talks to liminal, not to 8+ individual MCP servers
 - **Persona-scoped credentials** from a single encrypted store — Cabal Core's secrets table is canonical; mason's tokens are decrypted only when liminal needs them for a mason-handler call, never on disk in plaintext
-- **Same handler interface in solo and scale modes** — handlers are Python callables in solo, subprocesses in scale, same `dispatch(name, payload, ctx)` either way
-- **Handler pooling** across same-persona agents — mason-primus and mason-secundus share the mason slack runtime (and its rate-limit budget)
+- **Same handler interface in solo and scale modes (not built: no subprocess runtime)** — handlers are Python callables in solo, subprocesses in scale, same `dispatch(name, payload, ctx)` either way
+- **Handler pooling (not built)** across same-persona agents — mason-primus and mason-secundus share the mason slack runtime (and its rate-limit budget)
 - **Singleton-persona data backends reachable through liminal** — Architect's pattern corpus, Archivist's federated memory (v2), Librarian's docs index (v2) all expose MCP-tool surfaces fronted by their own liminal handlers; agents call `pattern_search` (or `memory_lookup`, or `doc_lookup`) like any other tool
 - **Scoping-ready** — capability cards already declare `activation`; v2 splits handlers into `always` / `on_demand` for context-window savings without breaking the v1 card format
 
@@ -295,12 +295,12 @@ All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see Tool
 |---------|-------|
 | memory | Local techne queries. No credentials required. A caller's `memory.db_path` (in `ctx.extra`) is used if it resolves inside an allowed directory (by default the directory of `LIMINAL_MEMORY_DB`) and refused if it does not; a caller with no override uses `LIMINAL_MEMORY_DB`; with that unset every call is refused. The rules live in `_resolve_db_path`, `MemoryConfig` and `get_handler()` in `handlers/memory.py`. |
 | files | Scoped file I/O. The allowlist is `files.allowed_paths` in `ctx.extra`, supplied by the token's `tool_extras` (single-cabal) or the trust registry's `[tool_extras]` (sovereign). `LIMINAL_FILES_ALLOWED_PATHS` is the allowlist for a caller with no such key; for a caller with one it is a ceiling the key can only narrow, and when it is unset the key is the allowlist; an empty or malformed key grants nothing. Reads and writes outside the allowlist return a structured error. Path traversal (`..`) is rejected before the allowlist check. Writes to protected paths (agent instruction files such as `CLAUDE.md` and `AGENTS.md`, code-execution paths such as `.mcp.json`, `.git/` and `.claude/`, hard-linked targets, and `LIMINAL_FILES_PROTECTED_PATTERNS`) are refused unless the sovereign grant holds `files:protected_writes` (#108, #110, #137). |
-| slack | Slack bot operations under the persona's Slack identity. Credentials: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` per persona. |
-| github | GitHub API (PRs, commits, search) under the persona's PAT. Credentials: `GITHUB_TOKEN` per persona. |
+| slack (not built) | Slack bot operations under the persona's Slack identity. Credentials: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` per persona. |
+| github (not built) | GitHub API (PRs, commits, search) under the persona's PAT. Credentials: `GITHUB_TOKEN` per persona. |
 | scratchpad | Per-agent ephemeral notes. No external credentials. |
 | patterns | Architect's pattern corpus surface, shipped by cabal as `cabal.handlers.patterns` (registered in cabal's `pyproject.toml`). Tools: `patterns.search` and `patterns.record` (`record` is operator-only). It calls techne's `techne.core.patterns` functions in-process against an `architect.db` file located by `patterns.db_path` in `ctx.extra`, falling back to `CABAL_ARCHITECT_DB`; with techne not installed every call fails with a structured error. No credentials. (This proposal described it as a thin MCP proxy to the Architect persona's backend, forwarding the caller's JWT.) |
-| datadog | Metrics queries. Credentials: `DATADOG_API_KEY`, `DATADOG_APP_KEY` per persona (typically only on personas that operate infra). |
-| atlassian | Jira / Confluence. Credentials per persona. |
+| datadog (not built) | Metrics queries. Credentials: `DATADOG_API_KEY`, `DATADOG_APP_KEY` per persona (typically only on personas that operate infra). |
+| atlassian (not built) | Jira / Confluence. Credentials per persona. |
 | web | HTTP fetch: `web.fetch` and `web.head`. **URL policy: allowlist by hostname** in `ctx.extra["web.allowed_hosts"]`, supplied by the token's `tool_extras` (single-cabal) or the trust registry's `[tool_extras]` (sovereign). An entry matches the host exactly, any subdomain of it, or `*` for everything. With the key absent or empty the handler uses its default of `["*"]`, and no environment variable narrows that default. Every resolved IP is checked against fixed deny ranges (`PRIVATE_NETWORKS` in `handlers/_netpolicy.py`): loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `100.64.0.0/10`, `0.0.0.0/8`, `fc00::/7`, link-local, multicast, reserved space, the broadcast address, `::/128` and the `::ffff:0:0/96` IPv4-mapped form, with the IPv4 address inside a v4-mapped, 6to4, well-known-prefix NAT64 (`64:ff9b::/96`) or IPv4-compatible address checked against the IPv4 ranges too (network-specific NAT64 prefixes and `64:ff9b:1::/48` are not unwrapped). That is SSRF protection against pivoting through the agent to reach `http://cabal-core:8080`, `http://litellm:4000`, or cloud metadata services. Allowlisting an internal host does not make it reachable, and no config knob opts out. In sovereign mode the handler also needs scope `web:fetch`. |
 
 ---
@@ -311,7 +311,7 @@ All v1 handlers ship as `activation: always`. On-demand is a v2 polish (see Tool
 
 2. **Handler packaging.** Mono-repo (handlers live in the `cabal` package as `cabal.handlers.*`) vs per-handler repos. Entry-point mechanism supports both. Lean: mono-repo for v1; split a handler out only if it grows its own release cadence or gets independent contributors.
 
-3. **Credential cache invalidation on rotation.** When the operator runs `cbl secret rotate slack mason` to change a token, liminal's 15-minute cache is stale until TTL. Acceptable at solo scale (operator can `cbl liminal flush-creds mason slack` if needed). At scale, Cabal Core could push a cache-bust event over the event bus — defer unless it bites.
+3. **Credential cache invalidation on rotation.** When the operator runs `cbl secret rotate slack mason` to change a token, liminal's 15-minute cache is stale until TTL. Acceptable at solo scale (a `flush-creds` command was proposed but not built; nothing calls `invalidate()`). At scale, Cabal Core could push a cache-bust event over the event bus — defer unless it bites.
 
 4. **Solo-mode shared-process security model.** In solo / dev mode, liminal, all handlers, Cabal Core, and the agents all run in one Python process — there is no OS-level isolation between mason's credentials and wright's at the process level. The structural property is *in-process discipline*: liminal never passes wright's credential dict into a mason-targeted dispatch. A handler that introspects the parent process's memory could see other personas' creds. At solo scale (single-operator, in-house handler code) this is acceptable. At scale (where handlers may be third-party), use scale mode for real OS-level isolation.
 
@@ -328,7 +328,7 @@ wanaku (evaluated 2026-06-07) is the enterprise/K8s answer to this exact problem
 | Work Item | Effort | Deliverable |
 |-----------|--------|-------------|
 | liminal core (handler loading via entry points; in-process call path; MCP Streamable HTTP server) | 3 days | Python module loadable into `cabal` daemon; MCP server for solo mode |
-| Subprocess transport (scale mode) — stdio JSON-RPC framing + spawn/cleanup lifecycle | 1.5 days | Subprocess handler runtime + cleanup-on-disconnect invariant + crash-loop circuit breaker |
+| Subprocess transport (scale mode, not built) — stdio JSON-RPC framing + spawn/cleanup lifecycle | 1.5 days | Subprocess handler runtime + cleanup-on-disconnect invariant + crash-loop circuit breaker |
 | Credential fetch (solo + scale) — in-process call vs mTLS to Cabal Core, 15-min cache, key rotation handling | 1 day | `cabal_core.secrets.get(persona, handler)` (solo); `GET /secrets/<persona>/<handler>` client (scale). Shipped as `CabalCoreCredentialResolver` against `/admin/secrets/{persona}/{handler}`, bearer token, no mTLS. |
 | Capability cards (v1: `always`-only, declared metadata, no on-demand wiring) | 1 day | Card schema, registry, fail-open invariant for tool listing |
 | First v1 handler set (memory, files, slack, github, patterns, scratchpad) | 2 days | Working handlers for mason + wright + architect with the security boundaries spelled out above (files allowlist, web allowlist) |

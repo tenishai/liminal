@@ -66,7 +66,7 @@ liminal is an MCP gateway that brokers agents' access to tools. In scope:
   origin on the same machine is not stopped by this;
 - per-agent credentials: anything that lets one agent use another's
   credentials or tools, including through the credential cache, which keeps
-  each `(persona, handler)` answer for a TTL (15 minutes by default) and does
+  each `(issuer, persona, handler)` answer for a TTL (15 minutes by default) and does
   not cache an empty answer;
 - policy: any way around a tool, file or scope restriction the operator set,
   including the `files` handler's path allowlist and protected-file refusals

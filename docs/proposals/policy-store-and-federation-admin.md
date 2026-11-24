@@ -2,7 +2,7 @@
 
 |  |  |
 | --- | --- |
-| **Status** | Implemented (`SqlitePolicyStore` in `src/liminal/server/policy.py`, admin router in `src/liminal/server/admin.py`) |
+| **Status** | Implemented (`SqlitePolicyStore` in `src/liminal/server/policy.py`, admin router in `src/liminal/server/admin.py`). Written before implementation; the code and `docs/arch/*.md` are authoritative. |
 | **Authors** | Richard DiMartino + AI |
 | **Created** | 2026-07-02 |
 | **Follows** | `docs/proposals/multi-issuer-trust-registry.md` (Part 2 referenced this) |
@@ -51,7 +51,7 @@ class PolicyStore(Protocol):
 
 `resolve(issuer, persona)`: exact `(issuer, persona)` → issuer-wide `(issuer, "*")`
 → `None` (deny). Fail-closed — a missing or malformed grant denies, matching the
-existing `_allowed_handlers_for` posture (`routes.py:225/230`).
+existing `_allowed_handlers_for` posture (in `routes.py`).
 
 ### Schema — `SqlitePolicyStore`
 
@@ -91,7 +91,7 @@ expression of "graduation does not orphan."
 
 Guarded so single-cabal deployments (no `PolicyStore`) are untouched.
 
-### `_authenticate` (routes.py:55)
+### `_authenticate` (routes.py)
 
 ```python
 claims = await verifier.verify(token)
@@ -120,11 +120,11 @@ existing `claims` plumbing, or stash on `request.state`).
 mapping table is derived from the persona's handler set, flagged open in the
 multi-issuer spec). `admin/*` methods require `admin:*`. Deny → audit `access_deny`.
 
-### `_allowed_handlers_for` (routes.py:210)
+### `_allowed_handlers_for` (routes.py)
 
 When a grant is present, return `grant.allowed_handlers` (server-authoritative),
 **not** `claims.raw["tool_extras"]`. The token-embedded path stays for single-cabal.
-`tools/list` (routes.py:190) already filters by this set, so a foreign caller only
+`tools/list` already filters by this set, so a foreign caller only
 ever *sees* what its grant permits.
 
 ---
@@ -156,13 +156,13 @@ server-side `admin:*` grant, never on a separate credential.
 
 `create_app` gains `policy_store: PolicyStore | None = None`; stashes
 `app.state.policy_store` and mounts the admin router when present (mirrors how
-`credential_resolver` is wired, `app.py:130`). CLI (`cli.py serve`) gains
+`credential_resolver` is wired). CLI (`cli.py serve`) gains
 `--policy-db <path>` → constructs `SqlitePolicyStore(path)`; presence of both
 `--trust-registry` and `--policy-db` is what makes a deployment "sovereign."
 
 `--policy-db` without `--trust-registry` is a config error (server-side policy with
-a single-issuer verifier is nonsensical) — raise at `create_app` time, same style as
-the `LIMINAL_AUTH_DISABLED` + verifier mutual-exclusion guard (`app.py:87`).
+a single-issuer verifier is nonsensical). The CLI refuses it (exit 2), same style as
+the `LIMINAL_AUTH_DISABLED` + verifier mutual-exclusion guard (`create_app`).
 
 ---
 

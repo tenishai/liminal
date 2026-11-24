@@ -64,7 +64,7 @@ Passing both is a hard CLI error. A change to claim handling almost always belon
 mode and not the other; say which in the PR.
 
 `LIMINAL_AUTH_DISABLED=1` is the third state, for local use. It synthesises anonymous
-claims with no `cabal_tool_extras`, so `ctx.extra` is empty. The `files` handler therefore
+claims with no `cabal_tool_extras`, so `ctx.extra` carries no handler config (only `correlation_id` and `mcp.session_id`). The `files` handler therefore
 has no per-persona allowlist in that mode, and `LIMINAL_FILES_ALLOWED_PATHS` is its grant:
 with no `files.allowed_paths` claim the variable is what the caller gets, not a ceiling
 (#68). Unset, it still refuses everything — that is
@@ -97,7 +97,7 @@ src/liminal/
   dispatch/    In-process dispatcher, multiplexer
   server/      MCP HTTP server, JWT verifiers, policy store, admin, secret guard
   target/      Federated targets (the `--targets` machinery)
-  handlers/    THE EXTENSION SURFACE — scratchpad, files, web, memory, notify, aws
+  handlers/    THE EXTENSION SURFACE — scratchpad, files, web, memory, notify, aws, cabal
   client/      LiminalClient, LibraryLiminalClient, ProxyLiminalClient, from_config;
                MCPClient (sync) + AsyncMCPClient (async)
   docs/        The bundled guides `liminal guide` prints (package data)
