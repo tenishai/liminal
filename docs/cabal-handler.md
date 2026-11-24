@@ -74,9 +74,9 @@ Run these against the cabal whose personas you want (`CABAL_HOME` and
 
    `--aud` is the persona's dispatch audience, which is its bulletin name for a
    persona this cabal runs. A federated persona's dispatch audience is its
-   `federation_audience`. With the bare name cabal refuses the send:
-   `token aud='scout-primus' cannot dispatch to 'scout-primus' (requires
-   operator or colleague scope)`. The secret key stays the bulletin name,
+   `federation_audience`, and a token minted with its bare name is refused:
+   `token aud='<agent>' cannot dispatch to '<agent>' (requires operator or
+   colleague scope)`. The secret key stays the bulletin name,
    `CABAL_TOKEN_SCOUT_PRIMUS`.
 
    To send to a cabal group (`send` with `group`), hold a token for any one
