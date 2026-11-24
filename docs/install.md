@@ -59,7 +59,7 @@ against whatever `../techne` has checked out.
 
 The distribution is named `tenish-liminal` (not yet published to PyPI); the
 import package and the CLI command are still `liminal`. To install a tagged release
-straight from git (this needs access to `tenishai/liminal` until it is public):
+straight from git:
 
 ```bash
 pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
