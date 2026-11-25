@@ -716,6 +716,27 @@ async def test_pinned_https_does_not_use_the_shared_pool() -> None:
         await handler.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_clients_ignore_https_proxy_from_the_environment(monkeypatch) -> None:
+    """A proxy tunnel sends the pinned IP as SNI and fails verification
+    (issue #204), so neither the shared nor the per-request client may pick
+    HTTPS_PROXY up from the environment."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    handler = WebHandler(default_config=WebConfig(allowed_hosts=["*"]))
+    await handler.startup()
+    try:
+        shared, _ = handler._get_client(handler.default_config)
+        isolated, _ = handler._get_client(handler.default_config, isolated=True)
+        for client in (shared, isolated):
+            assert client.trust_env is False
+            for url in ("https://example.com/", "http://example.com/"):
+                assert client._transport_for_url(httpx.URL(url)) is client._transport
+        await isolated.aclose()
+    finally:
+        await handler.shutdown()
+
+
 def test_pin_request_keeps_userinfo_so_basic_auth_still_goes() -> None:
     url, headers, _ = _pin_request("https://user:pw@hooks.example.com/x?a=1", "93.184.216.34")
     assert url == "https://user:pw@93.184.216.34/x?a=1"
