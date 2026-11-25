@@ -192,8 +192,8 @@ modes have no policy DB, so the log line is the only record.
 ### Health: `/healthz` and `/readyz`
 
 Both return `{"status": "ok" | "degraded", "targets": {name: status}}`. A target reads
-`ready`, a fixed failure such as `catalog fetch failed (startup)`, or, for `files` and
-`memory` without server config, `unconfigured: <what to set>`. Unconfigured does not
+`ready`, a fixed failure such as `catalog fetch failed (startup)`, or, for `files`,
+`memory` and `notify` without server config, `unconfigured: <what to set>`. Unconfigured does not
 count as degraded, because a token's tool extras may still supply the config.
 `/healthz` always answers 200 (use it for liveness: a restart won't fix a dead upstream).
 `/readyz` answers 503 while anything is degraded (use it for readiness).
