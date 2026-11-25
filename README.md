@@ -64,9 +64,10 @@ Then point a client at it, for example Claude Code:
 claude mcp add --transport http liminal http://127.0.0.1:9100/mcp
 ```
 
-`scratchpad`, `web` and `notify` work straight away. `files` refuses every call until
-you grant it paths, and `memory` needs techne; `curl http://127.0.0.1:9100/healthz`
-says what each handler still needs. [docs/running.md](docs/running.md) covers those
+`scratchpad` and `web` work straight away. `notify` needs `LIMINAL_NOTIFY_WEBHOOK_URL`,
+`files` refuses every call until you grant it paths, and `memory` needs techne and
+`LIMINAL_MEMORY_DB`; `curl http://127.0.0.1:9100/healthz` flags the last two as
+`unconfigured`. [docs/running.md](docs/running.md) covers those
 grants, JWT auth for production and deploying through gojira;
 [docs/install.md](docs/install.md) covers the `memory` extra and the image.
 
@@ -98,7 +99,7 @@ scripts/           check-techne-sibling.sh (sibling techne matches the pinned ta
 tests/             pytest suite
 docs/
   design.md        The ORIGINAL proposal. The implementation has diverged —
-                   read this README for what shipped.
+                   read what-works.md for what shipped.
   writing-a-handler.md  What a handler author needs beyond the sketch below
   arch/            Architecture cards, one per seam (indexed in ARCHITECTURE.md)
   proposals/       Design notes, not documentation of current behaviour
