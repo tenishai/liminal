@@ -81,6 +81,15 @@ DEFAULT_MAX_LIST_ENTRIES = 500
 # loads, including ones outside the allowlist and ones edited after this
 # write, so a write-time check cannot be complete. Shape follows the prior art
 # cited in #108 (hermes-agent's write guards, ported from Roo-Code).
+# Every name lefthook reads as its main or local config, in any directory (so
+# `.config/lefthook.yml` too). Listed exactly rather than as `lefthook.*`, so a
+# `lefthook.md` beside them stays writable.
+_LEFTHOOK_CONFIGS: frozenset[str] = frozenset(
+    f"{dot}{stem}.{ext}"
+    for dot in ("", ".")
+    for stem in ("lefthook", "lefthook-local")
+    for ext in ("yml", "yaml", "toml", "json", "jsonc")
+)
 PROTECTED_BASENAMES: frozenset[str] = frozenset(
     {
         "claude.md", "claude.local.md", "agents.md", ".cursorrules", "gemini.md",
@@ -88,7 +97,12 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
         # Code execution (#110): these register MCP servers, i.e. commands an
         # agent starts on its next launch in the tree.
         ".mcp.json", ".claude.json", ".git",
+        # Code execution with no command at all (#155, tier 1): direnv loads
+        # `.envrc` on `cd`, and these hook managers install git hooks from
+        # their config. pre-commit reads only `.pre-commit-config.yaml`.
+        ".envrc", ".pre-commit-config.yaml",
     }
+    | _LEFTHOOK_CONFIGS
 )
 # Anything beneath these directories. `.claude/settings.json` can register
 # hooks, which is code execution, not just instructions. `.cursor/` holds
@@ -100,8 +114,9 @@ PROTECTED_BASENAMES: frozenset[str] = frozenset(
 # and stay writable. `.gemini/settings.json` registers MCP servers for Gemini
 # CLI, so `.gemini/` is a code-execution path too. `.clinerules/` (Cline's
 # directory form) and `.roo/` (Roo Code's `rules/` and `rules-<mode>/`) hold instructions.
+# `.husky/` holds the hook scripts husky points `core.hooksPath` at (#155).
 PROTECTED_DIRS: frozenset[str] = frozenset(
-    {".claude", ".cursor", ".git", ".gemini", ".clinerules", ".roo"}
+    {".claude", ".cursor", ".git", ".gemini", ".clinerules", ".roo", ".husky"}
 )
 # Exact parent/child pairs naming a single file.
 PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
@@ -109,6 +124,8 @@ PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
         (".github", "copilot-instructions.md"),
         # VS Code's workspace MCP servers (code execution).
         (".vscode", "mcp.json"),
+        # A task with `"runOn": "folderOpen"` runs when the folder opens (#155).
+        (".vscode", "tasks.json"),
     }
 )
 # Parent/child directory pairs: anything beneath `<parent>/<child>/`. Copilot's
@@ -131,7 +148,9 @@ BUILTIN_PROTECTED_PATTERNS: tuple[str, ...] = (".roorules-*",)
 # worktree or submodule checkout (`gitdir: <path>`), which redirects git to
 # another gitdir and so to its config and hooks.
 _EXEC_NAMES: frozenset[str] = frozenset(
-    {".mcp.json", ".claude.json", ".git/", ".git", ".gemini/", ".vscode/mcp.json"}
+    {".mcp.json", ".claude.json", ".git/", ".git", ".gemini/", ".vscode/mcp.json",
+     ".envrc", ".pre-commit-config.yaml", ".husky/", ".vscode/tasks.json"}
+    | _LEFTHOOK_CONFIGS
 )
 
 # Reported as the match for a hard-linked target (see `_is_hard_linked`).
@@ -647,13 +666,13 @@ def _pattern_match(pattern: str, parts: list[str], whole: str) -> bool:
     and the casefolded POSIX form of the whole path.
 
     A pattern with no `/` is a NAME: it matches any component, the file or a
-    directory above it, so `.husky` protects everything under `.husky/` and
+    directory above it, so `.githooks` protects everything under `.githooks/` and
     `*.env` protects every `.env` file. A pattern with a `/` is a PATH,
     matched against the whole path; unless it starts with `/` or `*` it is
-    anchored at any directory, so `.husky/*` matches `<anything>/.husky/...`.
+    anchored at any directory, so `.githooks/*` matches `<anything>/.githooks/...`.
     A PATH also protects everything beneath what it matches, the same as a
-    NAME does, so `sub/.husky` (or `sub/.husky/`, the trailing `/` having been
-    dropped by `_normalise_patterns`) covers `sub/.husky/pre-commit`.
+    NAME does, so `sub/.githooks` (or `sub/.githooks/`, the trailing `/` having been
+    dropped by `_normalise_patterns`) covers `sub/.githooks/pre-commit`.
     `*` crosses `/` (plain fnmatch), so one `*` covers any depth.
     """
     if "/" not in pattern:

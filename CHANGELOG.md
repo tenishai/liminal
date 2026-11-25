@@ -13,6 +13,14 @@ Each line cites the pull request that made the change.
   URL in its credentials or tool extras is refused. It now reads `unconfigured:
   LIMINAL_NOTIFY_WEBHOOK_URL is unset ...`, which, as for `files` and `memory`, does not
   make the gateway degraded, and startup logs `liminal.handler_unconfigured` for it.
+- **Security: `files.write` refuses config that developer tools run with no command**
+  (part of issue 155). Without the `files:protected_writes` grant it now refuses `.envrc`
+  (direnv loads it on `cd`), `.vscode/tasks.json` (a `folderOpen` task runs when the
+  folder opens), `.pre-commit-config.yaml`, every lefthook config name (`lefthook.yml`,
+  `.lefthook.yaml`, `lefthook-local.json`, ... in any directory) and anything under
+  `.husky/`. These are code-execution paths, like `.git/hooks`. Files that run on a common
+  command (`conftest.py`, `Makefile`) stay writable; `LIMINAL_FILES_PROTECTED_PATTERNS`
+  can add them.
 - **`web` and `notify` no longer read proxy settings from the environment** (issue 204).
   With `HTTPS_PROXY` set, httpx sent pinned https requests through httpcore's proxy
   tunnel, which uses the pinned IP as the TLS server name, so certificate verification

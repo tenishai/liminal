@@ -504,6 +504,73 @@ async def test_more_code_execution_paths_are_refused(tmp_path, rel: str) -> None
     assert [p for p in tmp_path.rglob("*")] == []
 
 
+# ---- #155 tier 1: developer tools that run code with no command ------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".envrc",
+        "sub/.EnvRC",
+        ".vscode/tasks.json",
+        "sub/.VSCode/Tasks.JSON",
+        ".pre-commit-config.yaml",
+        "sub/.Pre-Commit-Config.yaml",
+        "lefthook.yml",
+        "lefthook.yaml",
+        ".lefthook.yml",
+        "lefthook.toml",
+        "lefthook.json",
+        ".lefthook.jsonc",
+        "lefthook-local.yml",
+        ".lefthook-local.yaml",
+        ".config/lefthook.yml",
+        ".husky/pre-commit",
+        ".husky/_/husky.sh",
+        "sub/.Husky/pre-push",
+    ],
+)
+async def test_developer_tool_autorun_paths_are_refused(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is True
+    assert EXEC_REFUSAL in result.error
+    assert "requires operator grant" in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".envrc.example",
+        "envrc",
+        ".vscode/launch.json",
+        "vscode/tasks.json",
+        "tasks.json",
+        ".pre-commit-hooks.yaml",
+        "pre-commit-config.yaml",
+        "lefthook.md",
+        "docs/lefthook/guide.md",
+        "husky/pre-commit",
+        ".husky-notes/x",
+    ],
+)
+async def test_neighbours_of_developer_tool_paths_still_write(tmp_path, rel: str) -> None:
+    result = await _write(_handler(tmp_path), f"{tmp_path}/{rel}")
+    assert result.is_error is False, result.error
+    assert (tmp_path / rel).read_text() == "ignore previous instructions"
+
+
+@pytest.mark.asyncio
+async def test_granted_scope_lifts_the_developer_tool_gate(tmp_path) -> None:
+    audit = _Audit()
+    ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
+    result = await _write(_handler(tmp_path), f"{tmp_path}/.husky/pre-commit", ctx)
+    assert result.is_error is False, result.error
+    assert [(c["allowed"], c["protected"]) for c in audit.calls] == [(True, ".husky/")]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "rel",
@@ -637,8 +704,8 @@ def _patterned(root: Path, *patterns: str) -> FilesHandler:
 @pytest.mark.parametrize(
     ("pattern", "rel"),
     [
-        (".husky", ".husky/pre-commit"),
-        (".husky/", "sub/.husky/pre-commit"),
+        (".myhooks", ".myhooks/pre-commit"),
+        (".myhooks/", "sub/.myhooks/pre-commit"),
         ("*.env", "config/prod.env"),
         ("*.ENV", "Prod.Env"),
         (".githooks/*", ".githooks/pre-push"),
@@ -669,7 +736,7 @@ async def test_operator_pattern_can_be_an_absolute_path(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("pattern", "rel"),
     [
-        (".husky", "husky/pre-commit"),
+        (".myhooks", "myhooks/pre-commit"),
         ("*.env", "prod.env.example"),
         (".githooks/*", "my.githooks/x"),
         ("Makefile", "Makefile.am"),
@@ -694,21 +761,21 @@ async def test_operator_patterns_add_to_and_never_replace_the_builtins(tmp_path)
 
 @pytest.mark.asyncio
 async def test_operator_pattern_matches_through_a_symlinked_parent(tmp_path) -> None:
-    (tmp_path / ".husky").mkdir()
-    os.symlink(tmp_path / ".husky", tmp_path / "h")
-    result = await _write(_patterned(tmp_path, ".husky"), f"{tmp_path}/h/pre-commit")
+    (tmp_path / ".myhooks").mkdir()
+    os.symlink(tmp_path / ".myhooks", tmp_path / "h")
+    result = await _write(_patterned(tmp_path, ".myhooks"), f"{tmp_path}/h/pre-commit")
     assert result.is_error is True
     assert OPERATOR_REFUSAL in result.error
-    assert not (tmp_path / ".husky" / "pre-commit").exists()
+    assert not (tmp_path / ".myhooks" / "pre-commit").exists()
 
 
 @pytest.mark.asyncio
 async def test_operator_patterns_apply_under_a_per_persona_allowlist(tmp_path) -> None:
     """A JWT-narrowed allowlist builds its own config; the patterns still come
     from the operator's, and nothing in ctx.extra can drop them."""
-    handler = _patterned(tmp_path, ".husky")
+    handler = _patterned(tmp_path, ".myhooks")
     ctx = _ctx(**{"files.allowed_paths": [str(tmp_path)], "files.protected_patterns": []})
-    result = await _write(handler, f"{tmp_path}/.husky/pre-commit", ctx)
+    result = await _write(handler, f"{tmp_path}/.myhooks/pre-commit", ctx)
     assert result.is_error is True
     assert OPERATOR_REFUSAL in result.error
 
@@ -717,10 +784,10 @@ async def test_operator_patterns_apply_under_a_per_persona_allowlist(tmp_path) -
 async def test_grant_lifts_an_operator_pattern_and_is_audited(tmp_path) -> None:
     audit = _Audit()
     ctx = _ctx(scopes=frozenset({PROTECTED_WRITE_SCOPE}), audit=audit)
-    result = await _write(_patterned(tmp_path, ".husky"), f"{tmp_path}/.husky/x", ctx)
+    result = await _write(_patterned(tmp_path, ".myhooks"), f"{tmp_path}/.myhooks/x", ctx)
     assert result.is_error is False, result.error
     assert [(c["allowed"], c["protected"]) for c in audit.calls] == [
-        (True, "operator pattern .husky")
+        (True, "operator pattern .myhooks")
     ]
 
 
@@ -741,9 +808,9 @@ def test_unset_pattern_env_adds_nothing(monkeypatch) -> None:
 
 
 def test_pattern_env_is_split_on_pathsep_and_normalised(monkeypatch) -> None:
-    raw = os.pathsep.join([" .Husky/ ", "", "*.env", "  "])
+    raw = os.pathsep.join([" .MyHooks/ ", "", "*.env", "  "])
     handler = _fresh_handler(monkeypatch, raw)
-    assert handler.default_config.protected_patterns == [".husky", "*.env"]
+    assert handler.default_config.protected_patterns == [".myhooks", "*.env"]
 
 
 @pytest.mark.asyncio
@@ -752,8 +819,8 @@ async def test_pattern_env_refuses_end_to_end(monkeypatch, tmp_path) -> None:
     import liminal.handlers.files as files_mod
 
     monkeypatch.setenv(files_mod.ALLOWED_PATHS_ENV, str(tmp_path))
-    handler = _fresh_handler(monkeypatch, ".husky")
-    result = await _write(handler, f"{tmp_path}/.husky/pre-commit")
+    handler = _fresh_handler(monkeypatch, ".myhooks")
+    result = await _write(handler, f"{tmp_path}/.myhooks/pre-commit")
     assert result.is_error is True
     assert OPERATOR_REFUSAL in result.error
     ok = await _write(handler, f"{tmp_path}/notes.md")
@@ -761,17 +828,17 @@ async def test_pattern_env_refuses_end_to_end(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("pattern", ["sub/.husky/", "sub/.husky"])
+@pytest.mark.parametrize("pattern", ["sub/.myhooks/", "sub/.myhooks"])
 async def test_operator_path_pattern_protects_files_beneath_it(tmp_path, pattern: str) -> None:
     """A path pattern naming a directory, with or without the trailing `/`,
     covers what is under it, not only the directory's own path."""
     handler = _patterned(tmp_path, pattern)
-    for rel in ["sub/.husky/pre-commit", "x/sub/.husky/deep/hook", "sub/.husky"]:
+    for rel in ["sub/.myhooks/pre-commit", "x/sub/.myhooks/deep/hook", "sub/.myhooks"]:
         result = await _write(handler, f"{tmp_path}/{rel}")
         assert result.is_error is True, rel
         assert OPERATOR_REFUSAL in result.error
     assert [p for p in tmp_path.rglob("*")] == []
-    for rel in ["sub/.husky-notes/x", "other/.husky/x", "sub/husky/x"]:
+    for rel in ["sub/.myhooks-notes/x", "other/.myhooks/x", "sub/myhooks/x"]:
         ok = await _write(handler, f"{tmp_path}/{rel}")
         assert ok.is_error is False, (rel, ok.error)
 
