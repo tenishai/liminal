@@ -253,7 +253,7 @@ curl -s http://127.0.0.1:9100/healthz
 
 - `liminal guide` lists the bundled guides; this is the only one so far.
 - `liminal serve --help` for every flag.
-- In the repo: `README.md` ("Run the gateway" for a worked setup, "Through Gojira" for
-  deployment), `docs/writing-a-handler.md` before you write a handler, `docs/design.md`
+- In the repo: `docs/running.md` for a worked setup of `liminal serve`, and its "Through
+  Gojira" section for deployment; `docs/writing-a-handler.md` before you write a handler, `docs/design.md`
   for the `[[target]]` keys (the rest of it is the original proposal), `ARCHITECTURE.md`
   and `docs/arch/*.md` for how each part works, and `CHANGELOG.md` for what changed.

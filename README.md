@@ -1,260 +1,84 @@
 # liminal
 
-MCP gateway — one MCP connection per agent, many backend handlers behind it.
+liminal is an MCP gateway: one MCP connection per agent, many tool handlers behind it.
+
+[![CI](https://github.com/tenishai/liminal/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tenishai/liminal/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/tenishai/liminal)](https://github.com/tenishai/liminal/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
+
+![liminal lists its handlers, serves them on one endpoint, and answers a tool call](docs/img/serve.svg)
+
+## Overview
 
 From Latin *limen*, "threshold." liminal is the boundary an agent crosses to
 reach its tools: memory, web fetch, file I/O, notifications, and persona-specific
 backends. Instead of every agent running N MCP server processes, agents connect
 to one liminal and liminal dispatches.
 
+- **One MCP connection per agent**, not N.
+- **Credentials per persona.** liminal fetches the credential set for
+  `(persona, handler)` when a call is dispatched. No `.env` files on disk.
+- **The operator's config is the ceiling.** A caller's token can narrow allowed
+  paths, hosts and webhooks; it cannot widen them.
+- **One handler interface.** In-process Python handlers and upstream MCP servers
+  (`liminal serve --targets`) sit behind the same endpoint.
+- **Every call is audited.** Each `tools/call` that reaches a handler logs one line.
+
+liminal is the tool gateway in the tenish family of open-source platform and agent
+projects, and runs without any of the others: with auth off it needs no issuer, and
+any issuer can stand in for cabal if it signs RS256 tokens carrying `iss`, `aud`,
+`exp`, `iat`, `sub`, a `persona` (or `cabal_persona`) claim and, in single-cabal mode,
+a `scope` array containing `dispatch`.
+[techne](https://github.com/tenishai/techne) backs the `memory` handler,
+[cabal](https://github.com/tenishai/cabal) mints the tokens liminal verifies and
+serves per-persona secrets, [daedalus](https://github.com/tenishai/daedalus) agents
+use liminal as their tool provider, [kobo](https://github.com/tenishai/kobo) writes
+agents' grants and reads the call audit, and
+[gojira](https://github.com/tenishai/gojira) deploys it.
+
 New here, or asking an agent what this is? Run `liminal guide welcome`: it ships in
 the package and covers every mode, handler and extra with why you'd pick it.
 
-## Where this fits
+## Quickstart
 
-- **techne** (optional): backs the `memory` handler through the `[memory]` extra.
-- **cabal** (optional): mints the JWTs liminal verifies, serves per-persona secrets
-  (`--cabal-url`), and ships the `patterns`, `documents`, `code` and `archivist`
-  handlers through liminal's entry points. Its personas connect with `liminal.client`.
-- **daedalus** (optional consumer): uses liminal as an agent's tool provider
-  (`tools.provider: liminal`).
-- **kobo** (optional consumer): writes agents' grants, reads the call audit and runs
-  the AWS set-up checks on a sovereign liminal's `/admin/*` plane.
-- **gojira** (optional): deploys liminal from `gojira.yaml`.
-
-liminal runs without any of them: auth-off needs no issuer, and any issuer can stand
-in for cabal if it signs RS256 tokens carrying `iss`, `aud`, `exp`, `iat`, `sub`, a
-`persona` (or `cabal_persona`) claim and, in single-cabal mode, a `scope` array
-containing `dispatch`.
-
-## Status
-
-Seven built-in handlers ship (`docs/design.md` plans more, such as `slack` and
-`github`; none exist). Credentials are fetched per call from Cabal Core with a
-15-minute cache, and a failed fetch gives the handler an empty set. Network, DNS, file
-and SQLite work is awaited or run in a worker thread. SSRF-hardened, CI active on
-push/PR. Run `pytest -q` for the current suite (1053 passed, 2 skipped on 2026-11-23 at
-3e3ac92, Python 3.12, `pip install -e ".[dev]"`, techne not installed: the memory-handler module skips).
-
-## What works
-
-- **7 built-in handlers** — `scratchpad` (per-agent ephemeral notes), `files`
-  (scoped read/write/list/exists with path-traversal defense), `web` (allowlisted
-  HTTP fetch + SSRF DNS-rebinding defense via pinned-IP transport), `memory`
-  (techne-backed knowledge recall + commit), `notify` (transport-agnostic
-  notifications; webhook in v1), `aws` (read-only AWS calls through an IAM role that
-  trusts the gateway's own Google identity; needs the `[aws]` extra), `cabal` (sends
-  tasks to cabal's personas over A2A; see `docs/cabal-handler.md`).
-- **Call audit** — every `tools/call` that reaches a handler logs one `tool.call` line;
-  in sovereign mode it also writes an audit row, read with `GET /admin/policy/audit`
-  (`persona=`, `agent=`, `since=`, `limit=` up to 1000).
-- **JWT auth** — RS256 algorithm pin and `aud` enforcement on every authenticated
-  method (`tools/list`, `tools/call`); `initialize` and `ping` need no token. In
-  single-cabal mode (`--jwks-url`) the token must also hold the `dispatch` scope,
-  in a `cabal_scope` claim, or failing that a `scope` claim, given as a JSON array
-  (a space-delimited string is rejected; a non-list `cabal_scope` hides a valid `scope`). In sovereign mode (`--trust-registry` + `--policy-db`) the
-  token's own scope and tool extras are ignored, and access comes from the
-  server-side grant for its `(issuer, persona)`. An auth failure on `/mcp` (wrong
-  audience, no scope, no grant) is HTTP 200 carrying JSON-RPC error `-32001`; only
-  `/admin/*` answers with a real 401.
-- **Revocation** — with `--cabal-url` set, liminal reads that cabal's
-  `GET /auth/revocations` with the `LIMINAL_CABAL_TOKEN` bearer and refuses a token
-  from that cabal (in sovereign mode, the parent) whose subject it revoked, within
-  the refresh window (`--revocation-ttl`, 30s by default). The check is fail-soft:
-  an older cabal that answers 404, or one that is down at start, leaves tokens
-  accepted until their `exp` as before (one warning), and a failed refresh keeps
-  the last good list.
-- **`cabal_tool_extras` clamping** — operator config is the ceiling. JWTs can
-  narrow allowed paths/hosts/webhooks but cannot widen past the server-side bound.
-- **Credential flow** — `CabalCoreCredentialResolver` fetches per-`(persona, handler)`
-  secrets from Cabal Core with TTL caching; a failed fetch gives the handler an empty
-  set. Handlers receive per-persona secrets in `ctx.credentials`, and they are not
-  stored in this repo. Federated-target tokens (an inline `bearer_token` in a
-  `[[target]]`) and the notify webhook URL (a credential itself, in
-  `LIMINAL_NOTIFY_WEBHOOK_URL` or tool extras) can also sit in config; prefer
-  `bearer_token_env` and Cabal secrets.
-- **MCP wire format** — the non-spec `json` block type is converted to `text` at the
-  wire boundary; other block types (such as `resource` blocks from federated
-  upstreams) pass through as the handler or upstream sent them. Notifications get no
-  response.
-- **Async** — network calls are awaited; DNS resolution, file reads and writes, and
-  SQLite run in a worker thread (`anyio.to_thread` or `asyncio.to_thread`). Path
-  resolution in `files` still runs on the event loop.
-- **MCP client lib** — `MCPClient` (sync) and `AsyncMCPClient` (async) in
-  `liminal.client` for downstream consumers (Cabal, third-party agents).
-- **Federated targets** — `liminal serve --targets targets.toml` adds upstream MCP
-  servers behind the same endpoint. A target can send static headers, a bearer or HTTP
-  Basic credential (inline or from an environment variable), or a per-persona service
-  token, and can hold one upstream session per calling persona for a stateful server
-  (`session = "per-persona"`). The keys are in the `[[target]]` table in
-  `docs/design.md`.
-
-## Why
-
-- **One MCP connection per agent**, not N.
-- **Persona-scoped credentials** — liminal fetches the credential set for
-  `(persona, handler)` at dispatch time. No `.env` files on disk.
-- **Handler pooling** — personas share one runtime per handler, so `mason-primus`
-  and `mason-secundus` reach the same `web` handler instance. A credentialed
-  handler, such as a hypothetical `slack` one (none ships), could keep one
-  rate-limit budget for both.
-- **Same handler interface everywhere** — in-process Python callables today, with a
-  federation path (`liminal serve --targets`) for fanning out to upstream MCP servers;
-  identical `dispatch(name, payload, ctx)`.
-- **Capability cards** declare what each handler covers, what credentials it
-  expects, and when it's relevant.
-
-## Quickstart (development)
-
-You need git and Python 3.12 or newer. On Debian and Ubuntu, also run
-`sudo apt update && sudo apt install python3-venv`; without it `python3 -m venv`
-fails. liminal and techne are both private for now, so until they are public the
-clone needs access to `tenishai/liminal`, and the techne steps below need access
-to `tenishai/techne`.
+You need git and Python 3.12 or newer (on Debian and Ubuntu, `python3-venv` too).
 
 ```bash
 git clone https://github.com/tenishai/liminal.git && cd liminal
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q
+liminal list-handlers
 ```
 
-Everything above, including the test suite, runs without techne. Only the
-`memory` handler needs it. Until techne is public, this step needs access to
-`tenishai/techne`:
+Serve the handlers on one endpoint, auth off, for a single operator on localhost:
 
 ```bash
-pip install -r requirements-sources.txt   # techne at its pinned git tag, no sibling checkout
-pip install -e ".[dev,memory]"
-```
-
-## Install (non-dev / clean machine)
-
-The `memory` handler needs `techne`, which is not on a public index. To install
-without a sibling checkout (agents, other hosts, containers), work from a clone of
-this repo (see the Quickstart above, including its Debian/Ubuntu `python3-venv`
-step), with access to `tenishai/techne`, and pin the git source alongside the extra
-inside a virtual environment:
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-sources.txt ".[memory]"
-```
-
-If you work on techne and liminal together, install your techne checkout instead:
-`pip install -e ../techne`.
-
-The pinned techne is `v0.18.2` (distribution `tenish-techne`), stated in `requirements-sources.txt`, in the `memory`
-extra's floor, and as the Dockerfile's `TECHNE_VERSION`; `tests/test_techne_pin.py`
-keeps the three in step. To build the image from a sibling checkout, clone techne at
-that tag and check it before building:
-
-```bash
-git clone --branch v0.18.2 https://github.com/tenishai/techne.git ../techne
-bash scripts/check-techne-sibling.sh
-docker build --build-context techne=../techne -t liminal .
-```
-
-The image build itself only compares techne's version string, which cannot tell
-techne's main from the tag; the script compares commits. `TECHNE_ANY=1` skips the
-script and `--build-arg TECHNE_ANY_VERSION=1` skips the build's check, for building
-against whatever `../techne` has checked out.
-
-The distribution is named `tenish-liminal` (not yet published to PyPI); the
-import package and the CLI command are still `liminal`. To install a tagged release
-straight from git (this needs access to `tenishai/liminal` until it is public):
-
-```bash
-pip install "tenish-liminal @ git+https://github.com/tenishai/liminal.git@<tag>"
-```
-
-`v0.4.0` is the first tag that builds `tenish-liminal`; `v0.3.0` builds the old
-`tenishai-liminal` distribution, `v0.2.0` builds `liminal` and `v0.1.0` builds `limenal`.
-
-## Run the gateway (`liminal serve`)
-
-Expose the handlers as one MCP endpoint any MCP client (Claude Code, goose, Cabal
-personas) connects to. Handlers are **auto-discovered** from installed packages — install
-`cabal` alongside liminal and its `patterns` / `documents` / `code` / `archivist`
-handlers register automatically next to liminal's own seven.
-
-```bash
-# local / trusted-network — single operator on localhost, auth off:
 LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
-# health check: curl http://127.0.0.1:9100/healthz (always 200 while serving; a
-#   handler missing its server config reads "unconfigured: <what to set>", not "ready")
-# readiness:    curl http://127.0.0.1:9100/readyz  (503 while any target is degraded)
-#
-# The `files` handler starts with an EMPTY allowlist and refuses every call
-# until you grant it something. In auth-off mode there is no JWT to carry a
-# per-persona allowlist, so grant the operator ceiling by environment:
-#
-#   LIMINAL_FILES_ALLOWED_PATHS=/srv/work:/tmp/sandbox \
-#     LIMINAL_AUTH_DISABLED=1 liminal serve --host 127.0.0.1 --port 9100
-#
-# os.pathsep-separated, read once at startup. Relative segments are refused.
-#
-# WHAT IT MEANS DEPENDS ON THE CALLER:
-#   no files.allowed_paths claim  -> this IS the grant (auth-off is this case)
-#   a claim  -> this is the CEILING; the claim narrows it, never widens it
-#   an empty or malformed claim   -> nothing is granted
-#
-# So on a JWT deployment, setting this grants it to every token WITHOUT the
-# claim — it is not only a ceiling. `web` and `scratchpad` need no such grant.
-# With auth off, liminal issues an Mcp-Session-Id on initialize and keeps each
-# session's scratchpad apart; a client that sends none shares one bucket.
-#
-# `notify` has no JWT to carry a webhook URL in auth-off mode either, so the
-# server's own config comes from the environment:
-#   LIMINAL_NOTIFY_WEBHOOK_URL=https://ntfy.sh/my-topic   # used when a call names none
-#   LIMINAL_NOTIFY_ALLOWED_HOSTS=ntfy.sh                  # host ceiling (default: any)
-#   LIMINAL_NOTIFY_STDOUT=1                               # also offer `stdout`, off by default:
-#                                                         # it writes caller text to this log
-#
-# POST /mcp refuses browser-shaped requests in every mode: an Origin that is not
-# loopback gets 403, a Content-Type other than application/json gets 415. To let a
-# browser UI on another origin through, list it (comma-separated, exact match):
-#   LIMINAL_ALLOWED_ORIGINS=https://ui.example:8443
-
-# production — verify caller JWTs against Cabal Core's JWKS (swap in your host).
-# --host defaults to 127.0.0.1; 0.0.0.0 listens on every interface. (With
-# LIMINAL_AUTH_DISABLED=1, serve refuses any non-loopback --host and exits 2, unless
-# LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1 is set for a container whose port is
-# published to loopback only.)
-liminal serve --host 0.0.0.0 --port 9100 --jwks-url https://cabal-core.internal:7400/.well-known/jwks.json
 ```
 
-`liminal list-handlers` prints what's registered. The endpoint speaks JSON-RPC at
-`POST /mcp` (`initialize` / `tools/list` / `tools/call`). Point a client at it — e.g.
-Claude Code:
+Then point a client at it, for example Claude Code:
 
 ```bash
 claude mcp add --transport http liminal http://127.0.0.1:9100/mcp
 ```
 
-To have credentialed handlers fetch their secrets from Cabal at dispatch time, add
-`--cabal-url http://cabal-core:7400 --cabal-token-env LIMINAL_CABAL_TOKEN`. Federate
-extra MCP upstreams with `--targets targets.toml`.
+`scratchpad` and `web` work straight away. `notify` needs `LIMINAL_NOTIFY_WEBHOOK_URL`,
+`files` refuses every call until you grant it paths, and `memory` needs techne and
+`LIMINAL_MEMORY_DB`; `curl http://127.0.0.1:9100/healthz` flags the last two as
+`unconfigured`. [docs/running.md](docs/running.md) covers those
+grants, JWT auth for production and deploying through gojira;
+[docs/install.md](docs/install.md) covers the `memory` extra and the image.
 
-The single-cabal flags also read from the environment when absent — `LIMINAL_JWKS_URL`,
-`LIMINAL_ISSUER`, `LIMINAL_AUDIENCE`, `LIMINAL_CABAL_URL`, `LIMINAL_TARGETS` — so a
-container whose CMD is the bare `liminal serve` can be pointed at a cabal by its
-deployment without rebuilding. A flag on the command line wins over the variable.
+## How it works
 
-### Through Gojira
-
-`gojira.yaml` at the repo root is the deploy contract for
-[Gojira](https://github.com/tenishai/gojira): gateway class (one replica, the memory
-handler's SQLite on the `liminal-data` PVC in `k8s/base`), port 9100, `/healthz`
-(Gojira's gateway class uses one path for liveness and readiness, so the contract keeps
-`/healthz`; `/readyz` is there for a deployment that probes readiness separately),
-techne from a package index at build time, and the cabal it serves as `LIMINAL_*`
-env. The Dockerfile takes the index token as a BuildKit secret
-(`--secret id=ar_token`) and prefers it over `--build-arg AR_TOKEN`. Out of band per environment: Secret `liminal-secrets` with `LIMINAL_CABAL_TOKEN`
-(`cbl token mint-service --scope secrets-fetch` on that cabal).
-
-## Repository layout
+The endpoint speaks JSON-RPC at `POST /mcp` (`initialize`, `tools/list`, `tools/call`).
+Handlers are discovered from installed packages through the `liminal.handlers` entry
+point, and each tool is named `<handler>.<tool>`. In production liminal verifies the
+caller's RS256 JWT: against one cabal's keys (`--jwks-url`), or, in sovereign mode
+(`--trust-registry` with `--policy-db`), against several issuers with access coming
+from a server-side grant per `(issuer, persona)`.
 
 ```
 src/liminal/
@@ -275,13 +99,13 @@ scripts/           check-techne-sibling.sh (sibling techne matches the pinned ta
 tests/             pytest suite
 docs/
   design.md        The ORIGINAL proposal. The implementation has diverged —
-                   read this README for what shipped.
+                   read what-works.md for what shipped.
   writing-a-handler.md  What a handler author needs beyond the sketch below
   arch/            Architecture cards, one per seam (indexed in ARCHITECTURE.md)
   proposals/       Design notes, not documentation of current behaviour
 ```
 
-## Wiring a handler (custom)
+### Wiring a handler
 
 ```python
 from liminal.protocol import Context, Handler, ToolResult, ToolSpec
@@ -311,7 +135,7 @@ That's the mechanism. Before you write a real handler, read
 hooks, silent discovery failure, a scope-gating footgun, the testing convention) that this sketch doesn't cover and that
 you'd otherwise have to find in source.
 
-## Using the MCP client
+### Using the MCP client
 
 ```python
 from liminal.client import AsyncMCPClient
@@ -324,15 +148,41 @@ async with AsyncMCPClient(
     result = await client.call_tool("scratchpad.set", {"key": "color", "value": "blue"})
 ```
 
-## Relationship to Cabal
+## Status
 
-liminal is standalone — any MCP-speaking agent can use it. Cabal
-(`github.com/tenishai/cabal`) is the primary downstream consumer; Cabal personas
-connect to liminal for their tool surface and liminal asks Cabal Core for
-credentials per `(persona, handler)`.
+Pre-alpha. Seven built-in handlers ship (`scratchpad`, `files`, `web`, `memory`, `notify`,
+`aws`, `cabal`; `docs/design.md` plans more, such as `slack` and `github`, and none
+exist). The call audit, JWT auth in single-cabal and sovereign modes, revocation, the
+credential flow, federated targets and the sync and async client library all work.
+Network, DNS, file and SQLite work is awaited or run in a worker thread, and the
+gateway is SSRF-hardened. [docs/what-works.md](docs/what-works.md) has each of these in
+detail. Run `pytest -q` for the current suite (1053 passed, 2 skipped on 2026-11-23 at
+3e3ac92, Python 3.12, `pip install -e ".[dev]"`, techne not installed: the
+memory-handler module skips).
 
-Sibling-checkout convention: clone `tenishai/liminal` as a sibling of `cabal`
-and `techne`, install with `pip install -e ../liminal`.
+Not yet: the distribution (`tenish-liminal`) is not on PyPI, so installs come from a
+clone or a git tag; `notify` has a generic webhook transport (it POSTs a fixed
+JSON body) and a stdout one behind `LIMINAL_NOTIFY_STDOUT=1`; there are no Slack, Discord or
+email transports.
+
+## Documentation
+
+- `liminal guide welcome`: the guide that ships in the package
+- [docs/running.md](docs/running.md): `liminal serve`, its environment, auth, and deploying through gojira
+- [docs/install.md](docs/install.md): clean-machine install, the `memory` extra, building the image
+- [docs/what-works.md](docs/what-works.md): what the gateway does today, feature by feature
+- [docs/writing-a-handler.md](docs/writing-a-handler.md): what a handler author needs to know
+- [docs/cabal-handler.md](docs/cabal-handler.md): the `cabal` handler
+- [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/arch/](docs/arch/): a map of the code, for people and coding agents
+- [docs/design.md](docs/design.md): the original proposal; the implementation has diverged
+- [CHANGELOG.md](CHANGELOG.md): releases
+- [SECURITY.md](SECURITY.md): how to report a vulnerability
+
+## Contributing
+
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup,
+the checks CI runs and the sign-off every commit needs; the
+[Code of Conduct](CODE_OF_CONDUCT.md) applies to everyone taking part.
 
 ## How this was built
 
