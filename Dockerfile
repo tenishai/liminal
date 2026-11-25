@@ -57,10 +57,10 @@ WORKDIR /build
 COPY --from=techne / /build/techne
 ARG EXTRA_INDEX_URL=""
 ARG AR_TOKEN=""
-# techne v0.18.2 (tag at 96a030d), the py3-none-any wheel. From 0.18.2 the
+# techne v0.20.0 (tag at 773f7e4), the py3-none-any wheel. From 0.18.2 the
 # distribution is tenish-techne; the import package is still techne.
-ARG TECHNE_VERSION=0.18.2
-ARG TECHNE_WHEEL_SHA256=43e96409b99a7d9e4bf5f075226b87464db5830e9bdb8323ab4f7f3675c29e51
+ARG TECHNE_VERSION=0.20.0
+ARG TECHNE_WHEEL_SHA256=1e9371c5fa89351da16a3e703cf0178a79eb250dc87fd732b05c2d4badb24b7b
 # A sibling checkout must report TECHNE_VERSION too. That catches a checkout of
 # another release; it cannot catch techne's main between releases, which reports
 # the last released version. scripts/check-techne-sibling.sh compares commits.

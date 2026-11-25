@@ -215,7 +215,7 @@ count as degraded, because a token's tool extras may still supply the config.
 | Install | Adds | Reach for it when |
 |---------|------|-------------------|
 | `tenish-liminal` | The gateway and all seven handlers. | Always. |
-| `tenish-liminal[memory]` | techne (`tenish-techne>=0.18.2`), for `memory`. | Agents should share a techne knowledge store. Install techne from the pin in `requirements-sources.txt`. |
+| `tenish-liminal[memory]` | techne (`tenish-techne>=0.20.0`), for `memory`. | Agents should share a techne knowledge store. Install techne from the pin in `requirements-sources.txt`. |
 | `tenish-liminal[aws]` | botocore, for `aws`. | Agents should read AWS accounts through roles. |
 | `tenish-liminal[dev]` | pytest, ruff, mypy. | You are changing liminal itself. |
 
