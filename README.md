@@ -66,8 +66,8 @@ claude mcp add --transport http liminal http://127.0.0.1:9100/mcp
 
 `scratchpad` and `web` work straight away. `notify` needs `LIMINAL_NOTIFY_WEBHOOK_URL`,
 `files` refuses every call until you grant it paths, and `memory` needs techne and
-`LIMINAL_MEMORY_DB`; `curl http://127.0.0.1:9100/healthz` flags the last two as
-`unconfigured`. [docs/running.md](docs/running.md) covers those
+`LIMINAL_MEMORY_DB`; `curl http://127.0.0.1:9100/healthz` flags all three as
+`unconfigured` until they have it. [docs/running.md](docs/running.md) covers those
 grants, JWT auth for production and deploying through gojira;
 [docs/install.md](docs/install.md) covers the `memory` extra and the image.
 
