@@ -105,6 +105,11 @@ class Transport(ABC):
     ) -> dict[str, Any]:
         """Send a notification. Returns metadata; raises on hard failure."""
 
+    def status(self) -> str | None:
+        """What server config is missing, or None when ready (liminal#254).
+        Same contract as a handler's `status()`."""
+        return None
+
 
 # ---- Webhook transport ---------------------------------------------------
 
@@ -142,6 +147,16 @@ class WebhookTransport(Transport):
     @property
     def credential_keys(self) -> list[str]:
         return ["NOTIFY_WEBHOOK_URL"]
+
+    def status(self) -> str | None:
+        """liminal#254: with no server URL, `send` refuses every call whose
+        credentials and tool extras name none, so do not report ready."""
+        if self.default_url:
+            return None
+        return (
+            "unconfigured: LIMINAL_NOTIFY_WEBHOOK_URL is unset (only a per-caller "
+            "NOTIFY_WEBHOOK_URL secret or notify.webhook_url tool extra can name a URL)"
+        )
 
     async def send(
         self,
@@ -348,6 +363,18 @@ class NotifyHandler:
                 "webhook": WebhookTransport(),
                 "stdout": StdoutTransport(),
             }
+
+    def status(self) -> str | None:
+        """The default transport's status (liminal#254): a call that names no
+        transport goes there, so its missing config is the handler's."""
+        transport = self.transports.get(self.default_transport)
+        if transport is None:
+            return f"unconfigured: default transport {self.default_transport!r} is not registered"
+        status = transport.status()
+        others = sorted(n for n in self.transports if n != self.default_transport)
+        if status and others:
+            status += f"; transport={', '.join(others)} still sends"
+        return status
 
     def tools(self) -> list[ToolSpec]:
         return [

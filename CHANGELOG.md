@@ -6,6 +6,14 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/healthz` reports `notify` as `unconfigured` without a webhook URL** (issue 254). It
+  said `ready`, but with no `LIMINAL_NOTIFY_WEBHOOK_URL` every `notify.send` that names no
+  URL in its credentials or tool extras is refused. It now reads `unconfigured:
+  LIMINAL_NOTIFY_WEBHOOK_URL is unset ...`, which, as for `files` and `memory`, does not
+  make the gateway degraded, and startup logs `liminal.handler_unconfigured` for it.
+
 ## [0.11.0] — 2026-11-24
 
 ### Fixed
