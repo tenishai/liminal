@@ -42,7 +42,7 @@ Each line cites the pull request that made the change.
 
 ### Upgrading
 
-- Revocation checking (`--revocation-ttl`, default 30s) takes effect only against a cabal that serves `GET /auth/revocations`, which ships in cabal 0.5.0 (tenishai/cabal pull request 455). Against an older cabal (404) liminal logs one warning and accepts tokens until `exp` as before. It needs `--cabal-url` and the `LIMINAL_CABAL_TOKEN` bearer.
+- Revocation checking (`--revocation-ttl`, default 30s) takes effect only against a cabal that serves `GET /auth/revocations`, which is on cabal main after 0.5.0rc1 (tenishai/cabal pull request 455) and planned for cabal 0.5.0, not yet released when liminal 0.11.0 was. Against an older cabal (404) liminal logs one warning and accepts tokens until `exp` as before. It needs `--cabal-url` and the `LIMINAL_CABAL_TOKEN` bearer.
 - A deployment that sets `LIMINAL_AUTH_DISABLED=1` with a non-loopback `--host` (including the Docker image's default `--host 0.0.0.0`) now fails at startup with exit 2. Bind `127.0.0.1`, configure a verifier, or set `LIMINAL_AUTH_DISABLED_ALLOW_NONLOOPBACK=1` and publish the port to loopback only (`-p 127.0.0.1:9100:9100`).
 
 ## [0.10.0] — 2026-11-19
