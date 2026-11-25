@@ -762,6 +762,25 @@ async def test_pinned_https_webhook_does_not_use_the_shared_pool() -> None:
         await transport.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_webhook_clients_ignore_https_proxy_from_the_environment(monkeypatch) -> None:
+    """Issue #204: an env proxy would carry the pinned IP as SNI."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    transport = WebhookTransport()
+    await transport.startup()
+    try:
+        shared, _ = transport._get_client()
+        isolated, _ = transport._get_client(isolated=True)
+        for client in (shared, isolated):
+            assert client.trust_env is False
+            for url in ("https://hooks.example/", "http://hooks.example/"):
+                assert client._transport_for_url(httpx.URL(url)) is client._transport
+        await isolated.aclose()
+    finally:
+        await transport.shutdown()
+
+
 # ---- server config from the environment (liminal#197) -------------------------
 
 

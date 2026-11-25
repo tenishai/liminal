@@ -221,6 +221,7 @@ class WebhookTransport(Transport):
         self._shared_client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout_seconds),
             follow_redirects=False,
+            trust_env=False,  # an env proxy would send the pinned IP as SNI (issue #204)
         )
 
     async def shutdown(self) -> None:
@@ -240,6 +241,7 @@ class WebhookTransport(Transport):
         return httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout_seconds),
             follow_redirects=False,
+            trust_env=False,  # an env proxy would send the pinned IP as SNI (issue #204)
         ), True
 
     async def _resolve(self, host: str) -> list[str]:

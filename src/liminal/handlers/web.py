@@ -136,6 +136,7 @@ class WebHandler:
         self._shared_client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.default_config.timeout_seconds),
             follow_redirects=False,
+            trust_env=False,  # an env proxy would send the pinned IP as SNI (issue #204)
         )
 
     async def shutdown(self) -> None:
@@ -366,6 +367,7 @@ class WebHandler:
         return httpx.AsyncClient(
             timeout=httpx.Timeout(cfg.timeout_seconds),
             follow_redirects=False,
+            trust_env=False,  # an env proxy would send the pinned IP as SNI (issue #204)
         ), True
 
 

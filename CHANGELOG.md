@@ -16,6 +16,11 @@ Each line cites the pull request that made the change.
   `.husky/`. These are code-execution paths, like `.git/hooks`. Files that run on a common
   command (`conftest.py`, `Makefile`) stay writable; `LIMINAL_FILES_PROTECTED_PATTERNS`
   can add them.
+- **`web` and `notify` no longer read proxy settings from the environment** (issue 204).
+  With `HTTPS_PROXY` set, httpx sent pinned https requests through httpcore's proxy
+  tunnel, which uses the pinned IP as the TLS server name, so certificate verification
+  failed. Their clients now set `trust_env=False`: no env proxy, and no `SSL_CERT_FILE`
+  or `SSL_CERT_DIR` either (the bundled certifi roots are used).
 
 ## [0.11.0] — 2026-11-24
 
