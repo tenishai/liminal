@@ -6,6 +6,17 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security: `files.write` refuses config that developer tools run with no command**
+  (part of issue 155). Without the `files:protected_writes` grant it now refuses `.envrc`
+  (direnv loads it on `cd`), `.vscode/tasks.json` (a `folderOpen` task runs when the
+  folder opens), `.pre-commit-config.yaml`, every lefthook config name (`lefthook.yml`,
+  `.lefthook.yaml`, `lefthook-local.json`, ... in any directory) and anything under
+  `.husky/`. These are code-execution paths, like `.git/hooks`. Files that run on a common
+  command (`conftest.py`, `Makefile`) stay writable; `LIMINAL_FILES_PROTECTED_PATTERNS`
+  can add them.
+
 ## [0.11.0] — 2026-11-24
 
 ### Fixed
