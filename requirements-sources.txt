@@ -17,4 +17,4 @@
 # abstract floor and the concrete pin stay in step. The Dockerfile's
 # TECHNE_VERSION and TECHNE_WHEEL_SHA256 move with them; tests/test_techne_pin.py
 # fails when the three disagree.
-tenish-techne @ git+https://github.com/tenishai/techne.git@v0.18.2
+tenish-techne @ git+https://github.com/tenishai/techne.git@v0.20.0

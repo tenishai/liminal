@@ -43,7 +43,7 @@ dev = [
 # git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
 # Dev, and CI's manual integration job, use an editable techne instead:
 # `pip install -e ../techne`.
-memory = ["tenish-techne>=0.18.2"]
+memory = ["tenish-techne>=0.20.0"]
 # Enables the `aws` handler's STS and API calls (imported lazily; the handler
 # registers without it and refuses calls with a sentence naming this extra).
 aws = ["botocore>=1.35"]
