@@ -35,8 +35,8 @@ One pull request, from a branch, titled `release: liminal X.Y.Z`. It carries:
 - `CHANGELOG.md`: rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD` (past blocks, for
   example `## [0.10.0] — 2026-11-19`) and put a fresh empty `## [Unreleased]` above it. Add an
   `### Upgrading` section for anything an existing install must act on.
-- Docs that name the version. `ARCHITECTURE.md` has a `STATE:` line that says `v0.10.0
-  (pyproject)` and lists each release's changes. Grep for the previous version and
+- Docs that name the version. `ARCHITECTURE.md` has a `STATE:` line that names the version, as `vX.Y.Z
+  (pyproject)`, and lists each release's changes. Grep for the previous version and
   fix what you find.
 - `ARCHITECTURE.md` anchors `pyproject.toml` by blob sha, so the bump makes it stale. Run `python3 scripts/check_arch_cards.py`, update the
   anchor, and expect `all architecture cards fresh`.
