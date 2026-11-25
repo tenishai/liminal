@@ -8,7 +8,7 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
-- **techne pin moves from 0.18.2 to 0.20.0.** `requirements-sources.txt` pins the
+- **techne pin moves from 0.18.2 to 0.20.0** (#259). `requirements-sources.txt` pins the
   `v0.20.0` tag, the `memory` extra needs `tenish-techne>=0.20.0`, and the Dockerfile's
   `TECHNE_VERSION`/`TECHNE_WHEEL_SHA256` name the v0.20.0 release wheel
   (`1e9371c5...`). A sibling-checkout build needs `../techne` at `v0.20.0`.
