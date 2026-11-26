@@ -8,7 +8,7 @@
 #   Non-dev install with the memory handler:
 #       pip install -r requirements-sources.txt ".[memory]"
 #
-#   Dev, and CI's manual (workflow_dispatch) integration job, install techne
+#   Dev, and CI's integration job, install techne
 #   editable instead (live local edits):
 #       pip install -e ../techne
 #
