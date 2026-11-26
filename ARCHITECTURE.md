@@ -1,7 +1,7 @@
 ---
 card: repo-card:liminal
 updated: 2026-11-19
-anchor: pyproject.toml sha=b3d7b3c11d227afb569cb17bdbd055fc7daf212d
+anchor: pyproject.toml sha=58a566b329721949e765b0090e49912df3600e18
 anchor: src/liminal/server/routes.py sha=04a35efd8275fa5216f499ac97babd331986a5e7
 ---
 # liminal — repo card
@@ -32,7 +32,7 @@ DEPS:
 - cabal → liminal: cabal/src/cabal/core/tools/mcp_proxy.py lazily imports `liminal.client.AsyncMCPClient`; cabal's pyproject registers `patterns`/`documents`/`code`/`archivist` into the `liminal.handlers` group; cabal serves `GET /admin/secrets/{persona}/{handler}` and mints the JWTs liminal verifies (single-cabal defaults `--issuer cabal-core`, `--audience liminal`).
 - liminal → techne: handlers/memory.py only (lazy `import techne`; module-scope `from techne import VALID_TYPES` is inside try/except with a hardcoded fallback). CI integration job checks out tenishai/techne at the tag the Dockerfile's TECHNE_VERSION pins.
 - liminal does NOT call ladon; nothing in src references it.
-HEALTH: 63 test modules (tests/test_*.py); `pytest -q` without techne: 1053 passed, 2 skipped (Python 3.12, 2026-11-23; memory tests importorskip techne). CI .github/workflows/test.yml: `unit` (GitHub-hosted runner, py3.12/3.13, ruff + pytest, push/every PR including forks/dispatch), `ci` (summary job that fails unless `unit` succeeded; with `dco`, the two checks a branch ruleset requires), `integration` (workflow_dispatch only, with techne), `dco` (every PR into `main`: each non-merge commit needs a `Signed-off-by:` matching its author). mypy strict is configured but NOT run in CI. Rulesets on `main` require a pull request (squash merge only, one approval), the `ci` and `dco` checks from GitHub Actions, and forbid force-push and deletion.
+HEALTH: 63 test modules (tests/test_*.py); `pytest -q` without techne: 1053 passed, 2 skipped (Python 3.12, 2026-11-23; memory tests importorskip techne). CI .github/workflows/test.yml: `unit` (GitHub-hosted runner, py3.12/3.13, ruff + pytest, push/every PR including forks/dispatch), `ci` (summary job that fails unless `unit` and `integration` succeeded; with `dco`, the two checks a branch ruleset requires), `integration` (full suite with a techne checkout at the Dockerfile's pinned tag; push/every PR including forks/dispatch), `dco` (every PR into `main`: each non-merge commit needs a `Signed-off-by:` matching its author). mypy strict is configured but NOT run in CI. Rulesets on `main` require a pull request (squash merge only, one approval), the `ci` and `dco` checks from GitHub Actions, and forbid force-push and deletion.
 GOTCHAS:
 - Tool names are `<target>.<tool>`; `name.split(".",1)[0]` IS the authz key (allowlist, scope map, credential lookup). Target names must not contain `.` and must not collide with handler names (build_http_targets raises).
 - Security defaults are the product: empty files allowlist, SSRF deny list, fail-closed malformed allowlist (→ deny all). Never widen one to make a test pass.

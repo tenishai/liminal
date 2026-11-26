@@ -41,7 +41,7 @@ dev = [
 # Enables the techne-backed `memory` handler (imported lazily; liminal runs
 # without it). techne is not on a public index, so pair this extra with the
 # git source pin: `pip install -r requirements-sources.txt ".[memory]"`.
-# Dev, and CI's manual integration job, use an editable techne instead:
+# Dev, and CI's integration job, use an editable techne instead:
 # `pip install -e ../techne`.
 memory = ["tenish-techne>=0.20.0"]
 # Enables the `aws` handler's STS and API calls (imported lazily; the handler

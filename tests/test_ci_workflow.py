@@ -205,14 +205,21 @@ def test_unit_is_never_skipped_on_a_pull_request():
     )
 
 
-def _ci_step_exit_code(step: dict, unit_result: str) -> int:
-    """Run the `ci` job's step in bash with `${{ needs.unit.result }}` set to
-    `unit_result`, and return its exit code. The substitution is textual, in
+def _ci_step_exit_code(step: dict, results: dict[str, str]) -> int:
+    """Run the `ci` job's step in bash with each `${{ needs.<job>.result }}` set
+    from `results`, and return its exit code. The substitution is textual, in
     `run:` and in `env:` values, which covers how a step reads the expression."""
-    expr = "${{ needs.unit.result }}"
-    env = {k: str(v).replace(expr, unit_result) for k, v in (step.get("env") or {}).items()}
-    script = step["run"].replace(expr, unit_result)
-    return subprocess.run(["bash", "-e", "-c", script], env={"PATH": "/usr/bin:/bin", **env}).returncode
+
+    def sub(text: str) -> str:
+        for job, result in results.items():
+            text = text.replace("${{ needs." + job + ".result }}", result)
+        return text
+
+    env = {k: sub(str(v)) for k, v in (step.get("env") or {}).items()}
+    return subprocess.run(["bash", "-e", "-c", sub(step["run"])], env={"PATH": "/usr/bin:/bin", **env}).returncode
+
+
+GATED_JOBS = ('unit', 'integration')
 
 
 def test_ci_job_gates_on_unit_succeeding():
@@ -220,16 +227,20 @@ def test_ci_job_gates_on_unit_succeeding():
     assert ci is not None, "test.yml has no `ci` job; a branch ruleset requires it by name"
     needs = ci.get("needs")
     needs = [needs] if isinstance(needs, str) else (needs or [])
-    assert "unit" in needs, f"ci must need unit, found needs: {needs}"
+    for job in GATED_JOBS:
+        assert job in needs, f"ci must need {job}, found needs: {needs}"
     assert str(ci.get("if")).strip().removeprefix("${{").removesuffix("}}").strip() == "always()", (
         f"ci must run `if: always()` so it reports when unit fails, is cancelled or is skipped; found {ci.get('if')!r}"
     )
     assert not _is_self_hosted(ci.get("runs-on"))
     steps = ci.get("steps") or []
     assert len(steps) == 1 and "run" in steps[0], f"ci must be one `run` step, found {steps}"
-    assert _ci_step_exit_code(steps[0], "success") == 0, "ci must pass when unit succeeded"
-    for result in ("failure", "cancelled", "skipped", ""):
-        assert _ci_step_exit_code(steps[0], result) != 0, f"ci must fail when unit's result is {result!r}"
+    all_ok = {job: "success" for job in GATED_JOBS}
+    assert _ci_step_exit_code(steps[0], all_ok) == 0, f"ci must pass when {', '.join(GATED_JOBS)} succeeded"
+    for job in GATED_JOBS:
+        for result in ("failure", "cancelled", "skipped", ""):
+            code = _ci_step_exit_code(steps[0], {**all_ok, job: result})
+            assert code != 0, f"ci must fail when {job}'s result is {result!r} and the others succeeded"
 
 
 def test_every_third_party_action_is_pinned_to_a_full_commit_sha():

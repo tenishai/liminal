@@ -174,7 +174,8 @@ jobs:
 
   # ---- ci: the one check a branch ruleset requires, with dco ----------------
   # Required by name, so it must always report. `if: always()` runs it when unit
-  # fails or is cancelled, and the step fails on anything but success: a skipped
+  # or integration fails or is cancelled, and the step fails on anything but
+  # success from either: a skipped
   # job counts as passing in GitHub's UI, and must not here.
   ci:
     runs-on: ubuntu-latest
