@@ -4,8 +4,9 @@ name: test
 # operate may be reachable from it. tests/test_ci_workflow.py pins that.
 # unit runs on every push to main and every pull request, fork PRs included —
 # no private deps, no secret required.
-# integration runs on workflow_dispatch only. It clones the techne sibling
-# without a token, so it works once techne is public (agora#31).
+# integration runs with unit on every push, PR and dispatch. It clones the
+# public techne sibling without a token, so fork PRs need no secret either.
+# It was dispatch-only while techne was private (issue 115).
 # `ci` and `dco` are the two checks a branch ruleset requires.
 on:
   push:
@@ -58,8 +59,8 @@ jobs:
         run: pytest -q
 
   # ---- integration: full suite with techne ----------------------------------
+  # No `if:`, same as unit: `ci` needs it, so a skip would fail the gate.
   integration:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -177,12 +178,14 @@ jobs:
   # job counts as passing in GitHub's UI, and must not here.
   ci:
     runs-on: ubuntu-latest
-    needs: [unit]
+    needs: [unit, integration]
     if: always()
     steps:
-      - name: Fail unless unit succeeded
+      - name: Fail unless unit and integration succeeded
         env:
           UNIT_RESULT: ${{ needs.unit.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
           echo "unit: $UNIT_RESULT"
-          [ "$UNIT_RESULT" = success ]
+          echo "integration: $INTEGRATION_RESULT"
+          [ "$UNIT_RESULT" = success ] && [ "$INTEGRATION_RESULT" = success ]

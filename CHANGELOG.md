@@ -8,6 +8,10 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
+- **CI: the `integration` job runs on every push and pull request, and `ci` requires it**
+  (issue 115). It was dispatch-only because it clones techne without a token, which
+  failed while techne was private; it was never dispatched, so the techne-backed memory
+  handler's tests had never run in CI.
 - **techne pin moves from 0.18.2 to 0.20.0** (#259). `requirements-sources.txt` pins the
   `v0.20.0` tag, the `memory` extra needs `tenish-techne>=0.20.0`, and the Dockerfile's
   `TECHNE_VERSION`/`TECHNE_WHEEL_SHA256` name the v0.20.0 release wheel
