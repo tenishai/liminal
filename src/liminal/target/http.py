@@ -80,6 +80,7 @@ from liminal.target.inspect import (
     is_empty_result,
     new_envelope_nonce,
 )
+from liminal.target.mask import mask_content, with_encodings
 
 log = structlog.get_logger(__name__)
 
@@ -154,6 +155,9 @@ class HttpTarget(Target):
         # base one, empty for service-token / service-headers).
         self._catalog_token_provider: CatalogTokenProvider | None = None
         self._catalog_token: str = ""
+        # Secrets the shared client sends on its own (static bearer, catalog
+        # headers), resolved at startup. Masked out of every result (#261).
+        self._static_secrets: tuple[str, ...] = ()
 
     # ---- Target protocol --------------------------------------------------
 
@@ -190,6 +194,7 @@ class HttpTarget(Target):
             persona=ctx.identity,
             correlation_id=headers.get(HEADER_CORRELATION_ID),
         )
+        secrets = self._call_secrets(ctx)
         try:
             if self.spec.session == "per-persona":
                 outcome: ToolCallOutcome = await self._call_in_session(
@@ -202,7 +207,7 @@ class HttpTarget(Target):
         except MCPRemoteError as exc:
             return self._error_result(
                 reason=f"upstream {self.name!r} returned error [{exc.code}]",
-                upstream_text=exc.message,
+                upstream_text=self._masked(exc.message, secrets, tool),
             )
         except MCPError as exc:
             # An MCPTransportError message can embed the upstream's response
@@ -210,10 +215,10 @@ class HttpTarget(Target):
             # unconditionally our own prose either.
             return self._error_result(
                 reason=f"upstream {self.name!r} transport error",
-                upstream_text=str(exc),
+                upstream_text=self._masked(str(exc), secrets, tool),
             )
 
-        content = list(outcome.content)
+        content = self._masked(list(outcome.content), secrets, tool)
         if self.trust is TrustTier.UNTRUSTED:
             # #79 — the dispatch-time half of #16. Catalog inspection covers
             # what the upstream SAYS about its tools; this covers what it
@@ -349,6 +354,8 @@ class HttpTarget(Target):
         def _base_token_provider() -> str:
             return base_token
 
+        self._static_secrets = tuple(v for v in (base_token, *catalog_headers.values()) if v)
+
         self._base_token_provider = _base_token_provider
         # With session="per-persona" this client's session is the catalog
         # fetch's alone: dispatches go through _call_in_session instead. The
@@ -412,6 +419,29 @@ class HttpTarget(Target):
             self._owned_http = False
 
     # ---- internals --------------------------------------------------------
+
+    def _call_secrets(self, ctx: Context) -> list[str]:
+        """Every credential value this call sends upstream, with its encoded
+        forms (#261): the persona's per-call token or headers, plus what the
+        shared client sends on its own (static bearer, catalog headers, the
+        catalog token)."""
+        values: list[str] = list(self._static_secrets)
+        if self._catalog_token:
+            values.append(self._catalog_token)
+        if self.spec.auth_method == "service-token" and self.spec.credential_key:
+            values.append((ctx.credentials.get(self.spec.credential_key) or "").strip())
+        if self.spec.auth_method == "service-headers":
+            for key in self.spec.credential_headers.values():
+                values.append((ctx.credentials.get(key) or "").strip())
+        return with_encodings(values)
+
+    def _masked(self, value: Any, secrets: list[str], tool: str) -> Any:
+        """`value` with this call's credentials masked out (#261). A hit is
+        logged with the count only, never the value."""
+        masked, hits = mask_content(value, secrets)
+        if hits:
+            log.warning("http_target.credential_masked", target=self.name, tool=tool, count=hits)
+        return masked
 
     def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
         """A failed dispatch whose message may carry upstream-authored bytes.

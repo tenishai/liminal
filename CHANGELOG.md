@@ -6,6 +6,10 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Security
+
+- **Credentials liminal sends to an HTTP target are masked out of what comes back** (#261). An upstream that echoed request headers, or a 5xx debug page, could hand the agent the persona's token. The per-call service-token or service-headers values, the static bearer, catalog headers and the catalog token are now replaced with `[redacted]` in the result and in upstream error text, including their base64, URL-encoded and JSON-escaped forms and the secret half of a Basic `user:secret`. Values under 8 characters are not masked. In-process handlers are not covered.
+
 ## [0.12.0] — 2026-11-28
 
 ### Changed
