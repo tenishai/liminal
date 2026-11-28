@@ -20,6 +20,11 @@ identity. It folds in three things the old proxy lacked or did unsafely:
     can't leak each other's tokens.
   - **#27 correlation-id** — carried on ``ctx.extra["correlation_id"]``
     (generated if absent) and forwarded as ``x-correlation-id`` on every call.
+  - **#261 credential masking** — every credential value a call sent (the
+    persona's token or headers, the static bearer, catalog headers and token)
+    is replaced with ``[redacted]`` in the result and in upstream error text,
+    in its common encoded forms too (``target/mask.py``), before framing and
+    again after it, and in a 5xx body before the body is cut to 200 chars.
 
 Failure modes stay explicit (No Silent Failures): ANY failed catalog fetch
 — startup or periodic refresh — sets a ``catalog_status`` the health surface
@@ -56,10 +61,12 @@ import httpx
 import structlog
 
 from liminal.client.mcp import (
+    SERVER_ERROR_BODY_CHARS,
     AsyncMCPClient,
     MCPError,
     MCPRemoteError,
     MCPSessionExpired,
+    MCPTransportError,
     ToolCallOutcome,
     authorization_value,
 )
@@ -80,6 +87,7 @@ from liminal.target.inspect import (
     is_empty_result,
     new_envelope_nonce,
 )
+from liminal.target.mask import mask_content, with_encodings
 
 log = structlog.get_logger(__name__)
 
@@ -154,6 +162,9 @@ class HttpTarget(Target):
         # base one, empty for service-token / service-headers).
         self._catalog_token_provider: CatalogTokenProvider | None = None
         self._catalog_token: str = ""
+        # Secrets the shared client sends on its own (static bearer, catalog
+        # headers), resolved at startup. Masked out of every result (#261).
+        self._static_secrets: tuple[str, ...] = ()
 
     # ---- Target protocol --------------------------------------------------
 
@@ -190,6 +201,7 @@ class HttpTarget(Target):
             persona=ctx.identity,
             correlation_id=headers.get(HEADER_CORRELATION_ID),
         )
+        secrets = self._call_secrets(ctx)
         try:
             if self.spec.session == "per-persona":
                 outcome: ToolCallOutcome = await self._call_in_session(
@@ -202,18 +214,29 @@ class HttpTarget(Target):
         except MCPRemoteError as exc:
             return self._error_result(
                 reason=f"upstream {self.name!r} returned error [{exc.code}]",
-                upstream_text=exc.message,
+                upstream_text=self._masked(exc.message, secrets, tool),
+                secrets=secrets,
+                tool=tool,
             )
         except MCPError as exc:
             # An MCPTransportError message can embed the upstream's response
             # body (`server {status}: {resp.text[:200]}`), so this is not
-            # unconditionally our own prose either.
+            # unconditionally our own prose either. Mask the WHOLE body before
+            # cutting it (#261): a credential straddling the cut would leave an
+            # unmasked prefix that no full form matches.
+            if isinstance(exc, MCPTransportError) and exc.body is not None:
+                body = self._masked(exc.body, secrets, tool)
+                text = f"server {exc.status}: {body[:SERVER_ERROR_BODY_CHARS]}"
+            else:
+                text = self._masked(str(exc), secrets, tool)
             return self._error_result(
                 reason=f"upstream {self.name!r} transport error",
-                upstream_text=str(exc),
+                upstream_text=text,
+                secrets=secrets,
+                tool=tool,
             )
 
-        content = list(outcome.content)
+        content = self._masked(list(outcome.content), secrets, tool)
         if self.trust is TrustTier.UNTRUSTED:
             # #79 — the dispatch-time half of #16. Catalog inspection covers
             # what the upstream SAYS about its tools; this covers what it
@@ -221,7 +244,10 @@ class HttpTarget(Target):
             # runtime can verify the delimiters instead of trusting their shape.
             nonce = new_envelope_nonce()
             try:
-                framed = frame_untrusted_result(content, self.name, nonce)
+                # Mask again after framing: the sanitiser strips hidden code
+                # points, which can rejoin a credential an upstream split with
+                # one (#261, Prudence round 1).
+                framed = self._masked(frame_untrusted_result(content, self.name, nonce), secrets, tool)
             except UnsanitizableResult as exc:
                 # Fail closed, and fail as a ToolResult rather than letting the
                 # exception propagate. NOT because it would reach Starlette —
@@ -349,6 +375,8 @@ class HttpTarget(Target):
         def _base_token_provider() -> str:
             return base_token
 
+        self._static_secrets = tuple(v for v in (base_token, *catalog_headers.values()) if v)
+
         self._base_token_provider = _base_token_provider
         # With session="per-persona" this client's session is the catalog
         # fetch's alone: dispatches go through _call_in_session instead. The
@@ -413,7 +441,32 @@ class HttpTarget(Target):
 
     # ---- internals --------------------------------------------------------
 
-    def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
+    def _call_secrets(self, ctx: Context) -> list[str]:
+        """Every credential value this call sends upstream, with its encoded
+        forms (#261): the persona's per-call token or headers, plus what the
+        shared client sends on its own (static bearer, catalog headers, the
+        catalog token)."""
+        values: list[str] = list(self._static_secrets)
+        if self._catalog_token:
+            values.append(self._catalog_token)
+        if self.spec.auth_method == "service-token" and self.spec.credential_key:
+            values.append((ctx.credentials.get(self.spec.credential_key) or "").strip())
+        if self.spec.auth_method == "service-headers":
+            for key in self.spec.credential_headers.values():
+                values.append((ctx.credentials.get(key) or "").strip())
+        return with_encodings(values)
+
+    def _masked(self, value: Any, secrets: list[str], tool: str) -> Any:
+        """`value` with this call's credentials masked out (#261). A hit is
+        logged with the count only, never the value."""
+        masked, hits = mask_content(value, secrets)
+        if hits:
+            log.warning("http_target.credential_masked", target=self.name, tool=tool, count=hits)
+        return masked
+
+    def _error_result(
+        self, *, reason: str, upstream_text: str, secrets: list[str] | None = None, tool: str = ""
+    ) -> ToolResult:
         """A failed dispatch whose message may carry upstream-authored bytes.
 
         Since liminal#66 a ToolResult's ``.error`` is appended to the content
@@ -437,8 +490,10 @@ class HttpTarget(Target):
         # crash: the caller got "raised UnsanitizableResult" instead of the
         # refusal prose. (Prudence, liminal#82 round 3, nit 3.)
         try:
-            framed = frame_untrusted_result(
-                [{"type": "text", "text": upstream_text}], self.name, nonce
+            framed = self._masked(
+                frame_untrusted_result([{"type": "text", "text": upstream_text}], self.name, nonce),
+                secrets or [],
+                tool,
             )
         except UnsanitizableResult as exc:
             return ToolResult.failure(
