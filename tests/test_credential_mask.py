@@ -98,9 +98,12 @@ def _echoing_upstream(mode: str) -> httpx.AsyncClient:
             auth = request.headers.get("authorization") or ""
             pad = "x" * (SERVER_ERROR_BODY_CHARS - len("debug: ") - len(auth) + 8)
             return httpx.Response(500, text=f"debug: {pad}{auth} tail")
-        if mode == "zero-width":
+        if mode in ("zero-width", "zero-width-rpc-error"):
             token = (request.headers.get("authorization") or "").removeprefix("Bearer ")
             split = token[:5] + "\u200b" + token[5:]
+            if mode == "zero-width-rpc-error":
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid,
+                                                 "error": {"code": -32000, "message": f"token={split}"}})
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": rid, "result": {
                 "content": [{"type": "text", "text": f"token={split}"}]}})
         return httpx.Response(500, text=f"debug: {request.headers.get('authorization')}")
@@ -191,10 +194,12 @@ async def test_a_credential_cut_by_the_5xx_truncation_leaks_no_prefix(trust: str
 
 
 @pytest.mark.asyncio
-async def test_a_hidden_code_point_inside_the_token_does_not_defeat_the_mask() -> None:
+@pytest.mark.parametrize("mode", ["zero-width", "zero-width-rpc-error"])
+async def test_a_hidden_code_point_inside_the_token_does_not_defeat_the_mask(mode: str) -> None:
     """Prudence round 1: on an untrusted target the sanitiser strips U+200B
-    after masking, which rejoined a split token. It is masked again after."""
-    seen = await _call(_spec(trust="untrusted"), "zero-width", {"K": TOKEN})
+    after masking, which rejoined a split token. It is masked again after, on
+    the result path and the error path (round 2)."""
+    seen = await _call(_spec(trust="untrusted"), mode, {"K": TOKEN})
     assert TOKEN not in seen and MASK in seen
 
 
