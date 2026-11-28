@@ -6,6 +6,8 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-28
+
 ### Changed
 
 - **A pushed `vX.Y.Z` tag publishes the image `ghcr.io/tenishai/liminal`** (linux/amd64 and
@@ -42,6 +44,18 @@ Each line cites the pull request that made the change.
   tunnel, which uses the pinned IP as the TLS server name, so certificate verification
   failed. Their clients now set `trust_env=False`: no env proxy, and no `SSL_CERT_FILE`
   or `SSL_CERT_DIR` either (the bundled certifi roots are used).
+
+### Docs
+
+- **RELEASING.md names the index in the resolve command** (#260).
+
+### Upgrading
+
+- **The image is now published:** `ghcr.io/tenishai/liminal:v0.12.0`, for linux/amd64 and linux/arm64. Installs that built their own image can pull it instead.
+- **techne 0.20.0.** The `memory` extra needs `tenish-techne>=0.20.0`, and an image built from a sibling checkout needs `../techne` at `v0.20.0`. This is the techne cabal 0.5.1 pins, so the two now build together; liminal 0.11.0 pinned 0.18.2.
+- **`web` and `notify` ignore `HTTPS_PROXY`, `HTTP_PROXY`, `SSL_CERT_FILE` and `SSL_CERT_DIR`.** A deployment that reached the internet only through an environment proxy, or trusted a private CA through `SSL_CERT_FILE`, now fails those calls. Give the gateway direct egress, or use a webhook and fetch targets the public roots verify.
+- **`files.write` refuses more paths** without the `files:protected_writes` grant: `.envrc`, `.vscode/tasks.json`, `.pre-commit-config.yaml`, every lefthook config and anything under `.husky/`. An agent that wrote those needs the grant.
+- **`/healthz` reports `notify` as `unconfigured`** when `LIMINAL_NOTIFY_WEBHOOK_URL` is unset. The gateway is not marked degraded by it, but a monitor that matched `notify: ready` will see the change.
 
 ## [0.11.0] — 2026-11-24
 
