@@ -46,7 +46,7 @@ the install and hides the problem everywhere else.
 
 ## Releasing
 
-There is no release workflow; tags are cut by hand. Bump `version` in `pyproject.toml`
+Tags are cut by hand; a pushed tag runs `release.yml`, which publishes the image to ghcr and creates the GitHub release (RELEASING.md). Bump `version` in `pyproject.toml`
 in a PR. In the same PR, move `[Unreleased]` to `[X.Y.Z] — <date>` in `CHANGELOG.md` and
 add an Upgrading section for changes an existing install must act on. Merge it, then tag
 **that** merge commit `vX.Y.Z` with the same number. v0.2.0
