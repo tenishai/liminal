@@ -68,6 +68,28 @@ The single-cabal flags also read from the environment when absent — `LIMINAL_J
 container whose CMD is the bare `liminal serve` can be pointed at a cabal by its
 deployment without rebuilding. A flag on the command line wins over the variable.
 
+### Files that run on a common command (opt-in)
+
+`files.write` always refuses files a tool runs with no command at all: `.envrc`, git hook
+managers' configs, `.vscode/tasks.json` and the rest of the built-in list (issue #155,
+tier 1). It does not refuse files that run when someone types a common command, such as
+`conftest.py` (on `pytest`), `package.json` scripts (on `npm install`), `setup.py` (on
+`pip install`) or a `Makefile` (on `make`). Agents edit these legitimately and often, so
+refusing them by default would make the tool much less useful; but an agent steered by
+injected content into writing one gets code run the next time anyone, or any CI job, runs
+that command.
+
+If your agents don't need to edit build and test configuration, refuse it too:
+
+<!-- recipe:tier2 (tests/test_files_protected_writes.py reads this line) -->
+```bash
+LIMINAL_FILES_PROTECTED_PATTERNS=conftest.py:pytest.ini:tox.ini:noxfile.py:setup.py:setup.cfg:pyproject.toml:package.json:makefile:gnumakefile:justfile
+```
+
+Each name matches in any directory, case-insensitively, so `makefile` also covers
+`Makefile`. The list adds to the built-ins and cannot remove any. A sovereign grant
+holding `files:protected_writes` lifts it, as it does for the built-ins.
+
 ## Through Gojira
 
 `gojira.yaml` at the repo root is the deploy contract for

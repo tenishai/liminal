@@ -33,6 +33,11 @@ Defenses (applied before any disk operation):
      check; a link made after the open-time re-check and before the write
      ends is not caught), and to anything matching the operator's
      LIMINAL_FILES_PROTECTED_PATTERNS. See `_protected_match`.
+     Files that run only when someone types a common command (`conftest.py`
+     on pytest, `package.json` scripts, `setup.py`, a `Makefile`; #155
+     tier 2) are NOT built in: agents edit them legitimately and often. An
+     operator who wants them refused sets the pattern recipe in
+     docs/running.md ("Files that run on a common command").
 
 Allowlist source: constructor default (operator-wired at handler
 factory time, or from LIMINAL_FILES_ALLOWED_PATHS — see `get_handler`)

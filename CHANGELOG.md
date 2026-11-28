@@ -6,6 +6,10 @@ Each line cites the pull request that made the change.
 
 ## [Unreleased]
 
+### Added
+
+- **A documented `LIMINAL_FILES_PROTECTED_PATTERNS` recipe for build and test files** (#155, tier 2): `conftest.py`, `pytest.ini`, `tox.ini`, `noxfile.py`, `setup.py`, `setup.cfg`, `pyproject.toml`, `package.json`, `Makefile` and `justfile` run code on a common command, so an operator whose agents don't edit them can refuse them. Opt-in and off by default; see docs/running.md. The `files` docstring says why they are not built in.
+
 ## [0.12.0] — 2026-11-28
 
 ### Changed
