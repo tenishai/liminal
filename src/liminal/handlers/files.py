@@ -131,6 +131,11 @@ PROTECTED_FILE_PAIRS: frozenset[tuple[str, str]] = frozenset(
         (".vscode", "mcp.json"),
         # A task with `"runOn": "folderOpen"` runs when the folder opens (#155).
         (".vscode", "tasks.json"),
+        # Workspace settings can name executables VS Code and its extensions
+        # run (linters, formatters, interpreters: `php.validate.executablePath`
+        # and the like). Restricted Mode blocks those only in an untrusted
+        # folder, and a repo the user works in is trusted (#155).
+        (".vscode", "settings.json"),
     }
 )
 # Parent/child directory pairs: anything beneath `<parent>/<child>/`. Copilot's
@@ -154,7 +159,8 @@ BUILTIN_PROTECTED_PATTERNS: tuple[str, ...] = (".roorules-*",)
 # another gitdir and so to its config and hooks.
 _EXEC_NAMES: frozenset[str] = frozenset(
     {".mcp.json", ".claude.json", ".git/", ".git", ".gemini/", ".vscode/mcp.json",
-     ".envrc", ".pre-commit-config.yaml", ".husky/", ".vscode/tasks.json"}
+     ".envrc", ".pre-commit-config.yaml", ".husky/", ".vscode/tasks.json",
+     ".vscode/settings.json"}
     | _LEFTHOOK_CONFIGS
 )
 
