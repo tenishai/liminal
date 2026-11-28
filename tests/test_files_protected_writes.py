@@ -865,3 +865,46 @@ async def test_operator_root_pattern_protects_the_whole_tree(tmp_path) -> None:
         assert result.is_error is True, rel
         assert OPERATOR_REFUSAL in result.error
     assert [p for p in tmp_path.rglob("*")] == []
+
+
+# ---- the documented tier-2 recipe (#155) -------------------------------------
+
+
+def _documented_recipe() -> str:
+    """The pattern string docs/running.md tells operators to set, read from the
+    doc itself so the doc and this test cannot drift apart."""
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "running.md").read_text()
+    after = doc.split("<!-- recipe:tier2", 1)[1]
+    line = next(ln for ln in after.splitlines() if ln.startswith("LIMINAL_FILES_PROTECTED_PATTERNS="))
+    return line.split("=", 1)[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "conftest.py", "tests/conftest.py", "pytest.ini", "tox.ini", "noxfile.py",
+        "setup.py", "setup.cfg", "pyproject.toml", "web/package.json",
+        "Makefile", "GNUmakefile", "sub/makefile", "justfile", "Justfile", ".justfile",
+    ],
+)
+async def test_documented_recipe_refuses_build_and_test_files(monkeypatch, tmp_path, rel: str) -> None:
+    import liminal.handlers.files as files_mod
+
+    recipe = _documented_recipe().replace(":", os.pathsep)
+    monkeypatch.setenv(files_mod.ALLOWED_PATHS_ENV, str(tmp_path))
+    result = await _write(_fresh_handler(monkeypatch, recipe), f"{tmp_path}/{rel}")
+    assert result.is_error is True, rel
+    assert OPERATOR_REFUSAL in result.error
+    assert [p for p in tmp_path.rglob("*")] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rel", ["src/app.py", "tests/test_x.py", "Makefile.am", "package-lock.json", "README.md"])
+async def test_documented_recipe_leaves_ordinary_files_writable(monkeypatch, tmp_path, rel: str) -> None:
+    import liminal.handlers.files as files_mod
+
+    recipe = _documented_recipe().replace(":", os.pathsep)
+    monkeypatch.setenv(files_mod.ALLOWED_PATHS_ENV, str(tmp_path))
+    result = await _write(_fresh_handler(monkeypatch, recipe), f"{tmp_path}/{rel}")
+    assert result.is_error is False, (rel, result.error)
