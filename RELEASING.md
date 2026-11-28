@@ -1,8 +1,8 @@
 # Releasing liminal
 
-A liminal release is a version bump in a pull request, a tag on the merge commit, and a
-GitHub release. Everything is done by hand: there is no release workflow, and nothing in CI
-reacts to a tag. This file records what the last releases did, so the next one does not rely
+A liminal release is a version bump in a pull request and a tag on the merge commit. The
+tag runs `.github/workflows/release.yml`, which publishes the image and creates the GitHub
+release (see Publish); the wheel is still published by hand. This file records what the last releases did, so the next one does not rely
 on memory. It is short on purpose; `AGENTS.md` has the one-paragraph rule.
 
 Release order across the suite: techne first, then liminal, then cabal. liminal's `memory`
