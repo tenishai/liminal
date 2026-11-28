@@ -8,6 +8,11 @@ Each line cites the pull request that made the change.
 
 ### Changed
 
+- **A pushed `vX.Y.Z` tag publishes the image `ghcr.io/tenishai/liminal`** (linux/amd64 and
+  linux/arm64), after the whole CI, a native arm64 run and a vulnerability scan, and creates
+  the GitHub release with an SBOM. `release.yml` is ported from cabal's; `test.yml` now accepts
+  `workflow_call` so the release runs it on the tagged commit. Before this nothing published
+  an image, so an install from released images had no liminal to pull.
 - **CI: the `integration` job runs on every push and pull request, and `ci` requires it**
   (issue 115). It clones techne without a token, so it was dispatch-only while techne
   was private. It was never dispatched, so the techne-backed memory handler's tests had

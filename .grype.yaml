@@ -1,0 +1,6 @@
+# What the release scan (release.yml) does not block on, and why. grype drops an ignored match
+# from its table, so this file is the only record: keep the reason with each entry, and name
+# the exact package version, so a change to that package brings the finding back for review.
+# Empty: a local scan of the release image on 2026-11-28 found no high or critical
+# vulnerability that has a fix.
+ignore: []

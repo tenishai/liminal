@@ -14,6 +14,8 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # release.yml runs this whole workflow on the tagged commit before it builds an image.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

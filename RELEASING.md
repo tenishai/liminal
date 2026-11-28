@@ -69,16 +69,23 @@ when a reachable `v*` tag is newer than `pyproject.toml` (v0.2.0 shipped reporti
 
 ## Publish
 
-Two things are published by hand, after the tag:
+Pushing the tag runs `.github/workflows/release.yml`. In order, each step gating the next:
+the whole of `test.yml` on the tagged commit; the arm64 image built and run on a native arm64
+runner; the tag matches `pyproject.toml`; the image starts, reports that version and has no
+high or critical vulnerability with a fix (ignores, each with its reason, go in
+`.grype.yaml`); then `ghcr.io/tenishai/liminal:vX.Y.Z` and `:<short sha>` are pushed for
+linux/amd64 and linux/arm64 with an SBOM and provenance, and the GitHub release is created
+from this version's CHANGELOG section with the SBOM, its checksum and the image digest.
 
-1. **The GitHub release**, named `liminal X.Y.Z`, with the body taken from the CHANGELOG
-   section including `### Upgrading`. The releases for v0.9.0 through v0.10.0 exist and carry
-   no assets.
-2. **The wheel on `https://pypi.tenish.ai/simple`.** A maintainer builds the wheel from the tag twice, with
-   `SOURCE_DATE_EPOCH` set to the tag commit's time and checks that the hashes match; publishes it with the
-   index's publish script (maintainers only); checks the sha256 in the
-   index metadata; and attaches the wheel and a `SHA256SUMS` file to the GitHub release. The index
-   is immutable, so a mistake is fixed by a new version.
+A dry run from a branch builds, checks and scans and publishes nothing:
+`gh workflow run release.yml --ref main`. Re-running from a tag whose image is already on
+ghcr checks the published image instead of pushing a new digest under the same tag.
+
+The wheel on `https://pypi.tenish.ai/simple` is still published by hand, after the tag. A
+maintainer builds the wheel from the tag twice, with `SOURCE_DATE_EPOCH` set to the tag
+commit's time and checks that the hashes match; publishes it with the index's publish script
+(maintainers only); checks the sha256 in the index metadata; and attaches the wheel and its
+hash to the GitHub release. The index is immutable, so a mistake is fixed by a new version.
 
 Whether each liminal version since 0.7.1 is on the index is not recorded in this repo. The
 GitHub releases show no wheels for them; check the index before you tell anyone to
@@ -91,7 +98,3 @@ install one.
   extra names `tenish-liminal>=0.4`. Bumping those is a cabal pull request, after this one.
 - Version sets that pin exact component versions move in their own pull requests, after the
   wheel is on the index.
-
-## Not yet
-
-No tag-triggered release workflow, scan gate or SBOM exists here, unlike kobo's.

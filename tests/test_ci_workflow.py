@@ -94,14 +94,38 @@ def _triggers(doc: dict) -> set[str]:
 
 
 def _self_hosted_jobs(doc: dict) -> dict:
-    """Jobs that target a self-hosted runner (name -> its `runs-on`). There is
-    no exception: any trigger, any spelling, an unresolvable expression included."""
+    """Jobs that target a self-hosted runner (name -> its `runs-on`). Any trigger,
+    any spelling, an unresolvable expression included. One exception: a job that
+    calls a workflow file in this repo (`uses: ./.github/workflows/…`) with no
+    `runs-on` has no runner of its own; its jobs run where that file says, and the
+    test below reads that file too. A workflow from another repo is not read here,
+    so calling one still counts as an offender. (Ported from tenishai/cabal.)"""
     jobs = doc.get("jobs") or {}
     return {
         name: job.get("runs-on")
         for name, job in sorted(jobs.items())
-        if _is_self_hosted(job.get("runs-on"))
+        if not _calls_local_workflow(job) and _is_self_hosted(job.get("runs-on"))
     }
+
+
+def _calls_local_workflow(job: dict) -> bool:
+    uses = job.get("uses")
+    return (
+        "runs-on" not in job
+        and isinstance(uses, str)
+        and uses.startswith("./.github/workflows/")
+        and ".." not in uses
+        and (WORKFLOW.parent / uses.removeprefix("./.github/workflows/")).is_file()
+    )
+
+
+def test_a_call_counts_only_when_it_names_a_workflow_file_here():
+    assert _self_hosted_jobs({"jobs": {"c": {"uses": "./.github/workflows/test.yml"}}}) == {}
+    assert _self_hosted_jobs({"jobs": {"c": {"uses": "./.github/workflows/missing.yml"}}}) == {"c": None}
+    assert _self_hosted_jobs({"jobs": {"c": {"uses": "other/repo/.github/workflows/x.yml@v1"}}}) == {"c": None}
+    assert _self_hosted_jobs(
+        {"jobs": {"c": {"uses": "./.github/workflows/test.yml", "runs-on": "spark"}}}
+    ) == {"c": "spark"}
 
 
 def test_no_workflow_targets_a_self_hosted_runner():
