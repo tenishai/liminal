@@ -71,7 +71,7 @@ deployment without rebuilding. A flag on the command line wins over the variable
 ## Files that run on a common command (opt-in)
 
 `files.write` always refuses files a tool runs with no command at all: `.envrc`, git hook
-managers' configs, `.vscode/tasks.json` and the rest of the built-in list (issue #155,
+managers' configs, `.vscode/tasks.json`, `.vscode/settings.json` and the rest of the built-in list (issue #155,
 tier 1). It does not refuse files that run when someone types a common command, such as
 `conftest.py` (on `pytest`), `package.json` scripts (on `npm install`), `setup.py` (on
 `pip install`) or a `Makefile` (on `make`). Agents edit these legitimately and often, so

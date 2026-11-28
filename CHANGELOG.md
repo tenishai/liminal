@@ -10,6 +10,8 @@ Each line cites the pull request that made the change.
 
 - **Credentials liminal sends to an HTTP target are masked out of what comes back** (#261). An upstream that echoed request headers, or a 5xx debug page, could hand the agent the persona's token. The per-call service-token or service-headers values, the static bearer, catalog headers and the catalog token are now replaced with `[redacted]` in the result and in upstream error text, including their base64, URL-encoded (either case of `%xx`), JSON-escaped and hex forms and the secret half of a Basic `user:secret`. A 5xx body is masked before it is cut to 200 characters, and untrusted results are masked again after hidden code points are stripped. Values under 8 characters are not masked. In-process handlers are not covered.
 
+- **`files.write` refuses `.vscode/settings.json`** without the `files:protected_writes` grant (#155). Workspace settings can name executables VS Code and its extensions run, such as a linter's `executablePath`, and Restricted Mode does not apply in a folder the user has trusted. `.vscode/launch.json` and `.vscode/extensions.json` stay writable.
+
 ### Added
 
 - **A documented `LIMINAL_FILES_PROTECTED_PATTERNS` recipe for build and test files** (#155, tier 2): `conftest.py`, `pytest.ini`, `tox.ini`, `noxfile.py`, `setup.py`, `setup.cfg`, `pyproject.toml`, `package.json`, `Makefile`, `GNUmakefile`, `justfile` and `.justfile` run code on a common command, so an operator whose agents don't edit them can refuse them. Opt-in and off by default; see docs/running.md. The `files` docstring says why they are not built in.
