@@ -885,7 +885,7 @@ def _documented_recipe() -> str:
     [
         "conftest.py", "tests/conftest.py", "pytest.ini", "tox.ini", "noxfile.py",
         "setup.py", "setup.cfg", "pyproject.toml", "web/package.json",
-        "Makefile", "GNUmakefile", "sub/makefile", "justfile",
+        "Makefile", "GNUmakefile", "sub/makefile", "justfile", "Justfile", ".justfile",
     ],
 )
 async def test_documented_recipe_refuses_build_and_test_files(monkeypatch, tmp_path, rel: str) -> None:

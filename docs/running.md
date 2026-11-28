@@ -68,7 +68,7 @@ The single-cabal flags also read from the environment when absent — `LIMINAL_J
 container whose CMD is the bare `liminal serve` can be pointed at a cabal by its
 deployment without rebuilding. A flag on the command line wins over the variable.
 
-### Files that run on a common command (opt-in)
+## Files that run on a common command (opt-in)
 
 `files.write` always refuses files a tool runs with no command at all: `.envrc`, git hook
 managers' configs, `.vscode/tasks.json` and the rest of the built-in list (issue #155,
@@ -83,7 +83,7 @@ If your agents don't need to edit build and test configuration, refuse it too:
 
 <!-- recipe:tier2 (tests/test_files_protected_writes.py reads this line) -->
 ```bash
-LIMINAL_FILES_PROTECTED_PATTERNS=conftest.py:pytest.ini:tox.ini:noxfile.py:setup.py:setup.cfg:pyproject.toml:package.json:makefile:gnumakefile:justfile
+LIMINAL_FILES_PROTECTED_PATTERNS=conftest.py:pytest.ini:tox.ini:noxfile.py:setup.py:setup.cfg:pyproject.toml:package.json:makefile:gnumakefile:justfile:.justfile
 ```
 
 Each name matches in any directory, case-insensitively, so `makefile` also covers
