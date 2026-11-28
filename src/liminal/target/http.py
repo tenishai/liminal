@@ -20,6 +20,11 @@ identity. It folds in three things the old proxy lacked or did unsafely:
     can't leak each other's tokens.
   - **#27 correlation-id** — carried on ``ctx.extra["correlation_id"]``
     (generated if absent) and forwarded as ``x-correlation-id`` on every call.
+  - **#261 credential masking** — every credential value a call sent (the
+    persona's token or headers, the static bearer, catalog headers and token)
+    is replaced with ``[redacted]`` in the result and in upstream error text,
+    in its common encoded forms too (``target/mask.py``), before framing and
+    again after it, and in a 5xx body before the body is cut to 200 chars.
 
 Failure modes stay explicit (No Silent Failures): ANY failed catalog fetch
 — startup or periodic refresh — sets a ``catalog_status`` the health surface
@@ -56,10 +61,12 @@ import httpx
 import structlog
 
 from liminal.client.mcp import (
+    SERVER_ERROR_BODY_CHARS,
     AsyncMCPClient,
     MCPError,
     MCPRemoteError,
     MCPSessionExpired,
+    MCPTransportError,
     ToolCallOutcome,
     authorization_value,
 )
@@ -208,14 +215,25 @@ class HttpTarget(Target):
             return self._error_result(
                 reason=f"upstream {self.name!r} returned error [{exc.code}]",
                 upstream_text=self._masked(exc.message, secrets, tool),
+                secrets=secrets,
+                tool=tool,
             )
         except MCPError as exc:
             # An MCPTransportError message can embed the upstream's response
             # body (`server {status}: {resp.text[:200]}`), so this is not
-            # unconditionally our own prose either.
+            # unconditionally our own prose either. Mask the WHOLE body before
+            # cutting it (#261): a credential straddling the cut would leave an
+            # unmasked prefix that no full form matches.
+            if isinstance(exc, MCPTransportError) and exc.body is not None:
+                body = self._masked(exc.body, secrets, tool)
+                text = f"server {exc.status}: {body[:SERVER_ERROR_BODY_CHARS]}"
+            else:
+                text = self._masked(str(exc), secrets, tool)
             return self._error_result(
                 reason=f"upstream {self.name!r} transport error",
-                upstream_text=self._masked(str(exc), secrets, tool),
+                upstream_text=text,
+                secrets=secrets,
+                tool=tool,
             )
 
         content = self._masked(list(outcome.content), secrets, tool)
@@ -226,7 +244,10 @@ class HttpTarget(Target):
             # runtime can verify the delimiters instead of trusting their shape.
             nonce = new_envelope_nonce()
             try:
-                framed = frame_untrusted_result(content, self.name, nonce)
+                # Mask again after framing: the sanitiser strips hidden code
+                # points, which can rejoin a credential an upstream split with
+                # one (#261, Prudence round 1).
+                framed = self._masked(frame_untrusted_result(content, self.name, nonce), secrets, tool)
             except UnsanitizableResult as exc:
                 # Fail closed, and fail as a ToolResult rather than letting the
                 # exception propagate. NOT because it would reach Starlette —
@@ -443,7 +464,9 @@ class HttpTarget(Target):
             log.warning("http_target.credential_masked", target=self.name, tool=tool, count=hits)
         return masked
 
-    def _error_result(self, *, reason: str, upstream_text: str) -> ToolResult:
+    def _error_result(
+        self, *, reason: str, upstream_text: str, secrets: list[str] | None = None, tool: str = ""
+    ) -> ToolResult:
         """A failed dispatch whose message may carry upstream-authored bytes.
 
         Since liminal#66 a ToolResult's ``.error`` is appended to the content
@@ -467,8 +490,10 @@ class HttpTarget(Target):
         # crash: the caller got "raised UnsanitizableResult" instead of the
         # refusal prose. (Prudence, liminal#82 round 3, nit 3.)
         try:
-            framed = frame_untrusted_result(
-                [{"type": "text", "text": upstream_text}], self.name, nonce
+            framed = self._masked(
+                frame_untrusted_result([{"type": "text", "text": upstream_text}], self.name, nonce),
+                secrets or [],
+                tool,
             )
         except UnsanitizableResult as exc:
             return ToolResult.failure(

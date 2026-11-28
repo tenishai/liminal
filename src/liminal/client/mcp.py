@@ -53,7 +53,17 @@ class MCPError(RuntimeError):
 
 
 class MCPTransportError(MCPError):
-    """Network / HTTP failure before we got a JSON-RPC envelope back."""
+    """Network / HTTP failure before we got a JSON-RPC envelope back.
+
+    For an HTTP error status, ``status`` and the untruncated ``body`` ride along
+    beside the message (whose body part is cut to 200 characters), so a caller
+    that must clean the body, such as ``HttpTarget`` masking credentials (#261),
+    can do it before the cut rather than after it."""
+
+    def __init__(self, message: str, *, status: int | None = None, body: str | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
 
 
 class MCPSessionExpired(MCPTransportError):
@@ -305,8 +315,16 @@ def _no_sse_response(request_id: int) -> MCPTransportError:
     return MCPTransportError(f"event stream ended without a response to request {request_id}")
 
 
+#: How much of an HTTP error body goes into an MCPTransportError's message.
+SERVER_ERROR_BODY_CHARS = 200
+
+
 def _server_error(resp: httpx.Response) -> MCPTransportError:
-    return MCPTransportError(f"server {resp.status_code}: {resp.text[:200]}")
+    return MCPTransportError(
+        f"server {resp.status_code}: {resp.text[:SERVER_ERROR_BODY_CHARS]}",
+        status=resp.status_code,
+        body=resp.text,
+    )
 
 
 def _result_or_raise(body: dict[str, Any]) -> dict[str, Any]:

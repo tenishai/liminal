@@ -550,7 +550,8 @@ before it reaches the caller:
 
 ```
 [BEGIN UNTRUSTED TOOL RESULT <nonce> — returned by federated target 'jira'. …]
-  …the upstream's content blocks, unchanged except for stripped hidden unicode…
+  …the upstream's content blocks, unchanged except for stripped hidden unicode
+    and masked credentials (#261)…
 [END UNTRUSTED TOOL RESULT <nonce>]
 ```
 
@@ -583,6 +584,10 @@ and the JSON-RPC result carries the same fact out of band:
   while `MCPTransportError` embeds `resp.text` for a 5xx. On an untrusted target the
   upstream half goes inside the envelope and `.error` keeps only liminal's own
   description.
+- **Credentials are masked first, on every tier (#261).** Before framing, and again
+  after it, the call's own credential values and their encoded forms become
+  `[redacted]` in result content and upstream error text, trusted targets included. A
+  5xx body is masked whole before it is cut to 200 characters. See `target/mask.py`.
 - A message liminal produces **without ever touching upstream output** is not framed —
   `"target not started"` is that case, since no request was made. The envelope means "an
   upstream wrote this", and diluting it would make it useless.

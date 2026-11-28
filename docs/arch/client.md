@@ -1,7 +1,7 @@
 ---
 card: arch-card:liminal-client
 updated: 2026-11-01
-anchor: src/liminal/client/mcp.py sha=5c3b65af9b24798a6c9ca397d940563dc4ad7821
+anchor: src/liminal/client/mcp.py sha=0a14c6dcf60f04a16ca577703dbc476346a2f8b0
 anchor: src/liminal/client/library.py sha=bdd50eae29e0bb949cbe4b5d1d55c00fbdb2382f
 ---
 # client — MCP client library other repos import
@@ -12,6 +12,7 @@ INVARIANTS:
 - Library mode is "same process, same trust": it bypasses the HTTP route, so NO JWT, handler allowlist, scope gate, secret guard, or untrusted `_meta`. Use proxy mode wherever isolation matters.
 - Library mode converts results with `to_spec_result_content` (the same function the HTTP route uses), so a `ToolResult.failure` message (`.error`) reaches the caller as text content alongside is_error=True (#66, #114). tests/test_liminal_client_protocol.py:test_library_failure_message_reaches_the_caller asserts it.
 - Keep MCPTransportError vs MCPRemoteError distinct: HttpTarget maps them to different refusal reasons, and cabal catches by type.
+- An HTTP error status raises MCPTransportError with `status` and the untruncated `body` beside a message cut to `SERVER_ERROR_BODY_CHARS` (200); HttpTarget masks credentials in `body` before cutting it (liminal#261).
 CONSUMERS: cabal/src/cabal/core/tools/mcp_proxy.py (lazy `from liminal import client`; AsyncMCPClient, ToolCallOutcome); target/http.py (HttpTarget wraps AsyncMCPClient for upstreams). Tests: test_client.py, test_client_sse.py, test_client_sse_pool.py, test_liminal_client_protocol.py, test_client_auth_header_omitted.py, test_basic_auth_scheme.py, test_stateful_upstream.py.
 API: exports LiminalClient, LibraryLiminalClient, ProxyLiminalClient, from_config, AsyncMCPClient, MCPClient, MCPError, MCPRemoteError, MCPSessionExpired, MCPTransportError, Tool, ToolCallOutcome.
 - `forget_session()` (#224): drop the held session and the initialized flag without a round trip, for an upstream that already lost it; the next call re-initializes.
